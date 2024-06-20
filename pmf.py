@@ -11,13 +11,19 @@ from itertools import cycle
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+from matplotlib.patches import Ellipse
+from matplotlib.lines import Line2D
 import matplotlib.colors as mcolors
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
+import seaborn as sns
 
 # Statistics and ML modules
 from scipy.stats import zscore
 from scipy.interpolate import UnivariateSpline
 from sklearn.model_selection import LeaveOneOut
-
+from sklearn.decomposition import PCA
 
 # My modules
 import pdf_reporter as pdf_rptr
@@ -30,16 +36,22 @@ import pdf_reporter as pdf_rptr
 # report = pdf_rptr.Report(name = report_path, title = title_text)
 # report.initialize_report('processing')
 
-class PeakMatrixFilteringCorrectingTransforming: # working title
+class PMF: # Peak Matrix Filtering (and Correcting, Transforming, Normalizing, Statistics, etc.)
     """
     Class that contains all the methods to filter, correct and transform the peak matrix data.
     """
 
     def __init__(self):
+        # Data variables (names, paths, etc.)
         self.report = None
         main_folder = None
         report_file_name = None
         self.sufixes = ['.png', '.pdf']
+
+        # Statistics variables
+        self.pca_data = None
+        self.pca_per_var = None
+
 
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL DATA HANDLING AND INITILAZITAION METHODS (like: loading, saving, initializing-report, etc.) (keywords like: loader_..., extracter_..., saver_..., but also without keywords)
@@ -1300,6 +1312,83 @@ class PeakMatrixFilteringCorrectingTransforming: # working title
         return data, variable_metadata
     
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    # ALL STATISTICS METHODS (keyword: statistics_...)
+    #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+    def statistics_correlation(self, data, report, metadata, column_name, output_file_prefix, sufixes = ['.png', '.pdf'], cmap = 'coolwarm'):
+        """
+        Calculate the correlation matrix of the data and create a heatmap.
+
+        Parameters
+        ----------
+        data : DataFrame
+            DataFrame with the data.
+        report : pdf_reporter.Report object
+            Report object to add information to.
+        metadata : DataFrame
+            DataFrame with the metadata.
+        column_name : str
+            Name of the column to group the data by. (From metadata, e.g. 'Sample Type' or 'Sex', 'Age', Diagnosis', etc.)
+        output_file_prefix : str
+            Prefix for the output file.
+        sufixes : list
+            List of sufices for the image files to be saved in. Default is ['.png', '.pdf'].
+        cmap : str
+            Name of the colormap. Default is 'coolwarm'. (Other options are 'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
+        """
+        # Group the data by 'column_name' and calculate the mean of each group
+        grouped_means = data.iloc[:, 1:].groupby(metadata[column_name]).mean()
+
+        # Calculate the correlation matrix of the group means
+        correlation_matrix = grouped_means.T.corr()
+
+        # Create a heatmap
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(correlation_matrix, cmap=cmap, vmin=-1, vmax=1)
+        name = output_file_prefix + '-group_correlation_matrix_heatmap-0'
+        for sufix in sufixes:
+            plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
+        plt.show()
+
+        #---------------------------------------------
+        # REPORTING
+        text = 'Group correlation matrix heatmap was created. Grouping is based on: ' + column_name
+        report.add_together([
+            ('text', text), 
+            ('image', name), 
+            'pagebreak'])
+        return correlation_matrix
+    
+    def statistics_PCA(self, data, report, metadata, column_name):
+        """
+        Perform PCA on the data and visualize the results.
+
+        Parameters
+        ----------
+        data : DataFrame
+            DataFrame with the data.        
+        """
+        # Perform PCA
+        pca = PCA()
+        pca.fit(data.iloc[:,1:].T)
+        pca_data = pca.transform(data.iloc[:, 1:].T)
+        # Calculate the percentage of variance that each PC explains
+        per_var = np.round(pca.explained_variance_ratio_* 100, decimals=1)
+        self.pca_per_var = per_var
+        labels = ['PC' + str(x) for x in range(1, len(per_var)+1)]
+
+        pca_df = pd.DataFrame(pca_data, columns=labels) 
+
+        self.pca_data = pca_df
+        #---------------------------------------------
+        # REPORTING
+        report.add_text('<b>PCA was performed.</b>')
+        return pca_df
+    
+
+
+
+    #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL VISUALIZING METHODS (keyword: visualizer_...)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     def _convert_to_rgba(self, color, alpha=0.5):
@@ -1462,7 +1551,7 @@ class PeakMatrixFilteringCorrectingTransforming: # working title
             gs = gridspec.GridSpec(2, 1, height_ratios=[3, 1])  # 3:1 height ratio
 
             # Create a figure with specified size
-            fig = plt.figure(figsize=(20, 4)) 
+            fig, ax = plt.subplots(figsize=(20, 4))
 
             # Create a scatter plot to display the QC sample points
             plt.subplot(gs[0])
@@ -1543,3 +1632,270 @@ class PeakMatrixFilteringCorrectingTransforming: # working title
         for image in images:
             report.add_image(image)
         report.add_pagebreak()
+        return fig, ax
+
+    def visualizer_PCA_scree_plot(self, data, report, output_file_prefix, sufixes = ['.png', '.pdf']):
+        """
+        Create a scree plot for PCA.
+
+        Parameters
+        ----------
+        data : DataFrame
+            DataFrame with the data.
+        report : pdf_reporter.Report object
+            Report object to add information to.
+        output_file_prefix : str
+            Prefix for the output file.
+        sufixes : list
+            List of sufices for the image files to be saved in. Default is ['.png', '.pdf'].
+        """
+        if self.pca_per_var is None:
+            raise ValueError('PCA was not performed yet. Run PCA first.')
+        else:
+            per_var = self.pca_per_var
+        # Create a scree plot
+        fig, ax = plt.figure(figsize=(10, 10))
+        plt.bar(x=range(1, 11), height=per_var[:10])
+
+        plt.ylabel('Percentage of Explained Variance')
+        plt.xlabel('Principal Component')
+        plt.title('Scree Plot')
+        xticks = list(range(1, 11))
+        plt.xticks(xticks)
+
+        name = output_file_prefix + '_scree_plot-percentages'
+        for sufix in sufixes:
+            plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
+        plt.show()
+        plt.close()
+
+        #---------------------------------------------
+        # REPORTING
+        text = 'Scree plot was created and added into: ' + name
+        report.add_together([
+            ('text', text),
+            ('image', name)])
+        return fig, ax
+    
+    def visualizer_PCA_run_order(self, data, report, output_file_prefix, sufixes = ['.png', '.pdf'], connected = True, colors_for_cmap = ['yellow', 'red']):
+        """
+        Create a PCA plot colored by run order. (To see if there is any batch effect)
+
+        Parameters
+        ----------
+        data : DataFrame
+            DataFrame with the data.
+        report : pdf_reporter.Report object
+            Report object to add information to.
+        output_file_prefix : str
+            Prefix for the output file.
+        sufixes : list
+            List of sufices for the image files to be saved in. Default is ['.png', '.pdf'].
+        colors_for_cmap : list
+            List of colors for the colormap. Default is ['yellow', 'red'].        
+        """
+        if self.pca_per_var is None:
+            raise ValueError('PCA was not performed yet. Run PCA first.')
+        else:
+            per_var = self.pca_per_var
+            pca_data = self.pca_data 
+
+        # Create a yellow-to-blue colormap
+        cmap = LinearSegmentedColormap.from_list("mycmap", colors_for_cmap)
+
+        column_unique_values = data.columns[1:]
+        num_unique_values = len(column_unique_values)
+        colors = [cmap(i/num_unique_values) for i in range(num_unique_values)]
+        sample_type_colors = dict(zip(column_unique_values, colors))
+
+        # Create a new figure and axes
+        fig, ax = plt.subplots()
+
+        # Create custom legend handles for colors
+        color_handles = [plt.Line2D([0], [0], marker='o', color='w', 
+                                    markerfacecolor=sample_type_colors[st], markersize=10) 
+                        for st in sample_type_colors.keys()]
+
+        # Plot the data
+        for sample_type in sample_type_colors.keys():
+            df_samples = pca_data[data.columns[1:] == sample_type]
+            plt.scatter(df_samples['PC1'], df_samples['PC2'], color=sample_type_colors[sample_type], label=sample_type)
+
+        plt.title('PCA Graph - run order colored')
+        plt.xlabel('PC1 - {0}%'.format(per_var[0]))
+        plt.ylabel('PC2 - {0}%'.format(per_var[1]))
+
+        # Create a normalization object for the colorbar
+        norm = Normalize(vmin=0, vmax=num_unique_values)
+
+        # Create a ScalarMappable object for the colorbar
+        sm = ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+
+        # Add the colorbar
+        plt.colorbar(sm, ax=ax, orientation='horizontal', pad=0.2)
+
+        if connected:
+            for i in range(len(pca_data)-1):
+                plt.plot([pca_data['PC1'].iloc[i], pca_data['PC1'].iloc[i+1]], [pca_data['PC2'].iloc[i], pca_data['PC2'].iloc[i+1]], color='black', linewidth=0.25)
+
+        if connected:
+            name = output_file_prefix + '_PCA_plot_colored_by_run_order-connected'
+        else:
+            name = output_file_prefix + '_PCA_plot_colored_by_run_order'
+        for sufix in sufixes:
+            plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
+        plt.show()
+        #---------------------------------------------
+        # REPORTING
+        if connected:
+            text = 'PCA plot <b> colored by run order </b> was created and added into: ' + name + '. Line connecting the samples by run order was added.'
+        else:
+            text = 'PCA plot <b> colored by run order </b> was created and added into: ' + name
+        report.add_together([
+            ('text', text),
+            ('image', name),])
+        return fig, ax
+    
+    def visualizer_PCA_grouped(self, data, report, metadata, color_column, marker_column, output_file_prefix, sufixes = ['.png', '.pdf'], cmap = 'nipy_spectral', crossout_outliers = False):
+        """
+        Create a PCA plot with colors based on one column and markers based on another column from the metadata.
+
+        Parameters
+        ----------
+        data : DataFrame
+            DataFrame with the data.
+        report : pdf_reporter.Report object
+            Report object to add information to.
+        metadata : DataFrame
+            DataFrame with the metadata.
+        color_column : str
+            Name of the column to use for coloring. ! If you input 'None', then all will be grey. (From metadata, e.g. 'Age', etc.)
+        marker_column : str
+            Name of the column to use for markers. ! If you input 'None', then all markers will be same. (From metadata e.g. 'Diagnosis', etc.)
+        output_file_prefix : str
+            Prefix for the output file.
+        sufixes : list
+            List of sufices for the image files to be saved in. Default is ['.png', '.pdf'].
+        cmap : str
+            Name of the colormap. Default is 'nipy_spectral'. (Other options are 'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
+        """
+        if self.pca_data is None:
+            raise ValueError('PCA was not performed yet. Run PCA first.')
+        else:
+            pca_data = self.pca_data
+            per_var = self.pca_per_var
+        ## PCA for both (with different markers)
+        column_name = color_column
+        second_column_name = marker_column
+
+        cmap = mpl.colormaps[cmap]
+
+        if crossout_outliers:
+            pca_data['PC1_zscore'] = zscore(pca_data['PC1'])
+            pca_data['PC2_zscore'] = zscore(pca_data['PC2'])
+
+            # Identify outliers as any points where the absolute z-score is greater than 3
+            outliers = pca_data[(np.abs(pca_data['PC1_zscore']) > 3) | (np.abs(pca_data['PC2_zscore']) > 3)]
+        
+
+        #get the color (for first column)
+        if column_name is not None:
+            column_unique_values = metadata[column_name].unique()
+            num_unique_values = len(column_unique_values)
+            colors = [cmap(i/num_unique_values) for i in range(num_unique_values)]
+            class_type_colors = dict(zip(column_unique_values, colors))
+
+        #get markers (for second column)
+        if second_column_name is not None:
+            second_column_unique_values = metadata[second_column_name].unique()
+            markers = cycle(['o', 'v', 's', '^', '*', '<','p', '>', 'h', 'H', 'D', 'd', 'P', 'X'])
+            class_type_markers = dict(zip(second_column_unique_values, markers))
+
+
+        legend_elements = []
+        if column_name is not None and second_column_name is not None:
+            existing_combinations = set(zip(metadata[column_name], metadata[second_column_name]))
+        elif column_name is not None:
+            existing_combinations = set(metadata[column_name])
+        elif second_column_name is not None:
+            existing_combinations = set(metadata[second_column_name])
+        else:
+            raise ValueError('At least one of the columns must be specified. Either color_column or marker_column or both.')
+
+        fig, ax = plt.subplots(figsize=(10, 8))
+
+        # Iterate over unique combinations of the two columns
+        for combination in existing_combinations:
+            # Check if combination is a tuple (both columns provided) or single value (one column provided)
+            if isinstance(combination, tuple):
+                sample_type, class_type = combination
+            else:
+                # Assign the single value to the appropriate variable based on which column is provided
+                if column_name is not None:
+                    sample_type = combination
+                    class_type = None  # Default or placeholder value
+                else:
+                    sample_type = None  # Default or placeholder value
+                    class_type = combination
+
+            # Adjust the selection logic to handle cases where one of the types is None
+            if sample_type is not None and class_type is not None:
+                df_samples = pca_data[(metadata[column_name] == sample_type) & (metadata[second_column_name] == class_type)]
+            elif sample_type is not None:
+                df_samples = pca_data[metadata[column_name] == sample_type]
+            elif class_type is not None:
+                df_samples = pca_data[metadata[second_column_name] == class_type]
+            
+            # Get the color and marker, handling cases where one of the types is None
+            color = 'grey' if sample_type is None else class_type_colors.get(sample_type, 'grey')
+            marker = 'o' if class_type is None else class_type_markers.get(class_type, 'o')
+            
+            # Construct label based on available types
+            label = f"{sample_type or ''} - {class_type or ''}".strip(' -')
+    
+            # Plot the samples
+            plt.scatter(df_samples['PC1'], df_samples['PC2'], color=color, marker=marker, label=sample_type + ' - ' + class_type, alpha=0.6)
+            
+            # Compute the covariance matrix and find the major and minor axis 
+            covmat = np.cov(df_samples[['PC1', 'PC2']].values.T)
+            lambda_, v = np.linalg.eig(covmat)
+            lambda_ = np.sqrt(lambda_)
+            
+            # Draw an ellipse around the samples
+            ell = Ellipse(xy=(np.mean(df_samples['PC1']), np.mean(df_samples['PC2'])),
+                        width=lambda_[0]*2, height=lambda_[1]*2,
+                        angle=np.rad2deg(np.arccos(v[0, 0])), edgecolor=color, lw=2, facecolor='none')
+            plt.gca().add_artist(ell)
+
+            # Add the legend element
+            color = class_type_colors[sample_type]
+            marker = class_type_markers[class_type]
+            legend_elements.append(Line2D([0], [0], marker=marker, color='w', label=class_type + ' - ' + sample_type,
+                                        markerfacecolor=color, markersize=10, alpha=0.6))
+
+        if crossout_outliers:
+            # Plot the outliers
+            plt.scatter(outliers['PC1'], outliers['PC2'], color='black', marker='x', label='Outliers', alpha=0.6)
+
+        # Create the legend
+        plt.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1, 1))
+        plt.title('PCA Graph')
+        plt.xlabel('PC1 - {0}%'.format(per_var[0]))
+        plt.ylabel('PC2 - {0}%'.format(per_var[1]))
+        name = output_file_prefix + 'detailed_PCA'
+        for sufix in sufixes:
+            plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
+        plt.show()
+        #---------------------------------------------
+        # REPORTING
+        if column_name is not None and second_column_name is not None:
+            text = 'Detailed PCA plot based on ' + column_name + '(colors) and ' + second_column_name + '(markers) was created and added into: ' + name
+        elif column_name is not None:
+            text = 'Detailed PCA plot based on ' + column_name + '(colors) was created and added into: ' + name
+        elif second_column_name is not None:
+            text = 'Detailed PCA plot based on ' + second_column_name + '(markers) was created and added into: ' + name
+        report.add_together([
+            ('text', text),
+            ('image', name),])
+        return fig, ax
