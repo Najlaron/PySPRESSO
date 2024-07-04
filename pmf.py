@@ -5,7 +5,7 @@ import os
 import re
 import time
 import math
-from itertools import cycle
+from itertools import cycle, combinations
 
 # Plotting modules
 import matplotlib as mpl
@@ -22,8 +22,10 @@ import seaborn as sns
 # Statistics and ML modules
 from scipy.stats import zscore
 from scipy.interpolate import UnivariateSpline
-from sklearn.model_selection import LeaveOneOut
+from sklearn.model_selection import LeaveOneOut, KFold, cross_val_predict
 from sklearn.decomposition import PCA
+from sklearn.cross_decomposition import PLSRegression
+from sklearn.metrics import mean_squared_error, r2_score
 
 # My modules
 import pdf_reporter as pdf_rptr
@@ -36,7 +38,7 @@ import pdf_reporter as pdf_rptr
 # report = pdf_rptr.Report(name = report_path, title = title_text)
 # report.initialize_report('processing')
 
-class PMF: # Peak Matrix Filtering (and Correcting, Transforming, Normalizing, Statistics, etc.)
+class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transforming, Normalizing, Statistics, etc.)
     """
     Class that contains all the methods to filter, correct and transform the peak matrix data.
     """
@@ -49,9 +51,15 @@ class PMF: # Peak Matrix Filtering (and Correcting, Transforming, Normalizing, S
         self.sufixes = ['.png', '.pdf']
 
         # Statistics variables
+        self.pca = None
         self.pca_data = None
         self.pca_per_var = None
 
+        self.plsda = None
+        self.plsda_response_column = None
+
+        # Candidate variables
+        self.candidate_variables = [] # List of lists with the candidate variables (each list contains the candidates obtained by the different methods)
 
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL DATA HANDLING AND INITILAZITAION METHODS (like: loading, saving, initializing-report, etc.) (keywords like: loader_..., extracter_..., saver_..., but also without keywords)
@@ -1359,14 +1367,17 @@ class PMF: # Peak Matrix Filtering (and Correcting, Transforming, Normalizing, S
             'pagebreak'])
         return correlation_matrix
     
-    def statistics_PCA(self, data, report, metadata, column_name):
+    def statistics_PCA(self, data, report):
         """
         Perform PCA on the data and visualize the results.
 
         Parameters
         ----------
         data : DataFrame
-            DataFrame with the data.        
+            DataFrame with the data.       
+        report : pdf_reporter.Report object
+            Report object to add information to.    
+         
         """
         # Perform PCA
         pca = PCA()
@@ -1374,19 +1385,118 @@ class PMF: # Peak Matrix Filtering (and Correcting, Transforming, Normalizing, S
         pca_data = pca.transform(data.iloc[:, 1:].T)
         # Calculate the percentage of variance that each PC explains
         per_var = np.round(pca.explained_variance_ratio_* 100, decimals=1)
-        self.pca_per_var = per_var
         labels = ['PC' + str(x) for x in range(1, len(per_var)+1)]
-
         pca_df = pd.DataFrame(pca_data, columns=labels) 
 
+        self.pca_per_var = per_var
         self.pca_data = pca_df
+        self.pca = pca
         #---------------------------------------------
         # REPORTING
         report.add_text('<b>PCA was performed.</b>')
         return pca_df
     
+    def _vip(self, model):
+        """
+        Help function to calculate the VIP scores for the PLS-DA model.
 
+        Parameters
+        ----------
+        model : PLSRegression object
+            (PLS-DA) model.
+        """
+        t = model.x_scores_
+        w = model.x_weights_
+        q = model.y_loadings_
+        p, h = w.shape
+        vips = np.zeros((p,))
+        s = np.diag(t.T @ t @ q.T @ q).reshape(h, -1)
+        total_s = np.sum(s)
+        for i in range(p):
+            weight = np.array([ (w[i,j] / np.linalg.norm(w[:,j]))**2 for j in range(h) ])
+            vips[i] = np.sqrt(p*(s.T @ weight)/total_s)
+        return vips
+    
+    
+    def statistics_PLSDA(self, data, report, metadata, response_column_names):
+        """
+        Perform PLSDA on the data and visualize the results.
 
+        Parameters
+        ----------
+        data : DataFrame
+            DataFrame with the data.
+        report : pdf_reporter.Report object
+            Report object to add information to.
+        metadata : DataFrame
+            DataFrame with the metadata.
+        response_column_names : str or list
+            Name of the column to use as a response variable. (From metadata, e.g. 'Sample Type' or list for multiple columns ['Sample Type', 'Diagnosis'], etc.)
+
+        """
+        # Define the number of components to be used
+        n_comp = 2
+        # Define the number of folds for cross-validation
+        n_folds = 10
+
+        if isinstance(response_column_names, list):
+            # create temporary column for the response variable by concatenating the response columns
+            metadata[str(response_column_names)] = metadata[response_column_names].apply(lambda x: '_'.join(x.map(str)), axis=1)
+            response_column_names = str(response_column_names)
+            
+        # Define the response column(s)
+        y = metadata[str(response_column_names)]
+    
+        # Convert the response variable to a categorical variable
+        y = pd.Categorical(y)
+        # Convert the categorical variable to a dummy (binary) variable
+        y = pd.get_dummies(y)
+
+        # Define the PLS-DA model
+        model = PLSRegression(n_components=n_comp)
+        # Define the KFold cross-validator
+        kf = KFold(n_splits=n_folds)
+        # Initialize an array to hold the cross-validated predictions
+        y_cv = np.zeros(y.shape)
+    
+        data_transposed = data.iloc[:, 1:].T
+
+        for train, test in kf.split(data_transposed):
+            model.fit(data_transposed.iloc[train], y.iloc[train])
+            y_cv[test] = model.predict(data_transposed.iloc[test])
+        # Fit the model on the entire dataset
+        model.fit(data.iloc[:, 1:].T, y)
+        # Calculate the VIP scores
+        vips = self._vip(model)
+        #print(vips)
+        # Print the names of the compounds with the VIP scores in the 99.5th percentile
+        candidate_vips = data.iloc[:, 0][vips > np.percentile(vips, 99.5)]
+
+        # Store the candidate variables
+        self.candidate_variables.append(['PLS-DA vips', candidate_vips])
+
+        # Calculate the R2 and Q2
+        r2 = r2_score(y, y_cv)
+        mse = mean_squared_error(y, y_cv)
+        q2 = 1 - mse / np.var(y)
+
+        # Print the R2 and Q2
+        print('R2:', r2)
+        print('Q2:')
+        print(q2)
+
+        self.plsda_model = model
+        self.plsda_response_column = response_column_names
+
+        #---------------------------------------------
+        # REPORTING
+        text0 = f'<b>PLS-DA</b> was performed with the ' + str(response_column_names) +' column(s) as a response variable for the model'
+        text1 = 'R2: ' + str(round(r2, 2)) + ', Q2: ' + str(round(q2, 2)) + '.'
+        report.add_together([('text', text0),
+                            ('text', text1),
+                            'line'])
+        return model
+   
 
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL VISUALIZING METHODS (keyword: visualizer_...)
@@ -1649,7 +1759,7 @@ class PMF: # Peak Matrix Filtering (and Correcting, Transforming, Normalizing, S
         sufixes : list
             List of sufices for the image files to be saved in. Default is ['.png', '.pdf'].
         """
-        if self.pca_per_var is None:
+        if self.pca is None:
             raise ValueError('PCA was not performed yet. Run PCA first.')
         else:
             per_var = self.pca_per_var
@@ -1694,7 +1804,7 @@ class PMF: # Peak Matrix Filtering (and Correcting, Transforming, Normalizing, S
         colors_for_cmap : list
             List of colors for the colormap. Default is ['yellow', 'red'].        
         """
-        if self.pca_per_var is None:
+        if self.pca is None:
             raise ValueError('PCA was not performed yet. Run PCA first.')
         else:
             per_var = self.pca_per_var
@@ -1757,6 +1867,77 @@ class PMF: # Peak Matrix Filtering (and Correcting, Transforming, Normalizing, S
             ('image', name),])
         return fig, ax
     
+    def visualizer_PCA_loadings(self, data, report, output_file_prefix, sufixes = ['.png', '.pdf'], color = 'blue'):
+        """
+        Create a PCA loadings plot. (And suggest candidate features based on the 99.5th percentile of the distances from the origin)
+
+        Parameters
+        ----------
+        data : DataFrame
+            DataFrame with the data.
+        report : pdf_reporter.Report object
+            Report object to add information to.
+        output_file_prefix : str
+            Prefix for the output file.
+        sufixes : list
+            List of sufices for the image files to be saved in. Default is ['.png', '.pdf'].
+        color : str
+            Color for the plot. Default is 'lightblue'.
+
+        """
+        if self.pca is None:
+            raise ValueError('PCA was not performed yet. Run PCA first.')
+        else:
+            pca = self.pca       
+
+        # Get the loadings for the first two principal components
+        loadings = pca.components_[:2, :]
+
+        # Create a figure and axis
+        fig, ax = plt.subplots()
+
+        # Plot the loadings colored by chosen column
+        ax.scatter(loadings[0, :], loadings[1, :], color = color, marker='o', alpha=0.3)
+
+        # Get the explained variance ratios
+        explained_variance_ratios = pca.explained_variance_ratio_[:2]
+
+        # Calculate the distance of each point from the origin, weighted by the explained variance ratios
+        distances = np.sqrt((loadings[0, :]**2 * explained_variance_ratios[0]) + (loadings[1, :]**2 * explained_variance_ratios[1]))
+
+        # Calculate the 99.5th percentile of the distances
+        threshold = np.percentile(distances, 99.5)
+
+        # Annotate the points that are farther than the threshold from the origin
+        candidate_loadings = []
+        for i, feature in enumerate(data.iloc[:,0]):
+            if distances[i] > threshold:
+                ax.text(loadings[0, i], loadings[1, i], feature)
+                candidate_loadings.append(feature)
+
+        # Add the identified candidate features to the list of candidates
+        self.candidate_variables.append(['PCA-Loadings', candidate_loadings]) 
+
+        # Add a title and labels
+        ax.set_title('PCA Loadings')
+        ax.set_xlabel('PC1 Loadings')
+        ax.set_ylabel('PC2 Loadings')
+        name = output_file_prefix + '_PCA_loadings'
+        for sufix in sufixes:
+            plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
+        plt.show()
+
+        #---------------------------------------------
+        # REPORTING
+        text0 = 'PCA loadings plot was created and added into: ' + name
+        text1 = 'Candidate features (99.5th percentile) also highlighted in loadings graph are: ' + str(candidate_loadings)
+        report.add_together([
+            ('text', text0),
+            ('image', name),
+            ('text', text1, 'normal', 'center'),
+            'pagebreak'])
+        return fig, ax
+
     def visualizer_PCA_grouped(self, data, report, metadata, color_column, marker_column, output_file_prefix, sufixes = ['.png', '.pdf'], cmap = 'nipy_spectral', crossout_outliers = False):
         """
         Create a PCA plot with colors based on one column and markers based on another column from the metadata.
@@ -1780,7 +1961,7 @@ class PMF: # Peak Matrix Filtering (and Correcting, Transforming, Normalizing, S
         cmap : str
             Name of the colormap. Default is 'nipy_spectral'. (Other options are 'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
         """
-        if self.pca_data is None:
+        if self.pca is None:
             raise ValueError('PCA was not performed yet. Run PCA first.')
         else:
             pca_data = self.pca_data
@@ -1855,7 +2036,7 @@ class PMF: # Peak Matrix Filtering (and Correcting, Transforming, Normalizing, S
             label = f"{sample_type or ''} - {class_type or ''}".strip(' -')
     
             # Plot the samples
-            plt.scatter(df_samples['PC1'], df_samples['PC2'], color=color, marker=marker, label=sample_type + ' - ' + class_type, alpha=0.6)
+            plt.scatter(df_samples['PC1'], df_samples['PC2'], color=color, marker=marker, label=label, alpha=0.6)
             
             # Compute the covariance matrix and find the major and minor axis 
             covmat = np.cov(df_samples[['PC1', 'PC2']].values.T)
@@ -1865,13 +2046,11 @@ class PMF: # Peak Matrix Filtering (and Correcting, Transforming, Normalizing, S
             # Draw an ellipse around the samples
             ell = Ellipse(xy=(np.mean(df_samples['PC1']), np.mean(df_samples['PC2'])),
                         width=lambda_[0]*2, height=lambda_[1]*2,
-                        angle=np.rad2deg(np.arccos(v[0, 0])), edgecolor=color, lw=2, facecolor='none')
+                        angle = np.rad2deg(np.arctan2(v[1, 0], v[0, 0])), edgecolor=color, lw=2, facecolor='none')
             plt.gca().add_artist(ell)
 
             # Add the legend element
-            color = class_type_colors[sample_type]
-            marker = class_type_markers[class_type]
-            legend_elements.append(Line2D([0], [0], marker=marker, color='w', label=class_type + ' - ' + sample_type,
+            legend_elements.append(Line2D([0], [0], marker=marker, color='w', label=label,
                                         markerfacecolor=color, markersize=10, alpha=0.6))
 
         if crossout_outliers:
@@ -1899,3 +2078,239 @@ class PMF: # Peak Matrix Filtering (and Correcting, Transforming, Normalizing, S
             ('text', text),
             ('image', name),])
         return fig, ax
+
+    def visualizer_PLSDA(self, data, report, metadata, output_file_prefix, sufixes = ['.png', '.pdf'], cmap = 'viridis'):
+        """
+        Visualize the results of PLS-DA.
+
+        Parameters
+        ----------
+        data : DataFrame
+            DataFrame with the data.
+        report : pdf_reporter.Report object
+            Report object to add information to.
+        metadata : DataFrame
+            DataFrame with the metadata.
+        output_file_prefix : str
+            Prefix for the output file.
+        sufixes : list
+            List of sufices for the image files to be saved in. Default is ['.png', '.pdf'].
+        cmap : str
+            Name of the colormap. Default is 'viridis'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
+        
+        """
+        if self.plsda_model is None:
+            raise ValueError('PLS-DA was not performed yet. Run PLS-DA first.')
+        else:
+            model = self.plsda_model
+            response_column_names = self.plda_response_column
+
+        # If metadata does not contain the response column it was performed by combination of columns
+        if response_column_names not in metadata.columns:
+            metadata[str(response_column_names)] = metadata[response_column_names].apply(lambda x: '_'.join(x.map(str)), axis=1)
+        
+        cmap = mpl.cm.get_cmap(cmap)
+
+        # Plot the data in the space of the first two components
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+
+        # Get the unique values of the response column
+        response_unique_values = metadata[str(response_column_names)].unique()
+        num_unique_values = len(response_unique_values)
+        colors = [cmap(i/num_unique_values) for i in range(num_unique_values)]
+        response_colors = dict(zip(response_unique_values, colors))
+
+        # Create a dictionary that maps each unique response value to a unique index
+        response_to_index = {response: index for index, response in enumerate(response_unique_values)}
+
+        # Normalize the indices between 0 and 1
+        normalized_indices = {response: index / num_unique_values for response, index in response_to_index.items()}
+
+        # Create a dictionary that maps each response value to a color
+        response_colors = {response: mpl.colors.rgb2hex(cmap(normalized_indices[response])) for response in response_unique_values}
+
+        # Create a scatter plot of the data
+        for response in response_unique_values:
+            df_samples = model.x_scores_[metadata[str(response_column_names)] == response]
+            ax.scatter(df_samples[:, 0], df_samples[:, 1], color=response_colors[response], label=response)
+        
+        # Draw ellipses around the samples
+        for response in response_unique_values:
+            df_samples = model.x_scores_[metadata[str(response_column_names)] == response]
+            covmat = np.cov(df_samples.T)
+            lambda_, v = np.linalg.eig(covmat)
+            lambda_ = np.sqrt(lambda_)
+            ell = Ellipse(xy=(np.mean(df_samples[:, 0]), np.mean(df_samples[:, 1])),
+                        width=lambda_[0]*2, height=lambda_[1]*2,
+                        angle=np.rad2deg(np.arctan2(v[1, 0], v[0, 0])), edgecolor=response_colors[response], lw=2, facecolor='none')
+            ax.add_artist(ell)
+            
+        ax.set_xlabel('PLS-DA component 1')
+        ax.set_ylabel('PLS-DA component 2')
+        ax.set_title('PLS-DA')
+        ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05), shadow=True, ncol=2)
+        name = output_file_prefix + '_PLS-DA'
+        for sufix in sufixes:
+            plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
+        plt.show()
+
+        #---------------------------------------------
+        # REPORTING
+        text0 = '<b>PLS-DA</b> was visualized with the ' + str(response_column_names) + ' column as a response variable for the model.'
+        text1 = 'PLS-DA plot was created and added into: ' + name
+        report.add_together([
+            ('text', text0),
+            ('text', text1, 'italic', 'left', 8),
+            ('image', name),
+            'pagebreak'])
+        return fig, ax
+    
+    def visualizer_violin_plots(self, data, report, metadata, column_names, output_file_prefix, indexes = 'all', save_into_pdf = False, show_first = True, sufixes = ['.png', '.pdf'], cmap = 'viridis'):
+        """
+        Visualize violin plots of all features grouped by a column from the metadata. (And save them into a single PDF file)
+
+        Parameters
+        ----------
+        data : DataFrame
+            DataFrame with the data.
+        report : pdf_reporter.Report object
+            Report object to add information to.
+        metadata : DataFrame
+            DataFrame with the metadata.
+        column_names : str or list
+            Name of the column to use as a grouping factor. (From metadata, e.g. 'Sample Type' or list for multiple columns ['Sample Type', 'Diagnosis'], etc.)
+        output_file_prefix : str
+            Prefix for the output file.
+        indexes : str, int or list
+            Indexes of the features to create/save violin plots for. Default is 'all'. (Other options are either int or list of ints)
+        save_into_pdf : bool
+            If True, save each violin plot into a PDF file (multiple and later merged into a single PDF file). Default is False. (Usefull but slows down the process)
+        show_first : bool
+            If True, show the first violin plot. Default is True.
+        sufixes : list
+            List of sufices for the image files to be saved in. Default is ['.png', '.pdf'].
+        cmap : str
+            Name of the colormap. Default is 'viridis'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
+
+        """
+
+        if indexes == 'all':
+            indexes = range(len(data))
+        elif isinstance(indexes, int):
+            indexes = [indexes]
+        elif isinstance(indexes, list):
+            indexes = indexes
+        else:
+            raise ValueError('Indexes must be either "all", int or list of ints.')
+        
+        cmap = mpl.cm.get_cmap(cmap)
+
+        example_name = None
+
+        # Transpose 'data' so that rows represent samples and columns represent compounds
+        data_transposed = data.T
+
+        if isinstance(column_names, list):
+                # create temporary column for the response variable by concatenating the response columns
+                metadata[str(column_names)] = metadata[column_names].apply(lambda x: '_'.join(x.map(str)), axis=1)
+                column_names = str(column_names)
+
+        # Add column to 'data_transposed'
+        column = metadata[column_names].to_list()
+        column.insert(0, None)
+        data_transposed[column_names] = column
+
+        column_unique_values = data_transposed[column_names].unique()
+        num_unique_values = len(column_unique_values)
+
+        # Group 'data_transposed' by 'column_name'
+        grouped = data_transposed.groupby(column_names)
+
+        # Delete this column from the data_transposed 
+        data_transposed = data_transposed.drop([column_names], axis=1)
+
+        # Create a folder for the violin plots
+        for index in range(len(data_transposed.columns)):
+            values = []
+            for unique, group in grouped:
+                if unique is not None:
+                    sample_values = group.iloc[:, index].dropna().to_list()  # Drop missing values
+                    if sample_values != [] and all(isinstance(x, (int, float)) for x in sample_values):  # Check if all values are numeric
+                        values.append(sample_values)
+                    else:
+                        values.append([0])  # Add a list with a single zero if data is missing or non-numeric
+                        print(unique)
+
+            if values:  # Check if 'values' is not empty
+                vp = plt.violinplot(values, showmeans=False, showmedians=False, showextrema=False)
+
+                colors = [cmap(i/len(values)) for i in range(len(values))]
+
+                # Change the color and width of the violins
+                for i in range(len(vp['bodies'])):
+                    vp['bodies'][i].set_facecolor(colors[i])
+                    vp['bodies'][i].set_edgecolor(colors[i])
+                    vp['bodies'][i].set_linewidth(1)
+
+                # Add custom mean and median lines
+                for i, v in enumerate(values):
+                    plt.plot([i + 1 - 0.2, i + 1 + 0.2], [np.mean(v)] * 2, color=colors[i], linewidth=0.5)  # mean line
+                    plt.plot([i + 1 - 0.2, i + 1 + 0.2], [np.median(v)] * 2, color=colors[i], linewidth=0.5)  # median line
+
+                # Scatter all the points
+                for i in range(len(values)):
+                    plt.scatter([i+1]*len(values[i]), values[i], color=colors[i], s=5, alpha=1)
+
+                plt.xticks(np.arange(len(column_unique_values)), column_unique_values, rotation=90)
+                cpd_title = data_transposed.loc['cpdID', index]
+                plt.title(cpd_title)
+
+                
+                # Save the figure to a separate image file
+                if save_into_pdf:
+                    file_name = self.main_folder + '/statistics/' + self.report_file_name + f'_violin_plot_{index}.pdf'
+                    plt.savefig(file_name, bbox_inches='tight')
+
+                if show_first:
+                    example_name = self.main_folder + '/statistics/violin-example'
+                    for sufix in sufixes:
+                        plt.savefig(example_name + sufix, bbox_inches='tight', dpi = 300)
+                    plt.show() # Show the plot
+                    returning_vp = vp
+                    show_first = False
+                elif index % 100 == 0:
+                    print(f'{index} violin plots have been created')
+                plt.close()
+        #---------------------------------------------
+        # MERGING all the PDF files into a single PDF file 
+        #(this way we should avoid loading all the plots into memory while creating all the plots)
+        #(we will load them eventually when creating the final PDF file, but it will not slow down the process of creating the plots)   
+
+        # Add all PDF files to a list
+        pdf_files = [self.main_folder + '/statistics/' + self.report_file_name + f'_violin_plot_{index}.pdf' for index in range(len(data_transposed.columns))]
+        name = self.main_folder + '/statistics/' + self.report_file_name + '_violin_plots.pdf'
+        # Merge all PDF files into a single PDF file
+        report.merge_pdfs(pdf_files, name)
+
+        #---------------------------------------------
+        # REPORTING
+        if indexes == 'all':
+            text0 = 'Violin plots of <b>all features</b> grouped by '+ column_names +' column/s, were created and added into one file: <b>' + name + '</b>'
+        else:
+            text0 = 'Violin plots of <b>selected features</b> grouped by '+ column_names +' column/s, were created and added into one file: <b>' + name + '</b>'
+        if example_name:
+            text1 = 'Additionaly an example of such violin plot (shown below) was saved separately as: ' + example_name
+        else:
+            text1 = 'No example of violin plot was saved separately.'
+        report.add_together([
+            ('text', text0),
+            ('text', text1),
+            ('image', example_name),
+            'line'])
+
+        # Delete the temporary PDF files
+        for file in pdf_files:
+            os.remove(file)
+
+        return returning_vp
