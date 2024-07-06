@@ -2230,8 +2230,10 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         # Delete this column from the data_transposed 
         data_transposed = data_transposed.drop([column_names], axis=1)
 
+        pdf_files = []
+
         # Create a folder for the violin plots
-        for index in range(len(data_transposed.columns)):
+        for index in indexes:
             values = []
             for unique, group in grouped:
                 if unique is not None:
@@ -2271,6 +2273,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
                 if save_into_pdf:
                     file_name = self.main_folder + '/statistics/' + self.report_file_name + f'_violin_plot_{index}.pdf'
                     plt.savefig(file_name, bbox_inches='tight')
+                    pdf_files.append(file_name)
 
                 if show_first:
                     example_name = self.main_folder + '/statistics/violin-example'
@@ -2279,8 +2282,9 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
                     plt.show() # Show the plot
                     returning_vp = vp
                     show_first = False
-                elif index % 100 == 0:
-                    print(f'{index} violin plots have been created')
+                #print progress
+                ending = '\n' if index == indexes[-1] else '\r'
+                print(f'Violin plots created: {index+1 / len(indexes) * 100:.2f}%', end=ending)
                 plt.close()
         #---------------------------------------------
         # MERGING all the PDF files into a single PDF file 
@@ -2288,17 +2292,25 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         #(we will load them eventually when creating the final PDF file, but it will not slow down the process of creating the plots)   
 
         # Add all PDF files to a list
-        pdf_files = [self.main_folder + '/statistics/' + self.report_file_name + f'_violin_plot_{index}.pdf' for index in range(len(data_transposed.columns))]
-        name = self.main_folder + '/statistics/' + self.report_file_name + '_violin_plots.pdf'
-        # Merge all PDF files into a single PDF file
-        report.merge_pdfs(pdf_files, name)
+        if save_into_pdf:
+            name = self.main_folder + '/statistics/' + self.report_file_name + '_violin_plots.pdf'
+            # Merge all PDF files into a single PDF file
+            report.merge_pdfs(pdf_files, name)
 
         #---------------------------------------------
         # REPORTING
         if indexes == 'all':
-            text0 = 'Violin plots of <b>all features</b> grouped by '+ column_names +' column/s, were created and added into one file: <b>' + name + '</b>'
+            text0 = 'Violin plots of <b>all features</b> grouped by '+ column_names +' column/s, were created'
+            if save_into_pdf:
+                text0 += ' and added into one file: <b>' + name + '</b>'
+            else:
+                text0 += '.'
         else:
-            text0 = 'Violin plots of <b>selected features</b> grouped by '+ column_names +' column/s, were created and added into one file: <b>' + name + '</b>'
+            text0 = 'Violin plots of <b>selected features</b> grouped by '+ column_names +' column/s, were created'
+            if save_into_pdf:
+                text0 += ' and added into one file: <b>' + name + '</b>'
+            else:
+                text0 += '.'
         if example_name:
             text1 = 'Additionaly an example of such violin plot (shown below) was saved separately as: ' + example_name
         else:
@@ -2310,7 +2322,8 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
             'line'])
 
         # Delete the temporary PDF files
-        for file in pdf_files:
-            os.remove(file)
+        if save_into_pdf:
+            for file in pdf_files:
+                os.remove(file)
 
         return returning_vp
