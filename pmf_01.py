@@ -38,7 +38,7 @@ import pdf_reporter as pdf_rptr
 # report = pdf_rptr.Report(name = report_path, title = title_text)
 # report.initialize_report('processing')
 
-class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transforming, Normalizing, Statistics, etc.)
+class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transforming, Normalizing, Statistics, etc.)
     """
     Class that contains all the methods to filter, correct and transform the peak matrix data.
     """
@@ -56,16 +56,20 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         # NEED SETTERS FOR THESE VARIABLES
 
         # Data variables
+        self.saves_count = 0 # Variable to keep track of the number of saves (to avoid overwriting)
         self.data = None
         self.variable_metadata = None
         self.metadata = None
         self.batch_info = None
+        self.batch = None
         self.QC_samples = None
         self.blank_samples = None
+
 
         # Statistics variables
         self.pca = None
         self.pca_data = None
+        self.pca_df = None
         self.pca_per_var = None
 
         self.plsda = None
@@ -202,6 +206,22 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         print("Sufixes set.")
 
     # SAMPLE LABELS -------
+
+    def set_batch(self, batch):
+        """
+        Set the batch.
+
+        Parameters
+        ----------
+        batch : list
+            List of batches: ['Batch1', 'Batch1', 'Batch1', 'Batch2', 'Batch2', ...]
+        """
+        if batch is None:
+            batch = ['all_one_batch' for i in range(len(self.data.index))] # Dummy batch information (for cases where its all the same batch) (not columns because of the transposition)
+
+        self.batch = batch
+        print("Batch set.")
+
     def set_QC_samples(self, QC_samples):
         """
         Set the QC samples.
@@ -252,29 +272,49 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL DATA HANDLING AND INITILAZITAION METHODS (like: loading, saving, initializing-report, etc.) (keywords like: loader_..., extracter_..., saver_..., but also without keywords)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-    def initalize_report(self, main_folder, report_file_name, report_type = 'processing'):
+    def initializer_report(self, report_type = 'processing'):
         """
         Initialize the report object.
 
         Parameters
         ----------
-        main_folder : str
-            Path to the main folder.
-        report_file_name : str
-            Name of the report file.
         report_type : str
             Settings of the report (title). Default is 'processing'. All options are 'processing', 'statistics'. (To add more options, add them to the pdf_reporter.py file)
         """
-        #---------------------------------------------
-        # REPORTING
+        main_folder = self.main_folder
+        report_file_name = self.report_file_name
+
         report_path = main_folder + '/' + report_file_name + '.pdf'
         title_text = main_folder
+
         report = pdf_rptr.Report(name = report_path, title = title_text)
         report.initialize_report(report_type)
+        
         self.report = report
+
+        print("Report initialized.")
+
         return self.report
     
-    def loader_data(self, data_input_file_name, report, separator = ';', encoding = 'ISO-8859-1'):
+    def initializer_folders(self):
+        """
+        Initialize the folders for the data and the report.
+        """
+        main_folder = self.main_folder
+
+        # Initialize the folders for the data and the report
+        if not os.path.exists(main_folder):
+            os.makedirs(main_folder)
+        if not os.path.exists(main_folder + '/figures'):
+            os.makedirs(main_folder + '/figures')
+        if not os.path.exists(main_folder + '/statistics'):
+            os.makedirs(main_folder + '/statistics')
+
+        print("Folders initialized.")
+
+        return main_folder
+
+    def loader_data(self, data_input_file_name, separator = ';', encoding = 'ISO-8859-1'):
         """
         Load data matrix from a csv file.
 
@@ -282,15 +322,16 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         ----------
         data_input_file_name : str
             Name of the data file.
-        report : pdf_reporter.Report object
-            Report object to add information to.
         separator : str
             Separator used in the data file. Default is ';'.
         encoding : str
             Encoding used in the data file. Default is 'ISO-8859-1'. (UTF-8 is also common.)
         """
+        report = self.report
+
         # Load the data from the csv file
         self.data = pd.read_csv(data_input_file_name, sep = separator,  encoding=encoding )
+        print("Data loaded.")
         #---------------------------------------------
         # REPORTING
         text = 'Data were loaded from: ' + data_input_file_name + ' (data from Compound Discoverer).'
@@ -324,9 +365,10 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         # Drop the 'Duplicate_Count' 
         data.drop('Duplicate_Count', axis=1, inplace=True)
         #check if there are rly no duplicates left
-        remaining_duplicates = data[data['cpdID'].duplicated(keep=False)]
-        print(remaining_duplicates.empty)
-
+        #remaining_duplicates = data[data['cpdID'].duplicated(keep=False)]
+        #print(remaining_duplicates.empty)
+        print("Compound ID was added to the data")
+        
         #---------------------------------------------
         # REPORTING
         text = 'cpdID column was added to the data calculated from mz and RT. Matching ID - distinguished by adding "_1", "_2", etc.'
@@ -350,6 +392,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         for column_index_range in column_index_ranges:
             self.variable_metadata = self.variable_metadata.join(data.iloc[:, column_index_range[0]:column_index_range[1]])
 
+        print("Variable metadata was extracted from the data.")
         #---------------------------------------------
         # REPORTING
         text = 'variable-metadata matrix was created.'
@@ -377,12 +420,14 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         del temp_data
         # Fill NaN values with zero (NaN values are problem when plotted, and we will treat 0s as missing values later)
         self.data.fillna(0, inplace=True)  # Replace NaN with 0
-
+        print("Important columns were kept in the data and rest filtered out.")
+        
         #---------------------------------------------
         # REPORTING
         text = 'data matrix was created.'
         report.add_together([('text', text),
                                 'line'])
+        self.data = data
         return self.data
     
     def loader_batch_info(self, input_batch_info_file):
@@ -393,11 +438,14 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         ----------
         input_batch_info_file : str
             Name of the batch info file.
+
         """
         report = self.report
+
         #but better will be get it straight from the xml file (will do later)
         self.batch_info = pd.read_csv(input_batch_info_file, sep = ';')
-        
+        print("Batch info loaded.")
+
         #---------------------------------------------
         # REPORTING
         text = 'batch_info matrix was loaded from: ' + input_batch_info_file
@@ -412,7 +460,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         Parameters
         ----------
         distinguisher : str
-            Distinguisher used in the file names. Default is 'Batch'. Batches are distinguished in the File Name *_distinguisher_XXX.
+            Distinguisher used in the file names. Default is 'Batch'. Batches are distinguished in the File Name *_distinguisher_XXX. If you have all in one batch and no such distinguisher, then use None.
         format : str
             Format of the date. Default is '%d.%m.%Y %H:%M'.
         """
@@ -432,17 +480,27 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         # Sort the DataFrame based on the 'Creation Date' column
         batch_info = batch_info.sort_values('Creation Date')
 
-        for name in batch_names:
-            split_name = re.split(r'[_|\\]', name) #split by _ or \
-            for i, part in enumerate(split_name):
-                if part == distinguisher:
-                    batches_column.append(split_name[i+1])
-                    break
-
-        if len(batches_column) == 0:
-            raise ValueError("No matches found in 'names' for the distinguisher: " + distinguisher + " in the file names.")
+        if distinguisher is None:
+            # If all in one batch, use None
+            batch_info['Batch'] = ['all_one_batch' for i in range(len(self.batch_info.index))] # Dummy batch information (for cases where its all the same batch) (not columns
+            
+            #---------------------------------------------
+            #REPORTING
+            text = 'All samples are in one batch.'
+            report.add_together([('text', text),
+                                'line'])
         else:
-            batch_info['Batch'] = batches_column
+            for name in batch_names:
+                split_name = re.split(r'[_|\\]', name) #split by _ or \
+                for i, part in enumerate(split_name):
+                    if part == distinguisher:
+                        batches_column.append(split_name[i+1])
+                        break
+
+            if len(batches_column) == 0:
+                raise ValueError("No matches found in 'names' for the distinguisher: " + distinguisher + " in the file names. If you have all in one batch, use None")
+            else:
+                batch_info['Batch'] = batches_column
 
         # Omit not found samples from batch_info
         not_found = []
@@ -461,6 +519,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
                 not_found_indexes.append(i)
                 not_found.append([id, batch_info['Sample Type'].tolist()[i]])
 
+        print("Data reordered based on the creation date from batch info.")
         print("Not found: " + str(len(not_found)) + " ;being: " + str(not_found))
         print("Names not identified: " + str(len(names)) + " ;being: " + str(names))
 
@@ -471,14 +530,22 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         batch_info = batch_info.drop(not_found_indexes)
         batch_info = batch_info.reset_index(drop=True)
 
+        self.batch_info = batch_info
+        self.data = data
+
         #---------------------------------------------
         #REPORTING
-        text0 = 'Batch information was used to (re)order samples.'
-        text1 = 'Not found: ' + str(len(not_found)) + ' ;being: ' + str(not_found)
-        text2 = 'Names not identified: ' + str(len(names)) + ' ;being: ' + str(names)
+        text0 = 'Batch information (creation date) was used to (re)order samples.'
+        if distinguisher is None:
+            text1 = 'All samples are in one batch. Thus "all_one_batch" was used as a batch information.'
+        else:
+            text1 = 'Batches are distinguished in the File Name *_' + distinguisher + '_XXX.'
+        text2 = 'Not found: ' + str(len(not_found)) + ' ;being: ' + str(not_found)
+        text3 = 'Names not identified: ' + str(len(names)) + ' ;being: ' + str(names)
         report.add_together([('text', text0),
                             ('text', text1, 'italic'),
                             ('text', text2, 'italic'),
+                            ('text', text3, 'italic'),
                             ('table', batch_info),
                             'line'])
 
@@ -516,10 +583,16 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
                                 'line'])
         return self.metadata
 
-    def saver_all_datasets(self):
+    def saver_all_datasets(self, version_name = None, versionless = False):
         """
         Save all the processed data into files.
 
+        Parameters
+        ----------
+        version_name : str
+            Name of the version. Default is None. (If None, the version number is added to the file name to avoid overwriting the files if user wants to save multiple times, during workflow.)
+        versionless : bool
+            If True, save the files without version name/number. Default is False. 
         """
         data = self.data
         variable_metadata = self.variable_metadata
@@ -527,33 +600,51 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         report = self.report
         main_folder = self.main_folder
         output_file_prefix = self.output_file_prefix
+        saves_count = self.saves_count + 1
 
+        if versionless:
+            version = ''
+        elif version_name == None:
+            version = '-v' + str(saves_count)
+        else:
+            if type(version_name) != str or type(version_name) != int:
+                raise ValueError("Version name has to be a string. (or a number)")
+            elif str(version_name)[0] != '_' or str(version_name)[0] != '-':
+                version = '_' + str(version_name)
+            else:
+                version = str(version_name)
         data = data.reset_index(drop=True)
-        data.to_csv(main_folder + '/' + output_file_prefix +'-data.csv', sep = ';')
+        data_name = main_folder + '/' + output_file_prefix + '-data' + version + '.csv'
+        data.to_csv(data_name, sep = ';')
 
         variable_metadata = variable_metadata.reset_index(drop=True)
-        variable_metadata.to_csv(main_folder + '/' + output_file_prefix+'-variable_metadata.csv', sep = ';')
+        variable_metadata_name = main_folder + '/' + output_file_prefix + '-variable_metadata' + version + '.csv'
+        variable_metadata.to_csv(variable_metadata_name, sep = ';')
 
         metadata = metadata.reset_index(drop=True)
-        metadata.to_csv(main_folder + '/' + output_file_prefix+'-metadata.csv', sep = ';')
+        metadata_name = main_folder + '/' + output_file_prefix + '-metadata' + version + '.csv'
+        metadata.to_csv(metadata_name, sep = ';')
+
+        print("All datasets were saved.")
         #---------------------------------------------
         #REPORTING
-        text0 = 'Processed data was saved into a files named as follows:'
-        data_list = ['data_before_log-transf.csv', 'data.csv', 'variable_metadata.csv', 'metadata.csv']
+        text0 = 'Processed data was saved into a files named (path) as follows:'
+        data_list = [data_name, variable_metadata_name, metadata_name]
         text1 = ''
         for file in data_list:
-            text1 += '<br/>' + output_file_prefix + '-' + file
+            text1 += '<br/>' + file
         report.add_together([('text', text0, 'bold'),
                             ('text', text1, 'italic', 'center'),
                             'line'])
-        return data, variable_metadata, metadata
+        return True
     
-    def finalize_report(self):
+    def finalizer_report(self):
         """
         Finalize the report. (Has to be called at the end of the script otherwise the pdf file will be "corrupted".)
 
         """
         self.report.finalize_report()
+        print("Report was finalized and is ready for viewing.")
         return self.report
     
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -579,7 +670,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         variable_metadata = variable_metadata[variable_metadata['cpdID'].isin(data['cpdID'])]
         # Reset the index
         variable_metadata.reset_index(drop=True, inplace=True)
-        return data, variable_metadata
+        return variable_metadata
 
     def filter_missing_values(self, qc_threshold = 0.8, sample_threshold = 0.5):
         """
@@ -600,7 +691,6 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         #A) WITHIN QC SAMPLES ---------------------------------------------
         #if value is missing (nan or 0) in more than threshold% of QC samples, then it is removed
         QC_number_threshold = int(sum(is_qc_sample)*qc_threshold)
-        print(QC_number_threshold)
 
         # Identify rows with missing (either missing or 0) values
         QC_missing_values = (data[data.columns[1:][is_qc_sample]].isnull() | (data[data.columns[1:][is_qc_sample]] == 0)).sum(axis=1)
@@ -611,7 +701,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         data
 
         #report how many features were removed
-        print("Number of features removed for threshold (" + str(qc_threshold) + "%): within QC samples: "+ str(len(QC_missing_values[QC_missing_values > QC_number_threshold])) + " ;being: " + str(QC_missing_values[QC_missing_values > QC_number_threshold].index.tolist()))
+        print("Number of features removed for QC threshold (" + str(qc_threshold) + "%): within QC samples: "+ str(len(QC_missing_values[QC_missing_values > QC_number_threshold])) + " ;being: " + str(QC_missing_values[QC_missing_values > QC_number_threshold].index.tolist()))
 
         #B) ACROSS ALL SAMPLES ---------------------------------------------
         #if value is missing (nan or 0) in more than threshold% of samples, then it is removed
@@ -621,14 +711,17 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         missing_values = (data.isnull() | (data == 0)).sum(axis=1)
         #print(missing_values[missing_values > 0])
 
-        print(missing_values)
-
         #Filter out rows with too much (over the threshold) missing values (either missing or 0)
         data = data.loc[missing_values < number_threshold, :]
+        
+        #reset index
         data = data.reset_index(drop=True)
+        #update data and variable_metadata
+        self.data = data
+        self.variable_metadata = self._filter_match_variable_metadata(data, self.variable_metadata)
 
         #report how many features were removed
-        print("Number of features removed for threshold (" + str(sample_threshold) + "%): within all samples: "+ str(len(missing_values[missing_values > number_threshold])) + " ;being: " + str(missing_values[missing_values > number_threshold].index.tolist()))
+        print("Number of features removed for sample threshold (" + str(sample_threshold) + "%): within all samples: "+ str(len(missing_values[missing_values > number_threshold])) + " ;being: " + str(missing_values[missing_values > number_threshold].index.tolist()))
 
         #---------------------------------------------
         #REPORTING
@@ -692,13 +785,16 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
             raise ValueError("Setting not recognized. Choose from: 'median', 'min', 'mean', 'first' or 'last'. (Chooses blank to use as reference value)")
 
         intensity_sample_blank = data[data.columns[1:][is_qc_sample]].median(axis=1)/blank_intensities
-        print(intensity_sample_blank)
         
         #Filter out features (compounds) with intensity sample/blank < blank_threshold
         data = data[intensity_sample_blank >= blank_threshold]
+        
         #reset index
         data = data.reset_index(drop=True)
-
+        #update data and variable_metadata
+        self.data = data
+        self.variable_metadata = self._filter_match_variable_metadata(data, variable_metadata)
+        
         #report how many features were removed
         print("Number of features removed: " + str(len(intensity_sample_blank[intensity_sample_blank < blank_threshold])) + " ;being: " + str(intensity_sample_blank[intensity_sample_blank < blank_threshold].index.tolist()))
 
@@ -719,9 +815,11 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         ----------
         rsd_threshold : float
             Threshold for the RSD%. Default is 20.
+        to_plot : bool or int
+            If True, plot some of the compounds with high RSD. Default is False. (For True plots 4, for any other int, plots that amount (or all if there is less then inputed integer))
         """
         data = self.data
-        variable_metadata = self.variable_metadata
+        variable_metadata = self._filter_match_variable_metadata(data, self.variable_metadata)
         report = self.report
         QC_samples = self.QC_samples
 
@@ -731,8 +829,8 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
 
         #Calculate RSD for only QC samples
         qc_rsd = data[data.columns[1:][is_qc_sample]].std(axis=1)/data[data.columns[1:][is_qc_sample]].mean(axis=1)*100
+        qc_rsd = qc_rsd.copy()
 
-        variable_metadata = self._match_variable_metadata(data, variable_metadata)
         #Add RSD into the data
         variable_metadata['QC_RSD'] = qc_rsd
 
@@ -741,35 +839,45 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         data = data[~over_threshold]
 
         #Plot some of the compounds with high RSD
-        if to_plot:
+        if to_plot == False:
+            number_plotted = 1 #this one will be only in report, but not shown or saved separately
+        elif to_plot == True:
             number_plotted = 4
-            indexes = qc_rsd[qc_rsd > rsd_threshold].index.tolist()[:number_plotted]
-            if len(indexes) < number_plotted:
-                number_plotted = len(indexes)
-            if len(indexes)  == 0:
-                print("No compounds with RSD > " + str(rsd_threshold) + " were found.")
-            else:   
-                alphas = [0.7 if qc else 0.5 for qc in is_qc_sample]
-                colors = ['grey' if qc else 'blue' for qc in is_qc_sample]
-                for i in range(number_plotted):
-                    plt.scatter(range(len(data.columns[1:])), data.iloc[indexes[i],1:], color= colors, alpha=alphas, marker='o')
-                    plt.xlabel('Samples in order')
-                    plt.ylabel('Peak Area')
-                    plt.title("High RSD compound: cpID = " + data.iloc[indexes[i], 0])
+        elif type(to_plot) == int:
+            number_plotted = int(to_plot)
+        else:
+            raise ValueError("to_plot has to be either True or an integer.")
+        indexes = qc_rsd[qc_rsd > rsd_threshold].index.tolist()[:number_plotted]
+        if len(indexes) < number_plotted:
+            number_plotted = len(indexes)
+        if len(indexes)  == 0:
+            print("No compounds with RSD > " + str(rsd_threshold) + " were found.")
+        else:   
+            alphas = [0.7 if qc else 0.5 for qc in is_qc_sample]
+            colors = ['grey' if qc else 'blue' for qc in is_qc_sample]
+            for i in range(number_plotted):
+                plt.scatter(range(len(data.columns[1:])), data.iloc[indexes[i],1:], color= colors, alpha=alphas, marker='o')
+                plt.xlabel('Samples in order')
+                plt.ylabel('Peak Area')
+                plt.title("High RSD compound: cpID = " + data.iloc[indexes[i], 0])
+                if to_plot:
                     for sufix in self.sufixes:
                         plt.savefig(self.main_folder + '/figures/QC_samples_scatter_' + str(indexes[i]) + '_high_RSD-deleted_by_correction' + sufix, dpi=400, bbox_inches='tight')
                         plt.show()
-
+        
+        #reset index
         data = data.reset_index(drop=True)
-        variable_metadata = self._match_variable_metadata(data, variable_metadata)
-        variable_metadata = variable_metadata.reset_index(drop=True)
+        #update data and variable_metadata
+        self.data = data
+        self.variable_metadata = self._filter_match_variable_metadata(data, variable_metadata)
+
         #report how many features were removed
         print("Number of features removed: " + str(len(qc_rsd[qc_rsd > rsd_threshold])) + " ;being: " + str(qc_rsd[qc_rsd > rsd_threshold].index.tolist()))
 
         #---------------------------------------------
         #REPORTING
         text0 = 'Features with RSD% over the threshold (' + str(rsd_threshold) + ') were removed.'
-        if len(indexes) == 0:
+        if qc_rsd[qc_rsd > rsd_threshold].empty:
             text1 = 'No compounds with RSD > ' + str(rsd_threshold) + ' were found.'
             report.add_together([('text', text0),
                             ('text', text1)])
@@ -797,22 +905,30 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         data = self.data
         variable_metadata = self.variable_metadata
         report = self.report
+        batch = self.batch_info
+
+        nm_of_batches = len(batch['Batch'].dropna().unique())
 
         if threshold < 1:
             # If the threshold is less than 1, interpret it as a percentage
             percentage = True
-            threshold = int(threshold * len(data.columns))
+            threshold = int(threshold * nm_of_batches)
         else:
             percentage = False
         lngth = len(data.columns)
+        
         # Filter out features (from both data and variable_metadata) that were corrected in less than the threshold number of batches
         corrected_batches_dict = {cpdID: corrected_batches for cpdID, corrected_batches in zip(variable_metadata['cpdID'], variable_metadata['corrected_batches'])}
-
         removed = data['cpdID'][data['cpdID'].map(corrected_batches_dict).fillna(0) < threshold].tolist()
         data = data[data['cpdID'].map(corrected_batches_dict).fillna(0) >= threshold]
+        
         data.reset_index(drop=True, inplace=True)
+        self.data = data
+
         variable_metadata = variable_metadata[variable_metadata['cpdID'].isin(data['cpdID'])]
         variable_metadata.reset_index(drop=True, inplace=True)
+        self.variable_metadata = self._filter_match_variable_metadata(data, variable_metadata)
+
         print('Number of features removed: ' + str(lngth - len(data.columns)) + ' ;being: ' + str(removed[:10])[:-1] + ', ...')
         #---------------------------------------------
         #REPORTING
@@ -826,6 +942,54 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
                             'line'])
         return self.data
     
+    def filter_out_blanks(self):
+        """
+        Function for filtering out (deleting) blank samples. 
+
+        """
+        data = self.data
+        report = self.report
+        if self.blank_samples == None:
+            raise ValueError("No blank samples were defined.")
+        elif self.blank_samples == False:
+            raise ValueError("Blank samples were already removed.")
+        blank_samples = self.blank_samples
+
+        batch = self.batch
+        batch_info = self.batch_info
+
+        # Filter out blank samples
+        # find indexes of blank samples
+        blank_indexes = [data.columns.get_loc(col) for col in blank_samples] 
+
+        # drop blank samples
+        data = data.drop(data.columns[blank_indexes], axis=1)
+
+        # WE NEED TO UPDATE OTHER DATA STRUCTURES AS WELL
+        # lower the indexes of the blank samples by 1 (-1 because of cpdID column)
+        blank_indexes = [i-1 for i in blank_indexes]
+        # drop blank samples 
+        self.batch = [batch[i] for i in range(len(batch)) if i not in blank_indexes]
+        self.batch_info = batch_info.drop(blank_indexes)
+        self.blank_samples = False
+
+        # drop rows with blank samples
+        self.metadata = self.metadata.drop(self.metadata.index[blank_indexes])
+        self.metadata.reset_index(drop=True, inplace=True)
+        
+        self.data = data
+        self.variable_metadata = self._filter_match_variable_metadata(data, self.variable_metadata)
+        self.variable_metadata.reset_index(drop=True, inplace=True)
+
+        print("Blank samples were removed from the data.")
+        #---------------------------------------------
+        #REPORTING
+        text = 'Blank samples were removed from the data.'
+        report.add_together([('text', text),
+                            'line'])
+        return self.data
+
+
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL TRANSFORMING METHODS (keyword: transformer_...)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -889,7 +1053,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         # Return the z-scores
         return zscores, zscores.mean(axis=0), zscores.std(axis=0)
     
-    def _invert_zscores(zscores, mean, std):
+    def _invert_zscores(self, zscores, mean, std):
         """
         Help function to invert the z-scores for the data.
 
@@ -1080,7 +1244,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         # Return the best smoothing parameter
         return best_p
 
-    def correcter_qc_interpolation(self, show = 'default', batch = None, p_values = 'default', use_log = True, use_norm = True, use_zeros = False, cmap  = 'viridis'):
+    def correcter_qc_interpolation(self, show = 'default', p_values = 'default', use_log = True, use_norm = True, use_zeros = False, cmap  = 'viridis'):
         """
 
         Correct batch effects and systematic errors using the QC samples for interpolation. (Includes visualization of the results.)
@@ -1091,8 +1255,6 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         ----------
         show : list or str
             List of features to show. Default is 'default'. Other options are 'all', 'none' or index of the feature.
-        batch : list
-            List of batches. Default is None. If None = all samples are in one batch else in list (e.g. ['001', '001', ...,  '002', '002', ...]).
         p_values : array or str
             Array with the smoothing parameters. Default is 'default'. If 'default', then the default values are used.
         use_log : bool
@@ -1117,6 +1279,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         QC_samples = self.QC_samples
         main_folder = self.main_folder
         sufixes = self.sufixes
+        batch = self.batch
 
         # If show isnt list or numpy array
         if type(show) != list and type(show) != np.ndarray: 
@@ -1152,10 +1315,12 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
             p_values_to_use = p_values
 
         # Batch information
-        unique_batches = []
-        for b in batch:
-            if b not in unique_batches:
-                unique_batches.append(b)
+        # unique_batches = []
+        # for b in batch:
+        #     if b not in unique_batches:
+        #         unique_batches.append(b)
+        unique_batches = list(set(batch))
+        
         
         # Create a dictionary that maps each unique batch to a unique index
         batch_to_index = {batch: index for index, batch in enumerate(unique_batches)}
@@ -1199,7 +1364,11 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
 
                 if not use_zeros:
                     # Use is_zero mask for this feature
-                    new_zero_value = data[is_zero][feature].max()
+                    if is_zero[feature].any():
+                        # Find the maximum non-zero value for this feature
+                        new_zero_value = data[is_zero][feature].max()
+                    else:
+                        new_zero_value = 0
                     # Mask for zeros
                     isnt_zero = data[feature] > new_zero_value
                     # Combine the masks
@@ -1354,6 +1523,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
             for batch_index, batch_name in enumerate(unique_batches):
                 #This batch mask
                 is_batch = [True if b == batch_name else False for b in batch]
+                
                 # Use fitted spline to correct all the data for the feature batch by batch
                 x = np.arange(len(data[feature]))
                 if splines[batch_index] is not None: # None means that there wasn't enough data for this batch
@@ -1373,8 +1543,17 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
 
                 # Calculate min and max values for the y axis (excluding zeros)
 
-                y_min = data[feature][data[feature] != 0].min()
-                y_max = data[feature].max()
+                non_zero_series = data[feature][data[feature] != 0]
+                if not non_zero_series.empty:
+                    y_min = non_zero_series.min()
+                else:
+                    y_min = 0
+
+                if not data[feature].isna().all():
+                    y_max = data[feature].max()
+                else:
+                    y_max = 1 
+
                 offset = 0.01 * (y_max - y_min) # 1% of the range
                 plt.ylim(y_min - offset, y_max + offset) # Set the y axis limits (no interpolation = zeros - are not shown)
 
@@ -1422,7 +1601,6 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         # Sort the dictionary by the number of occurrences
         chosen_p_values = {k: v for k, v in sorted(chosen_p_values.items(), key=lambda item: item[1], reverse=True)}
 
-
         if use_norm:
             # Calculate new std
             #std_new = df.std(axis=0)
@@ -1434,7 +1612,6 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
             # Invert the log transformation
             data= self._transformer_log(data, invert=True)
 
-
         # Transpose the dataframe back    
         data = data.T
         # Add cpdID as a first column (back)
@@ -1444,6 +1621,9 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         correction_dict = {cpdID: corrected_batches for cpdID, corrected_batches in zip(feature_names, numbers_of_correctable_batches)}
         # Add the correction batch information to the variable metadata
         variable_metadata['corrected_batches'] = variable_metadata['cpdID'].map(correction_dict)
+
+        self.data = data
+        self.variable_metadata = self._filter_match_variable_metadata(data, variable_metadata)
 
         #---------------------------------------------
         #REPORTING 1
@@ -1472,7 +1652,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
     # ALL STATISTICS METHODS (keyword: statistics_...)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-    def statistics_correlation(self, column_name, cmap = 'coolwarm'):
+    def statistics_correlation_means(self, column_name, method = 'pearson', cmap = 'coolwarm', min_max = [-1, 1]):
         """
         Calculate the correlation matrix of the data and create a heatmap.
 
@@ -1480,25 +1660,38 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         ----------
         column_name : str
             Name of the column to group the data by. (From metadata, e.g. 'Sample Type' or 'Sex', 'Age', Diagnosis', etc.)
+        method: str
+            Method to calculate correlation. Default is 'pearson'. (Other options are 'kendall', 'spearman') For more information: https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.corr.html
         cmap : str
             Name of the colormap. Default is 'coolwarm'. (Other options are 'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
+        min_max : list (of 2 elements)
+            Minimum and maximum values for the colorbar. Default is [-1, 1].
         """
         data = self.data
         metadata = self.metadata
         report = self.report
         output_file_prefix = self.output_file_prefix
+        main_folder = self.main_folder
         sufixes = self.sufixes
+        
+        if min_max[0] < -1:
+            min_max[0] = -1
+        if min_max[1] > 1:
+            min_max[1] = 1
+        if min_max[0] > min_max[1]:
+            min_max = [-1, 1]
 
-        # Group the data by 'column_name' and calculate the mean of each group
+
+        #Group the data by 'column_name' and calculate the mean of each group
         grouped_means = data.iloc[:, 1:].groupby(metadata[column_name]).mean()
 
-        # Calculate the correlation matrix of the group means
+        #Calculate the correlation matrix of the group means
         correlation_matrix = grouped_means.T.corr()
 
         # Create a heatmap
         plt.figure(figsize=(10, 8))
-        sns.heatmap(correlation_matrix, cmap=cmap, vmin=-1, vmax=1)
-        name = output_file_prefix + '-group_correlation_matrix_heatmap-0'
+        sns.heatmap(correlation_matrix, cmap=cmap, vmin=min_max[0], vmax=min_max[1])
+        name = main_folder +'/statistics/'+output_file_prefix + '_group_correlation_matrix_heatmap-0'
         for sufix in sufixes:
             plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
         plt.show()
@@ -1531,7 +1724,8 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         pca_df = pd.DataFrame(pca_data, columns=labels) 
 
         self.pca_per_var = per_var
-        self.pca_data = pca_df
+        self.pca_data = pca_data
+        self.pca_df = pca_df
         self.pca = pca
         #---------------------------------------------
         # REPORTING
@@ -1708,16 +1902,14 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         
         return fig, ax
     
-    def visualizer_samples_by_batch(self, show = 'default', batch = None, cmap = 'viridis'):
+    def visualizer_samples_by_batch(self, show = 'default', cmap = 'viridis'):
         """
         Visualize samples by batch. Highlight QC samples.
 
         Parameters
         ----------
         show : list or str
-            List of features to show. Default is 'default'. Other options are 'all', 'none' or index of the feature.
-        batch : list
-            List of batches. Default is None. If None = all samples are in one batch else in list (e.g. ['001', '001', ...,  '002', '002', ...]).
+            List of features to show. Default is 'default' -> 5 samples across the dataset. Other options are 'all', 'none' or index of the feature.
         cmap : str
             Name of the colormap. Default is 'viridis'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
         """
@@ -1726,12 +1918,12 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         QC_samples = self.QC_samples
         main_folder = self.main_folder
         sufixes = self.sufixes
+        batch = self.batch
 
         # If show isnt list or numpy array
         if type(show) != list and type(show) != np.ndarray: 
             if show == 'default':
                 show = np.linspace(0, len(data.columns)-1, 5, dtype=int)
-                print(show)
             elif show == 'all':
                 show = np.arange(len(data.columns))
             elif show == 'none':
@@ -1742,10 +1934,11 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         if batch is None:
             batch = ['all_one_batch' for i in range(len(data.columns) - 1)]  # Dummy batch information (for cases where its all the same batch)
 
-        unique_batches = []
-        for b in batch:
-            if b not in unique_batches:
-                unique_batches.append(b)
+        #unique_batches = []
+        # for b in batch:
+        #     if b not in unique_batches:
+        #         unique_batches.append(b)
+        unique_batches = list(set(batch))
         
         cmap = mpl.cm.get_cmap(cmap)
 
@@ -1768,7 +1961,6 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
 
         # Color based on the batch (and if it is QC sample then always black)
         for feature in show:
-            print(feature)
 
             # Colors and alphas and markers
             colors = ['black' if qc else batch_to_color[batch[i]] for i, qc in enumerate(is_qc_sample)]
@@ -1793,11 +1985,11 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
             gs = gridspec.GridSpec(2, 1, height_ratios=[3, 1])  # 3:1 height ratio
 
             # Create a figure with specified size
-            fig, ax = plt.subplots(figsize=(20, 4))
+            fig = plt.figure(figsize=(20, 4))
 
             # Create a scatter plot to display the QC sample points
             plt.subplot(gs[0])
-            plt.scatter(range(len(data.columns) -1), data.iloc[feature, 1:], color= colors, alpha=alphas, marker='o') 
+            plt.scatter(range(len(data.columns) -1), data.iloc[feature, 1:], color=colors, alpha=alphas, marker='o') 
             plt.plot(np.arange(len(data.columns) - 1)[x_mask][~zeros_mask], data.iloc[feature, 1:][is_qc_sample][~zeros_mask], color='black', linewidth=1)
             plt.xticks(rotation=90)
             plt.xlabel('Samples in order')
@@ -1864,6 +2056,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
             for sufix in sufixes:
                 plt.savefig(plt_name + sufix, dpi=300, bbox_inches='tight')
             plt.show()
+            plt.close()
 
         #---------------------------------------------
         #REPORTING
@@ -1874,7 +2067,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         for image in images:
             report.add_image(image)
         report.add_pagebreak()
-        return fig, ax
+        return fig
 
     def visualizer_PCA_scree_plot(self):
         """
@@ -1883,14 +2076,15 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         """
         report = self.report
         output_file_prefix = self.output_file_prefix
+        main_folder = self.main_folder
         sufixes = self.sufixes
-        if self.pca is None:
+        if self.pca_data is None:
             raise ValueError('PCA was not performed yet. Run PCA first.')
         else:
             per_var = self.pca_per_var
 
         # Create a scree plot
-        fig, ax = plt.figure(figsize=(10, 10))
+        fig = plt.figure(figsize=(10, 10))
         plt.bar(x=range(1, 11), height=per_var[:10])
 
         plt.ylabel('Percentage of Explained Variance')
@@ -1899,7 +2093,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         xticks = list(range(1, 11))
         plt.xticks(xticks)
 
-        name = output_file_prefix + '_scree_plot-percentages'
+        name = main_folder +'/statistics/'+ output_file_prefix +'_scree_plot-percentages'
         for sufix in sufixes:
             plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
         plt.show()
@@ -1911,7 +2105,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         report.add_together([
             ('text', text),
             ('image', name)])
-        return fig, ax
+        return fig
     
     def visualizer_PCA_run_order(self, connected = True, colors_for_cmap = ['yellow', 'red']):
         """
@@ -1927,13 +2121,14 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         data = self.data
         report = self.report
         output_file_prefix = self.output_file_prefix
+        main_folder = self.main_folder
         sufixes = self.sufixes
 
-        if self.pca is None:
+        if self.pca_data is None:
             raise ValueError('PCA was not performed yet. Run PCA first.')
         else:
             per_var = self.pca_per_var
-            pca_data = self.pca_data 
+            pca_df = self.pca_df
 
         # Create a yellow-to-blue colormap
         cmap = LinearSegmentedColormap.from_list("mycmap", colors_for_cmap)
@@ -1953,7 +2148,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
 
         # Plot the data
         for sample_type in sample_type_colors.keys():
-            df_samples = pca_data[data.columns[1:] == sample_type]
+            df_samples = pca_df[data.columns[1:] == sample_type]
             plt.scatter(df_samples['PC1'], df_samples['PC2'], color=sample_type_colors[sample_type], label=sample_type)
 
         plt.title('PCA Graph - run order colored')
@@ -1971,13 +2166,13 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         plt.colorbar(sm, ax=ax, orientation='horizontal', pad=0.2)
 
         if connected:
-            for i in range(len(pca_data)-1):
-                plt.plot([pca_data['PC1'].iloc[i], pca_data['PC1'].iloc[i+1]], [pca_data['PC2'].iloc[i], pca_data['PC2'].iloc[i+1]], color='black', linewidth=0.25)
+            for i in range(len(pca_df)-1):
+                plt.plot([pca_df['PC1'].iloc[i], pca_df['PC1'].iloc[i+1]], [pca_df['PC2'].iloc[i], pca_df['PC2'].iloc[i+1]], color='black', linewidth=0.25)
 
         if connected:
-            name = output_file_prefix + '_PCA_plot_colored_by_run_order-connected'
+            name = main_folder +'/statistics/'+ output_file_prefix + '_PCA_plot_colored_by_run_order-connected'
         else:
-            name = output_file_prefix + '_PCA_plot_colored_by_run_order'
+            name = main_folder +'/statistics/'+ output_file_prefix + '_PCA_plot_colored_by_run_order'
         for sufix in sufixes:
             plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
         plt.show()
@@ -1992,33 +2187,44 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
             ('image', name),])
         return fig, ax
     
-    def visualizer_PCA_loadings(self, color = 'blue'):
+    def visualizer_PCA_loadings(self, components = 'all', color = 'blue'):
         """
         Create a PCA loadings plot. (And suggest candidate features based on the 99.5th percentile of the distances from the origin)
 
         Parameters
         ----------
+        components: int or 'all'
+            Decide for how many first components you wanna show loadings, usually you wanna use 2 or 'all' which takes into account all componments. Default is 'all'.
         color : str
             Color for the plot. Default is 'lightblue'.
-
         """
         data = self.data
         report = self.report
         output_file_prefix = self.output_file_prefix
+        main_folder = self.main_folder
         sufixes = self.sufixes
-        if self.pca is None:
+        if self.pca_data is None:
             raise ValueError('PCA was not performed yet. Run PCA first.')
         else:
             pca = self.pca       
 
-        # Get the loadings for the first two principal components
-        loadings = pca.components_[:2, :]
+        if components == 'all':
+            loadings = pca.components_
+        elif isinstance(components, int):
+            if components > pca.n_components_:
+                loadings = pca.components_
+                print('You cannot show more components then there is; all are shown.')
+            else:
+                # Get the loadings for the first X principal components
+                loadings = pca.components_[:components, :]
+        else:
+            raise ValueError('The components parameter must be an integer or "all".')
 
         # Create a figure and axis
         fig, ax = plt.subplots()
 
         # Plot the loadings colored by chosen column
-        ax.scatter(loadings[0, :], loadings[1, :], color = color, marker='o', alpha=0.3)
+        plt.scatter(loadings[0, :], loadings[1, :], color = color, marker='o', alpha=0.3)
 
         # Get the explained variance ratios
         explained_variance_ratios = pca.explained_variance_ratio_[:2]
@@ -2033,7 +2239,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         candidate_loadings = []
         for i, feature in enumerate(data.iloc[:,0]):
             if distances[i] > threshold:
-                ax.text(loadings[0, i], loadings[1, i], feature)
+                plt.text(loadings[0, i], loadings[1, i], feature)
                 candidate_loadings.append(feature)
 
         # Add the identified candidate features to the list of candidates
@@ -2043,7 +2249,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         ax.set_title('PCA Loadings')
         ax.set_xlabel('PC1 Loadings')
         ax.set_ylabel('PC2 Loadings')
-        name = output_file_prefix + '_PCA_loadings'
+        name = main_folder +'/statistics/'+ output_file_prefix + '_PCA_loadings'
         for sufix in sufixes:
             plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
         plt.show()
@@ -2057,17 +2263,17 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
             ('image', name),
             ('text', text1, 'normal', 'center'),
             'pagebreak'])
-        return fig, ax
-
+        return fig
+    
     def visualizer_PCA_grouped(self, color_column, marker_column, cmap = 'nipy_spectral', crossout_outliers = False):
         """
         Create a PCA plot with colors based on one column and markers based on another column from the metadata.
 
         Parameters
         ----------
-        color_column : str
+        color_column : str or None
             Name of the column to use for coloring. ! If you input 'None', then all will be grey. (From metadata, e.g. 'Age', etc.)
-        marker_column : str
+        marker_column : str or None
             Name of the column to use for markers. ! If you input 'None', then all markers will be same. (From metadata e.g. 'Diagnosis', etc.)
         cmap : str
             Name of the colormap. Default is 'nipy_spectral'. (Other options are 'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
@@ -2077,11 +2283,12 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         metadata = self.metadata
         report = self.report
         output_file_prefix = self.output_file_prefix
+        main_folder = self.main_folder
         sufixes = self.sufixes
-        if self.pca is None:
+        if self.pca_data is None:
             raise ValueError('PCA was not performed yet. Run PCA first.')
         else:
-            pca_data = self.pca_data
+            pca_df = self.pca_df
             per_var = self.pca_per_var
         ## PCA for both (with different markers)
         column_name = color_column
@@ -2090,11 +2297,11 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         cmap = mpl.colormaps[cmap]
 
         if crossout_outliers:
-            pca_data['PC1_zscore'] = zscore(pca_data['PC1'])
-            pca_data['PC2_zscore'] = zscore(pca_data['PC2'])
+            pca_df['PC1_zscore'] = zscore(pca_df['PC1'])
+            pca_df['PC2_zscore'] = zscore(pca_df['PC2'])
 
             # Identify outliers as any points where the absolute z-score is greater than 3
-            outliers = pca_data[(np.abs(pca_data['PC1_zscore']) > 3) | (np.abs(pca_data['PC2_zscore']) > 3)]
+            outliers = pca_df[(np.abs(pca_df['PC1_zscore']) > 3) | (np.abs(pca_df['PC2_zscore']) > 3)]
         
 
         #get the color (for first column)
@@ -2139,16 +2346,16 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
 
             # Adjust the selection logic to handle cases where one of the types is None
             if sample_type is not None and class_type is not None:
-                df_samples = pca_data[(metadata[column_name] == sample_type) & (metadata[second_column_name] == class_type)]
+                df_samples = pca_df.loc[(metadata[column_name] == sample_type) & (metadata[second_column_name] == class_type)]
             elif sample_type is not None:
-                df_samples = pca_data[metadata[column_name] == sample_type]
+                df_samples = pca_df.loc[metadata[column_name] == sample_type]
             elif class_type is not None:
-                df_samples = pca_data[metadata[second_column_name] == class_type]
-            
+                df_samples = pca_df.loc[metadata[second_column_name] == class_type]
+
             # Get the color and marker, handling cases where one of the types is None
             color = 'grey' if sample_type is None else class_type_colors.get(sample_type, 'grey')
             marker = 'o' if class_type is None else class_type_markers.get(class_type, 'o')
-            
+
             # Construct label based on available types
             label = f"{sample_type or ''} - {class_type or ''}".strip(' -')
     
@@ -2179,7 +2386,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         plt.title('PCA Graph')
         plt.xlabel('PC1 - {0}%'.format(per_var[0]))
         plt.ylabel('PC2 - {0}%'.format(per_var[1]))
-        name = output_file_prefix + 'detailed_PCA'
+        name = main_folder +'/statistics/'+ output_file_prefix + '_detailed_PCA'
         for sufix in sufixes:
             plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
         plt.show()
@@ -2209,13 +2416,14 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         metadata = self.metadata
         report = self.report
         output_file_prefix = self.output_file_prefix
+        main_folder = self.main_folder
         sufixes = self.sufixes
 
         if self.plsda_model is None:
             raise ValueError('PLS-DA was not performed yet. Run PLS-DA first.')
         else:
             model = self.plsda_model
-            response_column_names = self.plda_response_column
+            response_column_names = self.plsda_response_column
 
         # If metadata does not contain the response column it was performed by combination of columns
         if response_column_names not in metadata.columns:
@@ -2262,7 +2470,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         ax.set_ylabel('PLS-DA component 2')
         ax.set_title('PLS-DA')
         ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05), shadow=True, ncol=2)
-        name = output_file_prefix + '_PLS-DA'
+        name = main_folder +'/statistics/'+output_file_prefix + '_PLS-DA'
         for sufix in sufixes:
             plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
         plt.show()
@@ -2278,7 +2486,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
             'pagebreak'])
         return fig, ax
     
-    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = False, show_first = True, cmap = 'viridis'):
+    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, show_first = True, cmap = 'viridis'):
         """
         Visualize violin plots of all features grouped by a column from the metadata. (And save them into a single PDF file)
 
@@ -2289,7 +2497,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
         indexes : str, int or list
             Indexes of the features to create/save violin plots for. Default is 'all'. (Other options are either int or list of ints)
         save_into_pdf : bool
-            If True, save each violin plot into a PDF file (multiple and later merged into a single PDF file). Default is False. (Usefull but slows down the process)
+            If True, save each violin plot into a PDF file (multiple and later merged into a single PDF file). Default is True. (Usefull but slows down the process)
         show_first : bool
             If True, show the first violin plot. Default is True.
         cmap : str
@@ -2377,7 +2585,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
                 
                 # Save the figure to a separate image file
                 if save_into_pdf:
-                    file_name = self.main_folder + '/statistics/' + self.report_file_name + f'_violin_plot_{index}.pdf'
+                    file_name = self.main_folder + '/statistics/' + self.report_file_name+ '-' +str(column_names)+ f'_violin_plot_{index}.pdf'
                     plt.savefig(file_name, bbox_inches='tight')
                     pdf_files.append(file_name)
 
@@ -2399,7 +2607,7 @@ class Worklflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transform
 
         # Add all PDF files to a list
         if save_into_pdf:
-            name = self.main_folder + '/statistics/' + self.report_file_name + '_violin_plots.pdf'
+            name = self.main_folder + '/statistics/' + self.report_file_name + '-'+ str(column_names)+ '_violin_plots.pdf'
             # Merge all PDF files into a single PDF file
             report.merge_pdfs(pdf_files, name)
 
