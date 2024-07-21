@@ -28,7 +28,7 @@ from sklearn.cross_decomposition import PLSRegression
 from sklearn.metrics import mean_squared_error, r2_score
 
 # My modules
-import pdf_reporter as pdf_rptr
+import pdf_reporter.pdf_reporter as pdf_rptr #since repo is a folder, now you can simply clone it
 
 # #---------------------------------------------
 # # REPORTING
@@ -251,7 +251,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         """
         Perform all the initialization steps of the workflow.
         """
-        self.report = self._initalize_report(self.main_folder, self.report_file_name)
+        self.report = self.initalizer_report(self.main_folder, self.report_file_name)
         self.functions = [self.loader_data, self.add_cpdID, self.extracter_variable_metadata, self.extracter_data, self.loader_batch_info, self.batch_by_name_reorder, self.extracter_metadata]
         print("Workflow initialized.")
     
