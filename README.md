@@ -5,5 +5,5 @@ This is a WIP pipeline to perform Peak Matrix Filtering (PMF = previous working 
 
 If you wanna try the functionality:
 
-https://colab.research.google.com/github/Najlaron/PMF-pipeline/blob/main/demo-PySPRESSO-pipeline.ipynb 
+https://colab.research.google.com/github/Najlaron/PMF-pipeline/blob/main/demo-PySPRESSO-pipeline.ipynb
 
