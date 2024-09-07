@@ -1451,10 +1451,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     # Mask for zeros
                     isnt_zero = data[feature] > new_zero_value
                     # Combine the masks
-                    qc_indexes = qc_indexes & pd.Series(isnt_zero)
+                    qc_indexes = pd.Series(qc_indexes) & pd.Series(isnt_zero)
 
                 #Combine the masks
-                qc_indexes_batched = qc_indexes & pd.Series(is_batch)
+                qc_indexes_batched = pd.Series(qc_indexes) & pd.Series(is_batch)
                 qc_data = data[qc_indexes_batched] 
 
                 x = np.arange(len(data))[qc_indexes_batched]
