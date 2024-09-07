@@ -2595,8 +2595,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 raise ValueError('Showing all violin plots without saving them into a PDF file is not recommended due to the large number of plots.')
         elif isinstance(indexes, int):
             indexes = [indexes]
+            all_indexes = False
         elif isinstance(indexes, list):
             indexes = indexes
+            all_indexes = False
         else:
             raise ValueError('Indexes must be either "all", int or list of ints.')
         
