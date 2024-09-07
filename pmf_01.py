@@ -2678,6 +2678,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     for sufix in sufixes:
                         plt.savefig(example_name + sufix, bbox_inches='tight', dpi = 300)
                     plt.show() # Show the plot
+                    returning_vp = vp
                 elif save_first and all_indexes: # Save the first violin plot (is ignored if indexes are not 'all')
                     example_name = self.main_folder + '/statistics/violin-example'
                     for sufix in sufixes:
