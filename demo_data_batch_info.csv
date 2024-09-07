@@ -1,4 +1,4 @@
-﻿Study File ID;File Name;Creation Date;RT Range [min];Instrument Name;Software Revision;Alignment Score;Sample Type;Polarity;Replicates;Type;Type 2;Max. Mass [Da]
+Study File ID;File Name;Creation Date;RT Range [min];Instrument Name;Software Revision;Alignment Score;Sample Type;Polarity;Replicates;Type;Type 2;Max. Mass [Da]
 F7;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F01.raw;24.03.2022 16:46;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.637;Blank;POS;Support Samples;Blank;Blank;1050
 F92;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F02.raw;24.03.2022 18:19;0.00 - 15.01;Orbitrap Elite;2.7.0 SP2;0.432;Identification Only;POS;Support Samples;QC-IS;QC;410
 F93;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F03.raw;24.03.2022 18:35;0.00 - 15.02;Orbitrap Elite;2.7.0 SP2;0.482;Identification Only;POS;Support Samples;QC-IS;QC;320
