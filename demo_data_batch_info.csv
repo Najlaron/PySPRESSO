@@ -25,7 +25,7 @@ F85;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_
 F41;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F24.raw;25.03.2022 0:04;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.963;Sample;POS;3;Type 1;Class 7;1050
 F9;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F25.raw;25.03.2022 0:19;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.772;Sample;POS;1;Type 0;Class 1;1050
 F82;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F26.raw;25.03.2022 0:35;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.948;Sample;POS;2;Type 1;Class 9;1050
-F33;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F27.raw;25.03.2022 0:50;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.977;Sample;POS;1;Type 0;Class 9;1050
+F33;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F27.raw;25.03.2022 0:50;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.977;Sample;POS;1;Type 1;Class 9;1050
 F45;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F28.raw;25.03.2022 1:06;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.769;Sample;POS;1;Type 0;Class 0;1050
 F101;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F29.raw;25.03.2022 1:21;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.993;Quality Control;POS;Support Samples;QC-IS;QC;1050
 F54;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F30.raw;25.03.2022 1:36;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.959;Sample;POS;1;Type 1;Class 8;1050
@@ -59,7 +59,7 @@ F105;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample
 F6;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F58.raw;25.03.2022 8:49;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.951;Sample;POS;3;Type 1;Class 10;1050
 F40;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F59.raw;25.03.2022 9:05;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.859;Sample;POS;3;Type 0;Class 7;1050
 F37;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F60.raw;25.03.2022 9:20;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.962;Sample;POS;1;Type 1;Class 7;1050
-F83;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F61.raw;25.03.2022 9:36;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.957;Sample;POS;3;Type 0;Class 9;1050
+F83;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F61.raw;25.03.2022 9:36;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.957;Sample;POS;3;Type 1;Class 9;1050
 F13;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F62.raw;25.03.2022 9:51;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.793;Sample;POS;3;Type 0;Class 1;1050
 F32;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F63.raw;25.03.2022 10:07;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.968;Sample;POS;3;Type 1;Class 7;1050
 F106;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F64.raw;25.03.2022 10:22;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.991;Quality Control;POS;Support Samples;QC-IS;QC;1050
@@ -73,7 +73,7 @@ F107;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample
 F38;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F72.raw;25.03.2022 12:26;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.728;Sample;POS;2;Type 0;Class 7;1050
 F69;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F73.raw;25.03.2022 12:41;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.839;Sample;POS;2;Type 1;Class 3;1050
 F3;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F74.raw;25.03.2022 12:57;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.842;Sample;POS;3;Type 1;Class 2;1050
-F34;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F75.raw;25.03.2022 13:12;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.86;Sample;POS;2;Type 0;Class 9;1050
+F34;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F75.raw;25.03.2022 13:12;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.86;Sample;POS;2;Type 1;Class 9;1050
 F79;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F76.raw;25.03.2022 13:28;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.684;Sample;POS;3;Type 0;Class 5;1050
 F84;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F77.raw;25.03.2022 13:43;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.849;Sample;POS;1;Type 1;Class 8;1050
 F108;D:\Projects_Orbitrap_Elite\User_name\Project_name\HILIC_POS\full_raw\sample_F78.raw;25.03.2022 13:59;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;0.866;Quality Control;POS;Support Samples;QC-IS;QC;1050

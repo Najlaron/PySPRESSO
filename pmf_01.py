@@ -430,7 +430,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.data = data
         return self.data
     
-    def loader_batch_info(self, input_batch_info_file):
+    def loader_batch_info(self, input_batch_info_file, separator = ';', encoding = 'ISO-8859-1'):
         """
         Load batch_info matrix from a csv file.
 
@@ -438,12 +438,15 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         ----------
         input_batch_info_file : str
             Name of the batch info file.
-
+        separator : str
+            Separator used in the data file. Default is ';'.
+        encoding: str
+            Encoding used in the data file. Default is 'ISO-8859-1'. (UTF-8 is also common.)
         """
         report = self.report
 
         #but better will be get it straight from the xml file (will do later)
-        self.batch_info = pd.read_csv(input_batch_info_file, sep = ';')
+        self.batch_info = pd.read_csv(input_batch_info_file, sep = separator , encoding=encoding)
         print("Batch info loaded.")
 
         #---------------------------------------------
@@ -479,6 +482,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         # Sort the DataFrame based on the 'Creation Date' column
         batch_info = batch_info.sort_values('Creation Date')
+        batch_info = batch_info.reset_index(drop=True)
 
         if distinguisher is None:
             # If all in one batch, use None
@@ -575,7 +579,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         metadata = batch_info[columns_to_keep].copy()
         metadata['Sample File'] = area_columns.columns
         self.metadata = metadata
-
         #---------------------------------------------
         # REPORTING
         text = 'metadata matrix was created from batch_info by choosing columns: ' + str(columns_to_keep) + '.'
@@ -941,7 +944,83 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                             ('text', text2),
                             'line'])
         return self.data
-    
+
+    def drop_samples(self, column_indexes_to_drop, cpdID_as_zero = True):
+        """
+        Function for filtering out (deleting) specific samples. (Columns) Such as standards, ... and others you wanna omit from the analysis.
+
+        Parameters
+        ----------
+        column_indexes_to_drop : list
+            List of column indexes to drop.
+        cpdID_as_zero : bool
+            If True, cpdID is counted as a column indexed at 0; if false, 0 is index of first sample. Default is True = first sample has index 1 (0 is for cpdID).
+        """
+        data = self.data
+        report = self.report
+        metadata = self.metadata
+        batch = self.batch
+        batch_info = self.batch_info
+
+        if cpdID_as_zero == True and 0 in column_indexes_to_drop:
+            raise ValueError("cpdID cannot be dropped; your indexes cannot include 0 when cpdID_as_zero is True.")
+        
+        # Drop columns
+        if cpdID_as_zero == False:
+            column_indexes_to_drop = [i+1 for i in column_indexes_to_drop]
+
+        data = data.drop(data.columns[column_indexes_to_drop], axis=1)
+        # Drop rows with dropped samples from metadata
+        metadata = metadata.drop(metadata.index[column_indexes_to_drop])
+        metadata.reset_index(drop=True, inplace=True)
+        # Update batch_info
+        batch_info = batch_info.drop(column_indexes_to_drop)
+        batch_info.reset_index(drop=True, inplace=True)
+        # Update batch
+        batch = [batch[i] for i in range(len(batch)) if i not in column_indexes_to_drop]
+        # Update variable_metadata
+        variable_metadata = self._filter_match_variable_metadata(data, self.variable_metadata)
+        
+        # Update the object variables
+        self.data = data
+        self.metadata = metadata
+        self.batch_info = batch_info
+        self.batch = batch
+        self.variable_metadata = variable_metadata
+
+        print('Specified samples: '+ str(column_indexes_to_drop) +' were removed from the data.')
+        #---------------------------------------------
+        #REPORTING
+        text0 = 'Specified samples were removed from the data.'
+        text1 = 'Number of samples removed: ' + str(len(column_indexes_to_drop)) + ' ;being: ' + str(column_indexes_to_drop[:10])[:-1] + ', ...'
+        report.add_together([('text', text0),
+                            ('text', text1),
+                            'line'])          
+        return self.data
+
+    def delete_samples(self, column_indexes_to_drop):
+        """
+        Function for filtering out (deleting) specific samples. (Columns) Such as standards, ... and others you wanna omit from the analysis.
+        
+        Parameters
+        ----------
+        column_indexes_to_drop : list
+            List of column indexes to drop.
+        """
+        return self.drop_samples(column_indexes_to_drop)
+
+    def filter_out_samples(self, column_indexes_to_drop):
+        """
+        Function for filtering out (deleting) specific samples. (Columns) Such as standards, ... and others you wanna omit from the analysis.
+
+        Parameters
+        ----------
+        column_indexes_to_drop : list
+            List of column indexes to drop.
+        """
+        return self.drop_samples(column_indexes_to_drop)
+
+
     def filter_out_blanks(self):
         """
         Function for filtering out (deleting) blank samples. 
@@ -1372,10 +1451,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     # Mask for zeros
                     isnt_zero = data[feature] > new_zero_value
                     # Combine the masks
-                    qc_indexes = qc_indexes & isnt_zero
+                    qc_indexes = qc_indexes & pd.Series(isnt_zero)
 
                 #Combine the masks
-                qc_indexes_batched = qc_indexes & is_batch
+                qc_indexes_batched = qc_indexes & pd.Series(is_batch)
                 qc_data = data[qc_indexes_batched] 
 
                 x = np.arange(len(data))[qc_indexes_batched]
@@ -2486,7 +2565,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig, ax
     
-    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, show_first = True, cmap = 'viridis'):
+    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, save_first = True, cmap = 'viridis'):
         """
         Visualize violin plots of all features grouped by a column from the metadata. (And save them into a single PDF file)
 
@@ -2497,9 +2576,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         indexes : str, int or list
             Indexes of the features to create/save violin plots for. Default is 'all'. (Other options are either int or list of ints)
         save_into_pdf : bool
-            If True, save each violin plot into a PDF file (multiple and later merged into a single PDF file). Default is True. (Usefull but slows down the process)
-        show_first : bool
-            If True, show the first violin plot. Default is True.
+            If True, save each violin plot into a PDF file (multiple and later merged into a single PDF file). Default is True. (Usefull but slows down the process) If False, violin plots will be only shown.
+        save_first : bool
+            If True, save the first violin plot (and show it). Default is True. (If False, only the PDF file will be created.) If indexes are not 'all', then this parameter is ignored and all plots for specified indexes are saved.
         cmap : str
             Name of the colormap. Default is 'viridis'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
 
@@ -2510,7 +2589,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         sufixes = self.sufixes
 
         if indexes == 'all':
+            all_indexes = True
             indexes = range(len(data))
+            if save_into_pdf == False:
+                raise ValueError('Showing all violin plots without saving them into a PDF file is not recommended due to the large number of plots.')
         elif isinstance(indexes, int):
             indexes = [indexes]
         elif isinstance(indexes, list):
@@ -2589,13 +2671,18 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     plt.savefig(file_name, bbox_inches='tight')
                     pdf_files.append(file_name)
 
-                if show_first:
+                if not all_indexes: # Specific indexes were selected
+                    example_name = self.main_folder + '/statistics/violin-example-' + str(index)
+                    for sufix in sufixes:
+                        plt.savefig(example_name + sufix, bbox_inches='tight', dpi = 300)
+                    plt.show() # Show the plot
+                elif save_first and all_indexes: # Save the first violin plot (is ignored if indexes are not 'all')
                     example_name = self.main_folder + '/statistics/violin-example'
                     for sufix in sufixes:
                         plt.savefig(example_name + sufix, bbox_inches='tight', dpi = 300)
                     plt.show() # Show the plot
                     returning_vp = vp
-                    show_first = False
+                    save_first = False
                 #print progress
                 ending = '\n' if index == indexes[-1] else '\r'
                 print(f'Violin plots created: {index+1 / len(indexes) * 100:.2f}%', end=ending)
