@@ -1794,6 +1794,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             Name of the colormap. Default is 'coolwarm'. (Other options are 'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
         min_max : list (of 2 elements)
             Minimum and maximum values for the colorbar. Default is [-1, 1].
+        plt_name_suffix : str
+            Suffix for the plot name. Default is 'group_correlation_matrix_heatmap'. (Useful when using multiple times - to avoid overwriting the previous plot)
         """
         data = self.data
         metadata = self.metadata
@@ -1981,6 +1983,11 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
     def visualizer_boxplot(self, plt_name_suffix = 'boxplot_first_view'):
         """
         Create a boxplot of all samples.  Can depict if there is a problem with the data (retention time shift too big -> re-run alignment; batch effect, etc.)
+
+        Parameters
+        ----------
+        plt_name_suffix : str
+            Suffix for the plot name. Default is 'boxplot_first_view'. (Useful when using multiple times - to avoid overwriting the previous plot)
     
         """
         data = self.data
@@ -2039,6 +2046,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             List of features to show. Default is 'default' -> 5 samples across the dataset. Other options are 'all', 'none' or index of the feature.
         cmap : str
             Name of the colormap. Default is 'viridis'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
+        plt_name_suffix : str
+            Suffix for the plot name. Default is 'batches_first_view'. (Useful when using multiple times - to avoid overwriting the previous plot)
         """
         data = self.data
         report = self.report
@@ -2200,6 +2209,11 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         """
         Create a scree plot for PCA.
 
+        Parameters
+        ----------
+        plt_name_suffix : str
+            Suffix for the plot name. Default is 'scree_plot-percentages'. (Useful when using multiple times - to avoid overwriting the previous plot)
+
         """
         report = self.report
         output_file_prefix = self.output_file_prefix
@@ -2243,7 +2257,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         connected : bool
             If True, the samples will be connected by a line. Default is True.
         colors_for_cmap : list
-            List of colors for the colormap. Default is ['yellow', 'red'].        
+            List of colors for the colormap. Default is ['yellow', 'red']. 
+        plt_name_suffix : str
+            Suffix for the plot name. Default is 'PCA_plot_colored_by_run_order'. (Useful when using multiple times - to avoid overwriting the previous plot)       
         """
         data = self.data
         report = self.report
@@ -2324,6 +2340,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             Decide for how many first components you wanna show loadings, usually you wanna use 2 or 'all' which takes into account all componments. Default is 'all'.
         color : str
             Color for the plot. Default is 'lightblue'.
+        plt_name_suffix : str
+            Suffix for the plot name. Default is 'PCA_loadings'. (Useful when using multiple times - to avoid overwriting the previous plot)
         """
         data = self.data
         report = self.report
@@ -2405,7 +2423,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         cmap : str
             Name of the colormap. Default is 'nipy_spectral'. (Other options are 'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
         crossout_outliers : bool
-            If True, the outliers will be marked with an 'X'. Default is False.        
+            If True, the outliers will be marked with an 'X'. Default is False.
+        plt_name_suffix : str
+            Suffix for the plot name. Default is 'PCA_grouped'. (Useful when using multiple times - to avoid overwriting the previous plot)  
         """
         metadata = self.metadata
         report = self.report
@@ -2538,7 +2558,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         ----------
         cmap : str
             Name of the colormap. Default is 'viridis'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
-        
+        plt_name_suffix : str
+            Suffix for the plot name. Default is 'PLS-DA'. (Useful when using multiple times - to avoid overwriting the previous plot)
         """
         metadata = self.metadata
         report = self.report
@@ -2629,7 +2650,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             If True, save the first violin plot (and show it). Default is True. (If False, only the PDF file will be created.) If indexes are not 'all', then this parameter is ignored and all plots for specified indexes are saved.
         cmap : str
             Name of the colormap. Default is 'viridis'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
-
+        plt_name_suffix : str
+            Suffix for the plot name. Default is 'violin_plots'. (Useful when using multiple times - to avoid overwriting the previous plot)
         """
         data = self.data
         metadata = self.metadata
