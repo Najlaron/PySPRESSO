@@ -53,7 +53,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.report_file_name = self.name
         self.main_folder = self.name
         self.output_file_prefix = self.name
-        self.sufixes = ['.png', '.pdf']
+        self.suffixes = ['.png', '.pdf']
         # NEED SETTERS FOR THESE VARIABLES
 
         # Data variables
@@ -194,17 +194,17 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.output_file_prefix = output_file_prefix
         print("Output file prefix set.")
     
-    def set_sufixes(self, sufixes):
+    def set_suffixes(self, suffixes):
         """
-        Set the sufixes.
+        Set the suffixes.
 
         Parameters
         ----------
-        sufixes : list
-            List of sufixes.
+        suffixes : list
+            List of suffixes.
         """
-        self.sufixes = sufixes
-        print("Sufixes set.")
+        self.suffixes = suffixes
+        print("suffixes set.")
 
     # SAMPLE LABELS -------
 
@@ -865,8 +865,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 plt.ylabel('Peak Area')
                 plt.title("High RSD compound: cpID = " + data.iloc[indexes[i], 0])
                 if to_plot:
-                    for sufix in self.sufixes:
-                        plt.savefig(self.main_folder + '/figures/QC_samples_scatter_' + str(indexes[i]) + '_high_RSD-deleted_by_correction' + sufix, dpi=400, bbox_inches='tight')
+                    for suffix in self.suffixes:
+                        plt.savefig(self.main_folder + '/figures/QC_samples_scatter_' + str(indexes[i]) + '_high_RSD-deleted_by_correction' + suffix, dpi=400, bbox_inches='tight')
                         plt.show()
         
         #reset index
@@ -1406,7 +1406,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report = self.report
         QC_samples = self.QC_samples
         main_folder = self.main_folder
-        sufixes = self.sufixes
+        suffixes = self.suffixes
         batch = self.batch
 
         # If show isnt list or numpy array
@@ -1641,9 +1641,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 plt.text(x=-0.005, y=0.65, s='Zero Counts', fontsize=15, transform=plt.gca().transAxes, ha='right', va='center')
 
                 #Save the plot
-                for sufix in sufixes:
+                for suffix in suffixes:
                     plt_name = main_folder + '/figures/QC_correction_' + str(feature) + '_original'
-                    plt.savefig(plt_name + sufix, dpi=300, bbox_inches='tight')
+                    plt.savefig(plt_name + suffix, dpi=300, bbox_inches='tight')
                 plot_names_orig.append(plt_name +'.png')
                 plt.show()
 
@@ -1718,9 +1718,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
                 
                 #Save the plot
-                for sufix in sufixes:
+                for suffix in suffixes:
                     plt_name = main_folder + '/figures/QC_correction_' + str(feature) + '_corrected'
-                    plt.savefig(plt_name + sufix, dpi=300, bbox_inches='tight')
+                    plt.savefig(plt_name + suffix, dpi=300, bbox_inches='tight')
                 plot_names_orig.append(plt_name +'.png')
                 plt.show()
 
@@ -1780,7 +1780,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
     # ALL STATISTICS METHODS (keyword: statistics_...)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-    def statistics_correlation_means(self, column_name, method = 'pearson', cmap = 'coolwarm', min_max = [-1, 1]):
+    def statistics_correlation_means(self, column_name, method = 'pearson', cmap = 'coolwarm', min_max = [-1, 1], plt_name_suffix = 'group_correlation_matrix_heatmap'):
         """
         Calculate the correlation matrix of the data and create a heatmap.
 
@@ -1800,7 +1800,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report = self.report
         output_file_prefix = self.output_file_prefix
         main_folder = self.main_folder
-        sufixes = self.sufixes
+        suffixes = self.suffixes
         
         if min_max[0] < -1:
             min_max[0] = -1
@@ -1819,9 +1819,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Create a heatmap
         plt.figure(figsize=(10, 8))
         sns.heatmap(correlation_matrix, cmap=cmap, vmin=min_max[0], vmax=min_max[1])
-        name = main_folder +'/statistics/'+output_file_prefix + '_group_correlation_matrix_heatmap-0'
-        for sufix in sufixes:
-            plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
+        name = main_folder +'/statistics/'+output_file_prefix + '_' + plt_name_suffix
+        for suffix in suffixes:
+            plt.savefig(name + suffix, bbox_inches='tight', dpi = 300)
         plt.show()
 
         #---------------------------------------------
@@ -1978,7 +1978,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         rgb = mcolors.hex2color(color)  # Convert hexadecimal to RGB
         return rgb + (alpha,)  # Concatenate RGB with alpha
     
-    def visualizer_boxplot(self):
+    def visualizer_boxplot(self, plt_name_suffix = 'boxplot_first_view'):
         """
         Create a boxplot of all samples.  Can depict if there is a problem with the data (retention time shift too big -> re-run alignment; batch effect, etc.)
     
@@ -1987,7 +1987,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report = self.report
         QC_samples = self.QC_samples
         main_folder = self.main_folder
-        sufixes = self.sufixes
+        suffixes = self.suffixes
 
 
         is_qc_sample = [True if col in QC_samples else False for col in data.columns[1:]]
@@ -2011,9 +2011,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         plt.xticks(xx, xx)
 
         # Save the plot
-        plt_name = main_folder + '/figures/QC_samples_boxplot_first_view'
-        for sufix in sufixes:
-            plt.savefig(plt_name + sufix, bbox_inches='tight', dpi=300)
+        plt_name = main_folder + '/figures/QC_samples_' + plt_name_suffix
+        for suffix in suffixes:
+            plt.savefig(plt_name + suffix, bbox_inches='tight', dpi=300)
 
         # Show the plot
         plt.show()
@@ -2029,7 +2029,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         
         return fig, ax
     
-    def visualizer_samples_by_batch(self, show = 'default', cmap = 'viridis'):
+    def visualizer_samples_by_batch(self, show = 'default', cmap = 'viridis', plt_name_suffix = 'batches_first_view'):
         """
         Visualize samples by batch. Highlight QC samples.
 
@@ -2044,7 +2044,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report = self.report
         QC_samples = self.QC_samples
         main_folder = self.main_folder
-        sufixes = self.sufixes
+        suffixes = self.suffixes
         batch = self.batch
 
         # If show isnt list or numpy array
@@ -2178,10 +2178,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
             # Add a text annotation for "Zero Counts"
             plt.text(x=-0.005, y=0.65, s='Zero Counts', fontsize=15, transform=plt.gca().transAxes, ha='right', va='center')
-
-            plt_name = main_folder + '/figures/single_compound_' + str(feature) + '_batches_first_view'
-            for sufix in sufixes:
-                plt.savefig(plt_name + sufix, dpi=300, bbox_inches='tight')
+            
+            plt_name = main_folder + '/figures/single_compound_' + str(feature) + '_' + plt_name_suffix
+            for suffix in suffixes:
+                plt.savefig(plt_name + suffix, dpi=300, bbox_inches='tight')
             plt.show()
             plt.close()
 
@@ -2196,7 +2196,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report.add_pagebreak()
         return fig
 
-    def visualizer_PCA_scree_plot(self):
+    def visualizer_PCA_scree_plot(self, plt_name_suffix = 'scree_plot-percentages'):
         """
         Create a scree plot for PCA.
 
@@ -2204,7 +2204,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report = self.report
         output_file_prefix = self.output_file_prefix
         main_folder = self.main_folder
-        sufixes = self.sufixes
+        suffixes = self.suffixes
         if self.pca_data is None:
             raise ValueError('PCA was not performed yet. Run PCA first.')
         else:
@@ -2220,9 +2220,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         xticks = list(range(1, 11))
         plt.xticks(xticks)
 
-        name = main_folder +'/statistics/'+ output_file_prefix +'_scree_plot-percentages'
-        for sufix in sufixes:
-            plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
+        name = main_folder +'/statistics/'+ output_file_prefix + '_' + plt_name_suffix
+        for suffix in suffixes:
+            plt.savefig(name + suffix, bbox_inches='tight', dpi = 300)
         plt.show()
         plt.close()
 
@@ -2234,7 +2234,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             ('image', name)])
         return fig
     
-    def visualizer_PCA_run_order(self, connected = True, colors_for_cmap = ['yellow', 'red']):
+    def visualizer_PCA_run_order(self, connected = True, colors_for_cmap = ['yellow', 'red'], plt_name_suffix = 'PCA_plot_colored_by_run_order'):
         """
         Create a PCA plot colored by run order. (To see if there is any batch effect)
 
@@ -2249,7 +2249,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report = self.report
         output_file_prefix = self.output_file_prefix
         main_folder = self.main_folder
-        sufixes = self.sufixes
+        suffixes = self.suffixes
 
         if self.pca_data is None:
             raise ValueError('PCA was not performed yet. Run PCA first.')
@@ -2297,11 +2297,11 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 plt.plot([pca_df['PC1'].iloc[i], pca_df['PC1'].iloc[i+1]], [pca_df['PC2'].iloc[i], pca_df['PC2'].iloc[i+1]], color='black', linewidth=0.25)
 
         if connected:
-            name = main_folder +'/statistics/'+ output_file_prefix + '_PCA_plot_colored_by_run_order-connected'
+            name = main_folder +'/statistics/'+ output_file_prefix + '_' + plt_name_suffix + '_connected'
         else:
-            name = main_folder +'/statistics/'+ output_file_prefix + '_PCA_plot_colored_by_run_order'
-        for sufix in sufixes:
-            plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
+            name = main_folder +'/statistics/'+ output_file_prefix + '_' + plt_name_suffix
+        for suffix in suffixes:
+            plt.savefig(name + suffix, bbox_inches='tight', dpi = 300)
         plt.show()
         #---------------------------------------------
         # REPORTING
@@ -2314,7 +2314,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             ('image', name),])
         return fig, ax
     
-    def visualizer_PCA_loadings(self, components = 'all', color = 'blue'):
+    def visualizer_PCA_loadings(self, components = 'all', color = 'blue', plt_name_suffix = 'PCA_loadings'):
         """
         Create a PCA loadings plot. (And suggest candidate features based on the 99.5th percentile of the distances from the origin)
 
@@ -2329,7 +2329,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report = self.report
         output_file_prefix = self.output_file_prefix
         main_folder = self.main_folder
-        sufixes = self.sufixes
+        suffixes = self.suffixes
         if self.pca_data is None:
             raise ValueError('PCA was not performed yet. Run PCA first.')
         else:
@@ -2376,9 +2376,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         ax.set_title('PCA Loadings')
         ax.set_xlabel('PC1 Loadings')
         ax.set_ylabel('PC2 Loadings')
-        name = main_folder +'/statistics/'+ output_file_prefix + '_PCA_loadings'
-        for sufix in sufixes:
-            plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
+        name = main_folder +'/statistics/'+ output_file_prefix + '_' + plt_name_suffix
+        for suffix in suffixes:
+            plt.savefig(name + suffix, bbox_inches='tight', dpi = 300)
         plt.show()
 
         #---------------------------------------------
@@ -2392,7 +2392,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig
     
-    def visualizer_PCA_grouped(self, color_column, marker_column, cmap = 'nipy_spectral', crossout_outliers = False):
+    def visualizer_PCA_grouped(self, color_column, marker_column, cmap = 'nipy_spectral', crossout_outliers = False, plt_name_suffix = 'PCA_grouped'):
         """
         Create a PCA plot with colors based on one column and markers based on another column from the metadata.
 
@@ -2411,7 +2411,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report = self.report
         output_file_prefix = self.output_file_prefix
         main_folder = self.main_folder
-        sufixes = self.sufixes
+        suffixes = self.suffixes
         if self.pca_data is None:
             raise ValueError('PCA was not performed yet. Run PCA first.')
         else:
@@ -2513,9 +2513,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         plt.title('PCA Graph')
         plt.xlabel('PC1 - {0}%'.format(per_var[0]))
         plt.ylabel('PC2 - {0}%'.format(per_var[1]))
-        name = main_folder +'/statistics/'+ output_file_prefix + '_detailed_PCA'
-        for sufix in sufixes:
-            plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
+        name = main_folder +'/statistics/'+ output_file_prefix + '_' + plt_name_suffix
+        for suffix in suffixes:
+            plt.savefig(name + suffix, bbox_inches='tight', dpi = 300)
         plt.show()
         #---------------------------------------------
         # REPORTING
@@ -2530,7 +2530,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             ('image', name),])
         return fig, ax
 
-    def visualizer_PLSDA(self, cmap = 'viridis'):
+    def visualizer_PLSDA(self, cmap = 'viridis', plt_name_suffix = 'PLS-DA'):
         """
         Visualize the results of PLS-DA.
 
@@ -2544,7 +2544,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report = self.report
         output_file_prefix = self.output_file_prefix
         main_folder = self.main_folder
-        sufixes = self.sufixes
+        suffixes = self.suffixes
 
         if self.plsda_model is None:
             raise ValueError('PLS-DA was not performed yet. Run PLS-DA first.')
@@ -2597,9 +2597,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         ax.set_ylabel('PLS-DA component 2')
         ax.set_title('PLS-DA')
         ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05), shadow=True, ncol=2)
-        name = main_folder +'/statistics/'+output_file_prefix + '_PLS-DA'
-        for sufix in sufixes:
-            plt.savefig(name + sufix, bbox_inches='tight', dpi = 300)
+        name = main_folder +'/statistics/'+output_file_prefix + '_' + plt_name_suffix
+        for suffix in suffixes:
+            plt.savefig(name + suffix, bbox_inches='tight', dpi = 300)
         plt.show()
 
         #---------------------------------------------
@@ -2613,7 +2613,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig, ax
     
-    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, save_first = True, cmap = 'viridis'):
+    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, save_first = True, cmap = 'viridis', plt_name_suffix = 'violin_plots'):
         """
         Visualize violin plots of all features grouped by a column from the metadata. (And save them into a single PDF file)
 
@@ -2634,7 +2634,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         data = self.data
         metadata = self.metadata
         report = self.report
-        sufixes = self.sufixes
+        suffixes = self.suffixes
 
         if indexes == 'all':
             all_indexes = True
@@ -2717,20 +2717,20 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 
                 # Save the figure to a separate image file
                 if save_into_pdf:
-                    file_name = self.main_folder + '/statistics/' + self.report_file_name+ '-' +str(column_names)+ f'_violin_plot_{index}.pdf'
+                    file_name = self.main_folder + '/statistics/' + self.report_file_name+ '-' + str(column_names) + '_' + plt_name_suffix +  f'_{index}.pdf'
                     plt.savefig(file_name, bbox_inches='tight')
                     pdf_files.append(file_name)
 
                 if not all_indexes: # Specific indexes were selected
-                    example_name = self.main_folder + '/statistics/violin-example-' + str(index)
-                    for sufix in sufixes:
-                        plt.savefig(example_name + sufix, bbox_inches='tight', dpi = 300)
+                    example_name = self.main_folder + '/statistics/'+ plt_name_suffix +'-example-' + str(index)
+                    for suffix in suffixes:
+                        plt.savefig(example_name + suffix, bbox_inches='tight', dpi = 300)
                     plt.show() # Show the plot
                     returning_vp = vp
                 elif save_first and all_indexes: # Save the first violin plot (is ignored if indexes are not 'all')
-                    example_name = self.main_folder + '/statistics/violin-example'
-                    for sufix in sufixes:
-                        plt.savefig(example_name + sufix, bbox_inches='tight', dpi = 300)
+                    example_name = self.main_folder + '/statistics/'+ plt_name_suffix +'-example'
+                    for suffix in suffixes:
+                        plt.savefig(example_name + suffix, bbox_inches='tight', dpi = 300)
                     plt.show() # Show the plot
                     returning_vp = vp
                     save_first = False
@@ -2745,7 +2745,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         # Add all PDF files to a list
         if save_into_pdf:
-            name = self.main_folder + '/statistics/' + self.report_file_name + '-'+ str(column_names)+ '_violin_plots.pdf'
+            name = self.main_folder + '/statistics/' + self.report_file_name + '-'+ str(column_names)+ '_' + plt_name_suffix +'.pdf'
             # Merge all PDF files into a single PDF file
             report.merge_pdfs(pdf_files, name)
 
