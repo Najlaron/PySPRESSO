@@ -5,6 +5,8 @@ import os
 import re
 import time
 import math
+import json
+import pickle
 from itertools import cycle, combinations
 
 # Plotting modules
@@ -88,51 +90,64 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         """
         print("---------------------------------")
         print("Workflow - " + self.name + "  - functions:")
-        for i, function in enumerate(self.functions):
-            print(str(i) + " - " + function.__name__)
+        for i, (func, args, kwargs) in enumerate(self.functions):
+            print(f"{i} - {func.__name__} with args: {args} and kwargs: {kwargs}")
         print("---------------------------------")
 
-    def add(self, function, *args, **kwargs):
+    def add_function(self, func_name, *args, **kwargs):
         """
-        Add a function to the list of functions to be applied.
+        Add a method to the workflow.
 
         Parameters
         ----------
-        function : function
-            Function to be added.
-        *args : list
-            List of arguments for the function.
-        **kwargs : dict
-            Dictionary of keyword arguments for the function.
+        func_name : str
+            The name of the method to add to the workflow.
+        args : tuple
+            Positional arguments to pass to the method.
+        kwargs : dict
+            Keyword arguments to pass to the method.
         """
-        self.functions.append({"function": function, "args": args, "kwargs": kwargs})
-        print("Function added: " + function.__name__)
-   
-    def clear(self):
-        """
-        Clear the list of functions to be applied.
-        """
-        self.functions = []
-        print("Workflow cleared.")
-    
+        if hasattr(self, func_name):
+            func = getattr(self, func_name)
+            self.functions.append((func, args, kwargs))
+            print(f"Method {func_name} added to the workflow.")
+        else:
+            print(f"Method {func_name} does not exist in the workflow.")
+
     def run(self):
         """
-        Execute all functions in the list with their stored parameters.
+        Run all methods in the workflow in the order they were added.
         """
-        for func_dict in self.functions:
-            function = func_dict["function"]
+        for func, args, kwargs in self.functions:
+            print(f"Running {func.__name__}...")
+            func(*args, **kwargs)
 
-            args = func_dict["args"]
-            kwargs = func_dict["kwargs"]
-            print(f"Executing {function.__name__} with args {args} and kwargs {kwargs}")
-            function(*args, **kwargs) 
+    def save_workflow(self, filename):
+        """
+        Save the workflow to a file.
 
-    def save(self):
+        Parameters
+        ----------
+        filename : str
+            The name of the file to save the workflow to.
         """
-        Save the workflow.
+        with open(filename, 'wb') as f:
+            pickle.dump(self.functions, f)
+        print(f"Workflow saved to {filename}.")
+
+    def load_workflow(self, filename):
         """
-        print("TO DO")
-        pass # TO DO
+        Load the workflow from a file.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the file to load the workflow from.
+        """
+        with open(filename, 'rb') as f:
+            self.functions = pickle.load(f)
+        print(f"Workflow loaded from {filename}.")
+        
 
     def rename(self, name):
         """
