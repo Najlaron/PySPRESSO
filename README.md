@@ -1,5 +1,5 @@
 # PySPRESSO :coffee:
-**PySPRESSO** - **Py**thon **S**tatistical **P**rocessing and **RE**porting for **S**cientific **S**tudies in **O**mics. 
+### **PySPRESSO** - **Py**thon **S**tatistical **P**rocessing and **RE**porting for **S**cientific **S**tudies in **O**mics. 
 ##
 > *It is a comprehensive tool designed to streamline workflows for processing and reporting peak matrix data, especially for applications in metabolomics or other omics fields.*
 >
