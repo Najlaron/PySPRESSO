@@ -1,5 +1,6 @@
-# PySPRESSO
-**PySPRESSO** stands for **Py**thon **S**tatistical **P**rocessing and **RE**porting for **S**cientific **S**tudies in **O**mics. #0969NA
+# PySPRESSO :coffee:
+**PySPRESSO** stands for **Py**thon **S**tatistical **P**rocessing and **RE**porting for **S**cientific **S**tudies in **O**mics. 
+
 *It is a comprehensive tool designed to streamline workflows for processing and reporting peak matrix data, especially for applications in metabolomics or other omics fields.*
 
 ### Features
@@ -9,11 +10,13 @@
 * **Statistical Analysis:** Implements PCA and PLS-DA.
 * **Report Generation:** Automatically generates PDF reports for the processed data.
 
-*This is a WIP (Work in progess)* moduele. If you want to add some feature feel free to do so (or contact me if you don't code yourself.)
+> [!IMPORTANT]
+> *This is a WIP (Work in progess)* moduele. If you want to add some feature feel free to do so (or contact me if you don't code yourself. :innocent: )
 
-## DEMO
-If you wanna try the functionality:
+> [!TIP]
+> ## DEMO
+> If you wanna try the functionality:
 
-https://colab.research.google.com/github/Najlaron/PySPRESSO/blob/main/demo-PySPRESSO-pipeline.ipynb
+> https://colab.research.google.com/github/Najlaron/PySPRESSO/blob/main/demo-PySPRESSO-pipeline.ipynb
 
 
