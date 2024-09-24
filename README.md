@@ -12,7 +12,7 @@
 ##
 
 > [!IMPORTANT]
-> *This is a WIP (Work in progess)* module. If you want to add some feature feel free to do so (or contact me if you don't code yourself. :innocent: )
+> *This is a WIP (Work in progress)* module. If you want to add some feature feel free to do so (or contact me if you don't code yourself. :innocent: )
 
 > [!TIP]
 > ## DEMO
