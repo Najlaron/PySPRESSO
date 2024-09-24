@@ -11,11 +11,12 @@
 * **Report Generation:** Automatically generates PDF reports for the processed data.
 
 > [!IMPORTANT]
-> *This is a WIP (Work in progess)* moduele. If you want to add some feature feel free to do so (or contact me if you don't code yourself. :innocent: )
+> *This is a WIP (Work in progess)* module. If you want to add some feature feel free to do so (or contact me if you don't code yourself. :innocent: )
 
 > [!TIP]
 > ## DEMO
 > If you wanna try the functionality:
-> https://colab.research.google.com/github/Najlaron/PySPRESSO/blob/main/demo-PySPRESSO-pipeline.ipynb
+> 
+>  https://colab.research.google.com/github/Najlaron/PySPRESSO/blob/main/demo-PySPRESSO-pipeline.ipynb
 
 
