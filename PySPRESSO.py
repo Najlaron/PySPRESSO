@@ -33,13 +33,11 @@ from sklearn.metrics import mean_squared_error, r2_score
 # My modules
 import pdf_reporter.pdf_reporter as pdf_rptr #since repo is a folder, now you can simply clone it
 
-# #---------------------------------------------
-# # REPORTING
-# report_path = main_folder + '/' + report_file_name + '.pdf'
-# title_text = main_folder
 
-# report = pdf_rptr.Report(name = report_path, title = title_text)
-# report.initialize_report('processing')
+# |--------------------------------------------------------------------------------------------|
+# |  PySPRESSO - (Python Statistical Processing and REporting for Scientific Studies in Omics) |
+# |--------------------------------------------------------------------------------------------|
+
 
 class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transforming, Normalizing, Statistics, etc.)
     """
@@ -1670,9 +1668,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 # Use fitted spline to correct all the data for the feature batch by batch
                 x = np.arange(len(data[feature]))
                 if splines[batch_index] is not None: # None means that there wasn't enough data for this batch
-                    data[feature][is_batch] = data[feature][is_batch] / abs(splines[batch_index](x[is_batch])) # !! the order of things matter a lot here; to only use relevant parts of the spline !!
+                    data.loc[is_batch, feature] = data.loc[is_batch, feature] / abs(splines[batch_index](x[is_batch])) # !! the order of things matter a lot here; to only use relevant parts of the spline !!
                 else:
-                    data[feature][is_batch] = [0 for i in data[feature][is_batch]] # If there wasn't enough data, then just set the values to 0
+                    data.loc[is_batch, feature] = 0 # If there wasn't enough data, then just set the values to 0
 
             # Plot the corrected data
             if feature in show: 
