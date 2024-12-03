@@ -433,7 +433,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         data = data.join(temp_data[area_columns.columns])
         del temp_data
         # Fill NaN values with zero (NaN values are problem when plotted, and we will treat 0s as missing values later)
-        self.data.fillna(0, inplace=True)  # Replace NaN with 0
+        data.fillna(0, inplace=True)  # Replace NaN with 0
         print("Important columns were kept in the data and rest filtered out.")
         
         #---------------------------------------------
@@ -493,10 +493,12 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         # Convert the 'Creation Date' column to datetime format
         batch_info['Creation Date'] = pd.to_datetime(batch_info['Creation Date'], format = format) #, dayfirst=True
+       
 
         # Sort the DataFrame based on the 'Creation Date' column
         batch_info = batch_info.sort_values('Creation Date')
         batch_info = batch_info.reset_index(drop=True)
+
 
         if distinguisher is None:
             # If all in one batch, use None
@@ -537,12 +539,15 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 not_found_indexes.append(i)
                 not_found.append([id, batch_info['Sample Type'].tolist()[i]])
 
+        print("New data order based on batch info:")
+        print(new_data_order)
+
         print("Data reordered based on the creation date from batch info.")
         print("Not found: " + str(len(not_found)) + " ;being: " + str(not_found))
         print("Names not identified: " + str(len(names)) + " ;being: " + str(names))
 
         # Reorder data
-        data = data[['cpdID']+new_data_order]
+        data = data[['cpdID'] + new_data_order]
 
 
         batch_info = batch_info.drop(not_found_indexes)
@@ -877,9 +882,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 plt.xlabel('Samples in order')
                 plt.ylabel('Peak Area')
                 plt.title("High RSD compound: cpID = " + data.iloc[indexes[i], 0])
-                if to_plot:
-                    for suffix in self.suffixes:
-                        plt.savefig(self.main_folder + '/figures/QC_samples_scatter_' + str(indexes[i]) + '_high_RSD-deleted_by_correction' + suffix, dpi=400, bbox_inches='tight')
+                for suffix in self.suffixes:
+                    plt.savefig(self.main_folder + '/figures/QC_samples_scatter_' + str(indexes[i]) + '_high_RSD-deleted_by_correction' + suffix, dpi=400, bbox_inches='tight')
+                    if to_plot == True:
                         plt.show()
         
         #reset index
@@ -1455,13 +1460,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         if p_values != 'default':
             p_values_to_use = p_values
 
-        # Batch information
-        # unique_batches = []
-        # for b in batch:
-        #     if b not in unique_batches:
-        #         unique_batches.append(b)
-        unique_batches = list(set(batch))
-        
+
+        unique_batches = list(dict.fromkeys(batch))  # Preserve the order of batches as they appear in the data
         
         # Create a dictionary that maps each unique batch to a unique index
         batch_to_index = {batch: index for index, batch in enumerate(unique_batches)}
@@ -1562,16 +1562,18 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
                 
                 # Initialize a dictionary to store the zero counts for each batch
-                zero_counts = {batch_id: 0 for batch_id in set(batch)}
-                qc_zero_counts = {batch_id: 0 for batch_id in set(batch)}
+                zero_counts = {batch_id: 0 for batch_id in unique_batches}
+                qc_zero_counts = {batch_id: 0 for batch_id in unique_batches}
 
                 # Update the zero counts for each batch
-                for i, (b, zero) in enumerate(zip(batch, row_data == 0)):
-                    if zero:
+                for i, (b, value) in enumerate(zip(batch, row_data)):
+                    if is_zero.loc[data.index[i], feature]:
                         zero_counts[b] += 1
                         if is_qc_sample[i]:
                             qc_zero_counts[b] += 1
 
+                print(f'Feature: {feature} - Zero counts: {zero_counts} - QC zero counts: {qc_zero_counts}')
+                
                 # Create a gridspec object
                 gs = gridspec.GridSpec(2, 1, height_ratios=[3, 1])  # 3:1 height ratio
                 fig = plt.figure(figsize=(20, 4))
@@ -1607,17 +1609,17 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 total_qc_percentage = total_qc_samples_count / sum(is_qc_sample) * 100
 
                 # Calculate the percentage of zeros for each batch
-                zero_percentages = {batch: zero_counts[batch] / total_samples[batch] * 100 for batch in unique_batches}
+                zero_percentages = {batch_id: zero_counts[batch_id] / total_samples[batch_id] * 100 for batch_id in unique_batches}
 
                 # Calculate the percentage of QC zeros for each batch
-                qc_zero_percentages = {batch: qc_zero_counts[batch] / total_qc_samples[batch] * 100 if total_qc_samples[batch] > 0 else 0 for batch in unique_batches}
-
+                qc_zero_percentages = {batch_id: qc_zero_counts[batch_id] / total_qc_samples[batch_id] * 100 if total_qc_samples[batch_id] > 0 else 0 for batch_id in unique_batches}
+                
                 # Format the zero counts and percentages as strings
-                formatted_zero_counts = [f"{zero_counts[batch]} ({zero_percentages[batch]:.2f}%)" for batch in unique_batches]
+                formatted_zero_counts = [f"{zero_counts[batch_id]} ({zero_percentages[batch_id]:.2f}%)" for batch_id in unique_batches]
 
                 # Format the QC zero counts and percentages as strings
-                formatted_qc_zero_counts = [f"{qc_zero_counts[batch]} ({qc_zero_percentages[batch]:.2f}%)" for batch in unique_batches]
-
+                formatted_qc_zero_counts = [f"{qc_zero_counts[batch_id]} ({qc_zero_percentages[batch_id]:.2f}%)" for batch_id in unique_batches]
+                
                 # Calculate the total number of missing values
                 total_missing = sum(zero_counts.values()) 
                 total_percentage = total_missing / len(batch) * 100
@@ -2087,7 +2089,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # for b in batch:
         #     if b not in unique_batches:
         #         unique_batches.append(b)
-        unique_batches = list(set(batch))
+        unique_batches = list(dict.fromkeys(batch))  # Preserve the order of batches as they appear in the data
         
         cmap = mpl.cm.get_cmap(cmap)
 
@@ -2714,7 +2716,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         pdf_files = []
 
         # Create a folder for the violin plots
-        for index in indexes:
+        for idx, index in enumerate(indexes):
             values = []
             for unique, group in grouped:
                 if unique is not None:
@@ -2770,8 +2772,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     returning_vp = vp
                     save_first = False
                 #print progress
-                ending = '\n' if index == indexes[-1] else '\r'
-                print(f'Violin plots created: {index+1 / len(indexes) * 100:.2f}%', end=ending)
+                ending = '\n' if idx == len(indexes) - 1 else '\r'
+                print(f'Violin plots created: { (idx +1) / len(indexes) * 100:.2f}%', end=ending)
                 plt.close()
         #---------------------------------------------
         # MERGING all the PDF files into a single PDF file 
