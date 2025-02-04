@@ -22,7 +22,7 @@ from matplotlib.cm import ScalarMappable
 import seaborn as sns
 
 # Statistics and ML modules
-from scipy.stats import zscore
+from scipy.stats import zscore, linregress
 from scipy.interpolate import UnivariateSpline
 from sklearn.model_selection import LeaveOneOut, KFold, cross_val_predict
 from sklearn.decomposition import PCA
@@ -54,7 +54,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.main_folder = self.name
         self.output_file_prefix = self.name
         self.suffixes = ['.png', '.pdf']
-        # NEED SETTERS FOR THESE VARIABLES
 
         # Data variables
         self.saves_count = 0 # Variable to keep track of the number of saves (to avoid overwriting)
@@ -65,7 +64,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.batch = None
         self.QC_samples = None
         self.blank_samples = None
-
+        self.standard_samples = None
+        self.dilution_series_samples = None
+        self.dil_concentrations = None
 
         # Statistics variables
         self.pca = None
@@ -231,7 +232,11 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             List of batches: ['Batch1', 'Batch1', 'Batch1', 'Batch2', 'Batch2', ...]
         """
         if batch is None:
-            batch = ['all_one_batch' for i in range(len(self.data.index))] # Dummy batch information (for cases where its all the same batch) (not columns because of the transposition)
+            # if cpID exists in the data 
+            if 'cpdID' in self.data.columns:
+                batch = ['all_one_batch' for i in range(len(self.data.columns)-1)] # Dummy batch information (for cases where its all the same batch) #-1 because of cpdID
+            else: # if called before cpdID is added
+                batch = ['all_one_batch' for i in range(len(self.data.columns))] # Dummy batch information (for cases where its all the same batch)
 
         self.batch = batch
         print("Batch set.")
@@ -248,6 +253,61 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.QC_samples = QC_samples
         print("QC samples set.")
     
+    def set_dilution_series_samples(self, dilution_series_samples):
+        """
+        Set the dilution series samples.
+
+        Parameters
+        ----------
+        dilution_series_samples : list
+            List of dilution series_samples.
+        """
+        self.dilution_series_samples = dilution_series_samples
+        print("Dilution series set.")
+
+    def set_dilution_series_samples_by_name(self, dil_distinguisher = 'dQC', conc_distinguisher = None):
+        """
+        Set the dilution series samples by name.
+
+        Parameters
+        ----------
+        dil_distinguisher : str
+            Distinguisher used in the file names (columns in data) for dilution series. Default is 'dQC'. If distinguisher is in the name, then it is considered as dilution series sample.
+        conc_distinguisher : str
+            Distinguisher used in the file names (columns in data) before the concentration value is stated. (can be the same as dil_distinguisher if the value is right after it).
+        """
+        data = self.data
+        dilution_series_samples = []
+        concentrations = []
+        # Look through values (names) in the specified column
+        for name in data.columns[1:]:
+            # find the distinguisher in the name
+            if dil_distinguisher in name:
+                dilution_series_samples.append(name)
+            if conc_distinguisher is not None:
+                # find the numeric value behind conc_distinguisher
+                if conc_distinguisher in name:
+                    pattern  = re.escape(conc_distinguisher) + r'(\d+)' #find the number after the conc_distinguisher
+                    conc = re.search(pattern, name).group(1)
+                    concentrations.append(float(conc))
+        
+        self.dilution_series_samples = dilution_series_samples
+        self.dil_concentrations = concentrations
+        print("Dilution series samples set.")
+
+    def set_dil_concentrations(self, dil_concentrations):
+        """
+        Set the dilution concentrations.
+
+        Parameters
+        ----------
+        dil_concentrations : list
+            List of dilution concentrations.
+        """
+        self.dil_concentrations = dil_concentrations
+        print("Dilution concentrations set.")
+
+
     def set_blank_samples(self, blank_samples):
         """
         Set the blank samples.
@@ -259,6 +319,19 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         """
         self.blank_samples = blank_samples
         print("Blank samples set.")
+
+    def set_standard_samples(self, standards):
+        """
+        Set the standards.
+
+        Parameters
+        ----------
+        standards : list
+            List of standards.
+        """
+        self.standard_samples = standards
+        print("Standards set.")
+
     #-------------------------
 
     def initialize(self):
@@ -268,6 +341,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.report = self.initalizer_report(self.main_folder, self.report_file_name)
         self.functions = [self.loader_data, self.add_cpdID, self.extracter_variable_metadata, self.extracter_data, self.loader_batch_info, self.batch_by_name_reorder, self.extracter_metadata]
         print("Workflow initialized.")
+
     
     def function_change_parameters(self, index, **kwargs):
         """
@@ -687,7 +761,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             DataFrame with the variable metadata.
 
         """
-
         # Filter out features from variable_metadata that were already filtered out in the data
         variable_metadata = variable_metadata[variable_metadata['cpdID'].isin(data['cpdID'])]
         # Reset the index
@@ -915,6 +988,216 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report.add_line()
         return self.data
     
+    def filter_dilution_series_linearity(self, number_of_series, threshold=0.8, which_to_take="first", concentrations=False, to_plot=False):
+        """
+        Filter out features with low dilution series linearity. (R2 < threshold)
+        
+        Parameters
+        ----------
+        threshold : float
+            Threshold for the R2. Default is 0.8.
+        number_of_series : int
+            Number of dilution series used. 
+        which_to_take : str
+            Which sample to take from the dilution series. Default is "best". Other options are "best", "worst", "first", "last", "mean" or "median".
+        concentrations : bool or list
+            If True, the concentrations need to be either already defined or added as a list (of the length of number of samples in each series or as all the samples in all series). Default is False.
+        to_plot : bool or int
+            If True, plot some of the compounds with low R2. Default is False. (For True plots 4, for any other int, plots that amount (or all if there is less than inputted integer))    
+        """
+
+        data = self.data
+        variable_metadata = self.variable_metadata
+        report = self.report
+        dilution_series_samples = self.dilution_series_samples
+        # if concentrations is list
+        if type(concentrations) != list and concentrations != False:
+            concentrations = self.dil_concentrations
+
+        if dilution_series_samples is None:
+            raise ValueError("Dilution series was not defined. Define it first.")
+        if dilution_series_samples is False:
+            raise ValueError("Dilution series were already removed. Cannot filter out features with low dilution series linearity.")
+        
+        # Dilution_series_samples mask
+        is_dilution_series_sample = [True if col in dilution_series_samples else False for col in data.columns[1:]]
+
+        # Calculate R2 for every feature (compound) in the dilution series samples
+        r2 = []
+        all_series_pred_y = []
+        all_series_x = []
+        all_series_y = []
+        # Iterate over all features in dataframe
+        for i in range(len(data)):
+            # Get the peak areas for the feature
+            y = np.array(data.iloc[i, 1:][is_dilution_series_sample].dropna().values)
+            lngth = len(y)
+            # Ensure y is not empty
+            if len(y) == 0:
+                r2.append(np.nan)
+                continue
+
+            # Each series has the same number of samples (len(y)/number_of_series)
+            y = y.reshape((number_of_series, -1)) # Reshape the array to have the same number of samples in each series
+            if concentrations:
+                x = np.array(concentrations) 
+                is_length_of_one = True
+                # Check if the length of concentrations is the same as the number of samples in each series
+                if len(x) != len(y[0]):
+                    # Check if the length of concentrations is the same as the number of samples in all series together
+                    if len(x) == lngth: # the length before reshaping
+                        # Then reshape the x array as well
+                        x = x.reshape((number_of_series, -1))
+                        is_length_of_one = False
+                    else:
+                        raise ValueError("The length of concentrations is not the same as the number of samples in each/all series.")
+            else:
+                # Use the indices of the dilution series samples as the x-values
+                x = np.arange(len(y[0]))
+            
+            # Perform linear regression
+            this_series_r2 = []
+            this_series_pred_y = []
+            this_series_x = []
+            for number, series in enumerate(y):
+                # check if the length of x is the same as the length of y (otherwise the number and series work as indices of x as well)
+                if is_length_of_one:
+                    this_x = x
+                else:
+                    this_x = x[number]
+
+                # Perform manual linear regression
+                this_x = np.array(this_x, dtype=float)
+                series = np.array(series, dtype=float)
+                A = np.vstack([this_x, np.ones(len(this_x))]).T
+                slope, intercept = np.linalg.lstsq(A, series, rcond=None)[0]
+                y_pred = slope * this_x + intercept
+
+                this_series_pred_y.append(y_pred)
+                this_series_x.append(this_x)
+
+                ss_res = np.sum((series - y_pred) ** 2)
+                ss_tot = np.sum((series - np.mean(series)) ** 2)
+                r_squared = 1 - (ss_res / ss_tot)
+            
+                # Append R-squared to the list
+                this_series_r2.append(r_squared)
+            all_series_pred_y.append(this_series_pred_y)
+            all_series_x.append(this_series_x)
+            all_series_y.append(y)
+            if which_to_take == "best":
+                r2.append(max(this_series_r2))
+            elif which_to_take == "worst":
+                r2.append(min(this_series_r2))
+            elif which_to_take == "first":
+                r2.append(this_series_r2[0])
+            elif which_to_take == "last":
+                r2.append(this_series_r2[-1])
+            elif which_to_take == "mean":
+                r2.append(np.mean(this_series_r2))
+            elif which_to_take == "median":
+                r2.append(np.median(this_series_r2))
+            else:
+                raise ValueError("which_to_take not recognized. Choose from: 'best', 'worst', 'first', 'last', 'mean' or 'median'. (Specify which series to take into account when comparing the R2 to the threshold)")
+        
+        r2 = pd.Series(r2, index=data.index)
+        
+        # Add R2 into the data
+        variable_metadata['Dilution_Series_R2'] = r2
+
+        # Plot some of the compounds with low R2
+        images = []
+        if to_plot:
+            if to_plot is True:
+                number_plotted = 4
+            elif type(to_plot) == int:
+                number_plotted = int(to_plot)
+            else:
+                raise ValueError("to_plot has to be either True/False or an integer.")
+            indexes = r2[r2 < threshold].index.tolist()[:number_plotted]
+            print(indexes)
+            if len(indexes) < number_plotted:
+                number_plotted = len(indexes)
+
+            if len(indexes) == 0:
+                print("No compounds with R2 < " + str(threshold) + " were found.")
+            else:
+                for i in indexes:
+                    plt.figure()
+                    colors = ['blue', 'green', 'red', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+                    j = 0
+                    for series, y_pred, this_x in zip(all_series_y[i], all_series_pred_y[i], all_series_x[i]):
+                        plt.scatter(this_x, series, color= colors[j], alpha=0.5, marker='o')
+                        plt.plot(this_x, y_pred, color=colors[j], alpha=0.5)
+                        j += 1
+                    plt.xlabel('Dilution factor')
+                    plt.ylabel('Peak Area')
+                    plt.title("Dilution series - LOW linearity compound: cpID = " + data.iloc[i, 0] + " ;R2 = " + str(r2[i])[:7] + '('+ which_to_take + ')')
+                    for suffix in self.suffixes:
+                        plt.savefig(self.main_folder + '/figures/dilution_series_linearity_' + str(i) + '_low_R2-deleted_by_correction' + suffix, dpi=400, bbox_inches='tight')
+                    images.append(self.main_folder + '/figures/dilution_series_linearity_' + str(i) + '_low_R2-deleted_by_correction.png')
+                    plt.show()
+                    plt.close()
+
+        # Plot some of the compounds with high R2
+        if to_plot:
+            if to_plot is True:
+                number_plotted = 4
+            elif type(to_plot) == int:
+                number_plotted = int(to_plot)
+            else:
+                raise ValueError("to_plot has to be either True/False or an integer.")
+            indexes = r2[r2 > threshold].index.tolist()[:number_plotted]
+            if len(indexes) < number_plotted:
+                number_plotted = len(indexes)
+
+            if len(indexes) == 0:
+                print("No compounds with R2 < " + str(threshold) + " were found.")
+            else:
+                for i in indexes:
+                    plt.figure()
+                    colors = ['blue', 'green', 'red', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+                    j = 0
+                    for series, y_pred, this_x in zip(all_series_y[i], all_series_pred_y[i], all_series_x[i]):
+                        plt.scatter(this_x, series, color= colors[j], alpha=0.5, marker='o')
+                        plt.plot(this_x, y_pred, color=colors[j], alpha=0.5)
+                        j += 1
+                    plt.xlabel('Dilution factor')
+                    plt.ylabel('Peak Area')
+                    # add the R2 value to the title
+                    plt.title("Dilution series - HIGH linearity compound: cpID = " + data.iloc[i, 0] + " ;R2 = " + str(r2[i])[:7] + '(' + which_to_take + ')')
+                    plt.show()      
+    
+        # Filter out features (compounds) with R2 < threshold
+        under_threshold = r2 < threshold
+        data = data[~under_threshold]
+        # Reset index
+        data = data.reset_index(drop=True)
+        # Update data and variable_metadata
+        self.data = data
+        self.variable_metadata = self._filter_match_variable_metadata(data, variable_metadata)
+
+        # Report how many features were removed
+        print("Number of features removed: " + str(len(r2[r2 < threshold])) + " ;being: " + str(r2[r2 < threshold].index.tolist()))
+
+        #---------------------------------------------
+        # REPORTING
+        text0 = 'Features with dilution series linearity (R2) under the threshold (' + str(threshold) + ') were removed.'
+        if r2[r2 < threshold].empty:
+            text1 = 'No compounds with R2 < ' + str(threshold) + ' were found.'
+            report.add_together([('text', text0),
+                            ('text', text1)])
+        else:
+            text1 = 'Number of features removed: ' + str(len(r2[r2 < threshold])) + ' ;being: '+ str(r2[r2 < threshold].index.tolist()[:10])[:-1] + ', ...'
+            text2 = 'Examples of compounds with low R2:'
+            report.add_together([('text', text0),
+                            ('text', text1),
+                            ('text', text2)])
+            for image in images:
+                report.add_image(image)
+        report.add_line()
+        return self.data
+       
     def filter_number_of_corrected_batches(self, threshold = 0.8):
         """
         Filter out features that were corrected in less than the threshold number of batches. (Ideally apply after the correction step.)
@@ -1039,7 +1322,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         """
         return self.drop_samples(column_indexes_to_drop)
 
-
     def filter_out_blanks(self):
         """
         Function for filtering out (deleting) blank samples. 
@@ -1065,10 +1347,14 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         # WE NEED TO UPDATE OTHER DATA STRUCTURES AS WELL
         # lower the indexes of the blank samples by 1 (-1 because of cpdID column)
-        blank_indexes = [i-1 for i in blank_indexes]
+
+        if data.columns[0]  == 'cpdID':    
+            blank_indexes = [i-1 for i in blank_indexes]
+        
         # drop blank samples 
         self.batch = [batch[i] for i in range(len(batch)) if i not in blank_indexes]
         self.batch_info = batch_info.drop(blank_indexes)
+        self.batch_info.reset_index(drop=True, inplace=True)
         self.blank_samples = False
 
         # drop rows with blank samples
@@ -1085,6 +1371,118 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         text = 'Blank samples were removed from the data.'
         report.add_together([('text', text),
                             'line'])
+        return self.data
+    
+    def filter_out_dilution_series(self):
+        """
+        Function for filtering out (deleting) dilution series samples. 
+        """
+        data = self.data
+        report = self.report
+        if self.dilution_series_samples is None:
+            raise ValueError("No dilution series were defined.")
+        elif self.dilution_series_samples is False:
+            raise ValueError("Dilution series were already removed.")
+        dilution_series = self.dilution_series_samples
+
+        batch = self.batch
+        batch_info = self.batch_info
+
+        # Filter out dilution series
+        dilution_series_indexes = []
+        for col in dilution_series:
+            if col in data.columns:
+                dilution_series_indexes.append(data.columns.get_loc(col))
+            else:
+                print(f"Column {col} not found, probably already deleted.")
+
+        if dilution_series_indexes:
+            # drop dilution series samples
+            data = data.drop(data.columns[dilution_series_indexes], axis=1)
+
+            # WE NEED TO UPDATE OTHER DATA STRUCTURES AS WELL
+            # lower the indexes of the dilution series samples by 1 (-1 because of cpdID column)
+            if data.columns[0] == 'cpdID':    
+                dilution_series_indexes = [i-1 for i in dilution_series_indexes]
+
+            # drop dilution series samples 
+            self.batch = [batch[i] for i in range(len(batch)) if i not in dilution_series_indexes]
+            self.batch_info = batch_info.drop(dilution_series_indexes)
+            self.batch_info.reset_index(drop=True, inplace=True)
+            self.dilution_series = False
+
+            # drop rows with dilution series samples
+            self.metadata = self.metadata.drop(self.metadata.index[dilution_series_indexes])
+            self.metadata.reset_index(drop=True, inplace=True)
+
+            self.data = data
+            self.variable_metadata = self._filter_match_variable_metadata(data, self.variable_metadata)
+            self.variable_metadata.reset_index(drop=True, inplace=True)
+
+            print("Dilution series samples were removed from the data.")
+            #---------------------------------------------
+            #REPORTING
+            text = 'Dilution series samples were removed from the data.'
+            report.add_together([('text', text),
+                                'line'])
+        else:
+            print("No dilution series samples were found to remove.")
+        return self.data
+    
+    def filter_out_standards(self):
+        """
+        Function for filtering out (deleting) standards. 
+        """
+        data = self.data
+        report = self.report
+        if self.standard_samples is None:
+            raise ValueError("No standards were defined.")
+        elif self.standard_samples is False:
+            raise ValueError("Standards were already removed.")
+        standards = self.standard_samples
+
+        batch = self.batch
+        batch_info = self.batch_info
+
+        # Filter out standards
+        standard_indexes = []
+        for col in standards:
+            if col in data.columns:
+                standard_indexes.append(data.columns.get_loc(col))
+            else:
+                print(f"Column {col} not found, probably already deleted.")
+
+        if standard_indexes:
+            # drop blank samples
+            data = data.drop(data.columns[standard_indexes], axis=1)
+
+            # WE NEED TO UPDATE OTHER DATA STRUCTURES AS WELL
+            # lower the indexes of the standard samples by 1 (-1 because of cpdID column)
+            if data.columns[0] == 'cpdID':    
+                standard_indexes = [i-1 for i in standard_indexes]
+
+            # drop blank samples 
+            self.batch = [batch[i] for i in range(len(batch)) if i not in standard_indexes]
+            self.batch_info = batch_info.drop(standard_indexes)
+            self.batch_info.reset_index(drop=True, inplace=True)
+            self.blank_samples = False
+
+            # drop rows with blank samples
+            self.metadata = self.metadata.drop(self.metadata.index[standard_indexes])
+            self.metadata.reset_index(drop=True, inplace=True)
+
+            self.data = data
+            self.variable_metadata = self._filter_match_variable_metadata(data, self.variable_metadata)
+            self.variable_metadata.reset_index(drop=True, inplace=True)
+
+            print("Standards were removed from the data.")
+            #---------------------------------------------
+            #REPORTING
+            text = 'Standards were removed from the data.'
+            report.add_together([('text', text),
+                                'line'])
+        else:
+            print("No standards were found to remove.")
         return self.data
 
 
@@ -1105,8 +1503,12 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         """
         # Apply the log transformation to the data
         if invert:
-            return np.exp(data)
-        return np.log(data + 0.0001) # Add a small number to avoid log(0) 
+            data = np.exp(data) 
+            # return as pd.DataFrame
+            return pd.DataFrame(data, index=data.index, columns=data.columns)
+        data = np.log(data + 0.0001) # Add a small number to avoid log(0) 
+        # return as pd.DataFrame
+        return pd.DataFrame(data, index=data.index, columns=data.columns)
 
     def transformer_log(self, invert=False):
         """
@@ -1122,6 +1524,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report = self.report
 
         data.iloc[:, 1:] = self._transformer_log(data.iloc[:, 1:], invert)
+        self.data = data
         #---------------------------------------------
         #REPORTING
         if invert:
@@ -1130,7 +1533,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             text = 'Log transformation was applied.'
         report.add_together([('text', text),
                             'line'])
-        return self.data
+        return data
     
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL NORMALIZING METHODS (keyword: normalizer_...)
@@ -1147,7 +1550,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         """
         # Calculate the z-scores for the data
         zscores = zscore(data, axis=0) + 10 # Add 10 to avoid division by zero (or close to zero)
-        
+        zscores = pd.DataFrame(zscores, index=data.index, columns=data.columns)
         # Return the z-scores
         return zscores, zscores.mean(axis=0), zscores.std(axis=0)
     
@@ -1169,7 +1572,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         std = std.to_numpy()
         data = (zscores - 1) * std + mean # Subtract 1 (10 was added, but then it was divided in the correction step)
         # Return the inverted z-scores
-        return data   
+        data = pd.DataFrame(data, index=zscores.index, columns=zscores.columns)
+        return data
     
     def normalizer_zscores(self):
         """
@@ -1427,6 +1831,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         suffixes = self.suffixes
         batch = self.batch
 
+        # Initialize is_zero to None
+        is_zero = None
+
         # If show isnt list or numpy array
         if type(show) != list and type(show) != np.ndarray: 
             if show == 'default':
@@ -1448,6 +1855,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Transpose the dataframe
         data = data.iloc[:, 1:].copy()
         data = data.T
+
 
         #QC_samples
         is_qc_sample = [True if col in QC_samples else False for col in data.index]
@@ -1480,10 +1888,11 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         if use_log:
             # Apply log transformation to the data
             data = self._transformer_log(data)
+            
         if use_norm:
             # Normalize the data using z-scores
             data, mean, std = self._normalizer_zscores(data)
-
+            
         start_time = time.time()
         # Create lists to store the plot names to plot into REPORT
         plot_names_orig = []
@@ -1492,6 +1901,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # For each feature
         chosen_p_values = []
         numbers_of_correctable_batches = []
+
+
         for feature in data.columns:
             # Iterate over batches
             splines = []
@@ -1567,12 +1978,12 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
                 # Update the zero counts for each batch
                 for i, (b, value) in enumerate(zip(batch, row_data)):
-                    if is_zero.loc[data.index[i], feature]:
+                    if is_zero is not None and is_zero.loc[data.index[i], feature]:
                         zero_counts[b] += 1
                         if is_qc_sample[i]:
                             qc_zero_counts[b] += 1
 
-                print(f'Feature: {feature} - Zero counts: {zero_counts} - QC zero counts: {qc_zero_counts}')
+                #print(f'Feature: {feature} - Zero counts: {zero_counts} - QC zero counts: {qc_zero_counts}')
                 
                 # Create a gridspec object
                 gs = gridspec.GridSpec(2, 1, height_ratios=[3, 1])  # 3:1 height ratio
