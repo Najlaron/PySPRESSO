@@ -428,9 +428,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                             'line'])
         return self.data
     
-    def add_cpdID(self, mz_col = 'm/z', rt_col = 'RT [min]'):
+    def add_cpdID(self, mz_col = 'm/z', rt_col = 'RT [min]', round_mz_col = 5, round_rt_col = 3):
         """
-        Add a column 'cpdID' to the data calculated from mz and RT. Matching ID - distinguished by adding "_1", "_2", etc.
+        Add a column 'cpdID' to the data calculated from mz and RT. Rounding up the numbers to specified given of numbers. Matching ID - distinguished by adding "_1", "_2", etc.
 
         Parameters
         ----------
@@ -438,12 +438,16 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             Name of the column with m/z values. Default is 'm/z'.
         rt_col : str
             Name of the column with RT values. Default is 'RT [min]'.
+        round_mz_col : int
+            Number of decimal places to round the m/z column. Default is 5. (Using 5 aligns with Compound Discoverer visualization.)
+        round_rt_col : int
+            Number of decimal places to round the RT column. Default is 3. (Using 3 aligns with Compound Discoverer visualization.)
         """
         data = self.data
         report = self.report
 
         #add cpdID column to the data_df calculated from mz and RT
-        data['cpdID'] = 'M' + data[mz_col].round(0).astype(int).astype(str) + 'T' + (data[rt_col]*60).round(0).astype(int).astype(str)
+        data['cpdID'] = 'M' + data[mz_col].round(round_mz_col).astype(float).astype(str) + '-T' + (data[rt_col]).round(round_rt_col).astype(float).astype(str)
         # Create a new column 'Duplicate_Count' to keep track of the duplicates
         data['Duplicate_Count'] = data.groupby('cpdID').cumcount()
         # Create a mask to identify duplicated compounds
@@ -1256,7 +1260,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         column_indexes_to_drop : list
             List of column indexes to drop.
         cpdID_as_zero : bool
-            If True, cpdID is counted as a column indexed at 0; if false, 0 is index of first sample. Default is True = first sample has index 1 (0 is for cpdID).
+            If True, cpdID is counted as a column indexed at 0; if false, 0 is index of first sample in data. Default is True.
         """
         data = self.data
         report = self.report
@@ -1267,11 +1271,12 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         if cpdID_as_zero == True and 0 in column_indexes_to_drop:
             raise ValueError("cpdID cannot be dropped; your indexes cannot include 0 when cpdID_as_zero is True.")
         
-        # Drop columns
-        if cpdID_as_zero == False:
-            column_indexes_to_drop = [i+1 for i in column_indexes_to_drop]
-
+        # Drop samples
         data = data.drop(data.columns[column_indexes_to_drop], axis=1)
+
+        if cpdID_as_zero:
+            column_indexes_to_drop = [i-1 for i in column_indexes_to_drop] # for metadata and batch_info we need to lower the indexes by 1 (there is no cpdID there)
+
         # Drop rows with dropped samples from metadata
         metadata = metadata.drop(metadata.index[column_indexes_to_drop])
         metadata.reset_index(drop=True, inplace=True)
@@ -1300,7 +1305,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                             'line'])          
         return self.data
 
-    def delete_samples(self, column_indexes_to_drop):
+    def delete_samples(self, column_indexes_to_drop, cpdID_as_zero = True):
         """
         Function for filtering out (deleting) specific samples. (Columns) Such as standards, ... and others you wanna omit from the analysis.
         
@@ -1309,9 +1314,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         column_indexes_to_drop : list
             List of column indexes to drop.
         """
-        return self.drop_samples(column_indexes_to_drop)
+        return self.drop_samples(column_indexes_to_drop, cpdID_as_zero=cpdID_as_zero)
 
-    def filter_out_samples(self, column_indexes_to_drop):
+    def filter_out_samples(self, column_indexes_to_drop, cpdID_as_zero = True):
         """
         Function for filtering out (deleting) specific samples. (Columns) Such as standards, ... and others you wanna omit from the analysis.
 
@@ -1319,8 +1324,27 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         ----------
         column_indexes_to_drop : list
             List of column indexes to drop.
+        
         """
         return self.drop_samples(column_indexes_to_drop)
+    
+    def filter_out_group_by_metadata_columns(self, metadata_column, value):
+        """
+        Function for filtering out (deleting) samples based on the metadata.
+        
+        Parameters
+        ----------
+        metadata_column : str
+            Name of the metadata column.
+        value : str
+            Value of the metadata column.
+        """
+        metadata = self.metadata
+        column_indexes_to_drop = metadata[metadata[metadata_column] == value].index.tolist()
+        # Add 1 to the indexes to drop, because the first column is cpdID
+        column_indexes_to_drop = [i+1 for i in column_indexes_to_drop]
+        print(column_indexes_to_drop)
+        return self.drop_samples(column_indexes_to_drop, cpdID_as_zero = True)
 
     def filter_out_blanks(self):
         """
@@ -2147,7 +2171,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 for suffix in suffixes:
                     plt_name = main_folder + '/figures/QC_correction_' + str(feature) + '_corrected'
                     plt.savefig(plt_name + suffix, dpi=300, bbox_inches='tight')
-                plot_names_orig.append(plt_name +'.png')
+                plot_names_corr.append(plt_name +'.png')
                 plt.show()
 
         # Create a dictionary with the chosen p values
@@ -2442,6 +2466,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         plt.ylabel('Peak Area')
         xx = np.arange(0, len(data.columns[1:])+1, 100)
         plt.xticks(xx, xx)
+        plt.legend()
 
         # Save the plot
         plt_name = main_folder + '/figures/QC_samples_' + plt_name_suffix
