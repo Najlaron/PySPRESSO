@@ -22,7 +22,7 @@ from matplotlib.cm import ScalarMappable
 import seaborn as sns
 
 # Statistics and ML modules
-from scipy.stats import zscore, linregress
+from scipy.stats import zscore, linregress, gaussian_kde
 from scipy.interpolate import UnivariateSpline
 from sklearn.model_selection import LeaveOneOut, KFold, cross_val_predict
 from sklearn.decomposition import PCA
@@ -360,6 +360,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL DATA HANDLING AND INITILAZITAION METHODS (like: loading, saving, initializing-report, etc.) (keywords like: loader_..., extracter_..., saver_..., but also without keywords)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    
+    def _natural_sort_key(self, s):
+        return [int(text) if text.isdigit() else text.lower() for text in re.split('(\d+)', s)]
+       
     def initializer_report(self, report_type = 'processing'):
         """
         Initialize the report object.
@@ -2656,7 +2660,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report.add_pagebreak()
         return fig
 
-    def visualizer_PCA_scree_plot(self, plt_name_suffix = 'scree_plot-percentages'):
+    def visualizer_PCA_scree_plot(self, plt_name_suffix='scree_plot-percentages'):
         """
         Create a scree plot for PCA.
 
@@ -2664,7 +2668,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         ----------
         plt_name_suffix : str
             Suffix for the plot name. Default is 'scree_plot-percentages'. (Useful when using multiple times - to avoid overwriting the previous plot)
-
         """
         report = self.report
         output_file_prefix = self.output_file_prefix
@@ -2674,20 +2677,28 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             raise ValueError('PCA was not performed yet. Run PCA first.')
         else:
             per_var = self.pca_per_var
+            cumulative_variance = np.cumsum(per_var)
 
         # Create a scree plot
-        fig = plt.figure(figsize=(10, 10))
-        plt.bar(x=range(1, 11), height=per_var[:10])
+        fig, ax = plt.subplots(figsize=(10, 6))
 
-        plt.ylabel('Percentage of Explained Variance')
-        plt.xlabel('Principal Component')
+        ax.set_xlabel('Component')
+        ax.set_ylabel('Variance (%)')
+        ax.plot(range(1, 11), per_var[:10], color='tab:red', marker='o', label='Variance')
+        ax.plot(range(1, 11), cumulative_variance[:10], color='tab:blue', marker='o', label='Cumulative Variance')
+
+        for i, (ev, cv) in enumerate(zip(per_var[:10], cumulative_variance[:10]), start=1):
+            ax.text(i, ev, f'{ev:.1f}', ha='center', va='bottom', fontsize=8, color='tab:red')
+            ax.text(i, cv, f'{cv:.1f}', ha='center', va='bottom', fontsize=8, color='tab:blue')
+
+        plt.xticks(range(1, 11)) 
         plt.title('Scree Plot')
-        xticks = list(range(1, 11))
-        plt.xticks(xticks)
+        plt.legend(loc='upper left')
+        fig.tight_layout()
 
-        name = main_folder +'/statistics/'+ output_file_prefix + '_' + plt_name_suffix
+        name = main_folder + '/statistics/' + output_file_prefix + '_' + plt_name_suffix
         for suffix in suffixes:
-            plt.savefig(name + suffix, bbox_inches='tight', dpi = 300)
+            plt.savefig(name + suffix, bbox_inches='tight', dpi=300)
         plt.show()
         plt.close()
 
@@ -2901,28 +2912,39 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             # Identify outliers as any points where the absolute z-score is greater than 3
             outliers = pca_df[(np.abs(pca_df['PC1_zscore']) > 3) | (np.abs(pca_df['PC2_zscore']) > 3)]
         
-
         #get the color (for first column)
         if column_name is not None:
             column_unique_values = metadata[column_name].unique()
+            # Order them alphabetically, taking numbers into account
+            column_unique_values = sorted(column_unique_values, key=self._natural_sort_key)
+
             num_unique_values = len(column_unique_values)
-            colors = [cmap(i/num_unique_values) for i in range(num_unique_values)]
+            color_indices = np.linspace(0.05, 0.95, num_unique_values)
+            colors = [cmap(i) for i in color_indices]
             class_type_colors = dict(zip(column_unique_values, colors))
 
         #get markers (for second column)
         if second_column_name is not None:
             second_column_unique_values = metadata[second_column_name].unique()
+            # Order them alphabetically, taking numbers into account
+            second_column_unique_values = sorted(second_column_unique_values, key=self._natural_sort_key)
+
             markers = cycle(['o', 'v', 's', '^', '*', '<','p', '>', 'h', 'H', 'D', 'd', 'P', 'X'])
             class_type_markers = dict(zip(second_column_unique_values, markers))
 
-
-        legend_elements = []
         if column_name is not None and second_column_name is not None:
             existing_combinations = set(zip(metadata[column_name], metadata[second_column_name]))
+            # Order them alphabetically, taking numbers into account
+            existing_combinations = sorted(existing_combinations, key=self._natural_sort_key)
+
         elif column_name is not None:
             existing_combinations = set(metadata[column_name])
+            # Order them alphabetically, taking numbers into account
+            existing_combinations = sorted(existing_combinations, key=self._natural_sort_key)
         elif second_column_name is not None:
             existing_combinations = set(metadata[second_column_name])
+            # Order them alphabetically, taking numbers into account
+            existing_combinations = sorted(existing_combinations, key=self._natural_sort_key)
         else:
             raise ValueError('At least one of the columns must be specified. Either color_column or marker_column or both.')
 
@@ -2950,6 +2972,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             elif class_type is not None:
                 df_samples = pca_df.loc[metadata[second_column_name] == class_type]
 
+           
             # Get the color and marker, handling cases where one of the types is None
             color = 'grey' if sample_type is None else class_type_colors.get(sample_type, 'grey')
             marker = 'o' if class_type is None else class_type_markers.get(class_type, 'o')
@@ -2958,29 +2981,30 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             label = f"{sample_type or ''} - {class_type or ''}".strip(' -')
     
             # Plot the samples
-            plt.scatter(df_samples['PC1'], df_samples['PC2'], color=color, marker=marker, label=label, alpha=0.6)
+            plt.scatter(df_samples['PC1'], df_samples['PC2'], color=color, marker=marker, label=label, alpha=0.6, s=20)
             
-            # Compute the covariance matrix and find the major and minor axis 
-            covmat = np.cov(df_samples[['PC1', 'PC2']].values.T)
-            lambda_, v = np.linalg.eig(covmat)
-            lambda_ = np.sqrt(lambda_)
-            
-            # Draw an ellipse around the samples
-            ell = Ellipse(xy=(np.mean(df_samples['PC1']), np.mean(df_samples['PC2'])),
-                        width=lambda_[0]*2, height=lambda_[1]*2,
-                        angle = np.rad2deg(np.arctan2(v[1, 0], v[0, 0])), edgecolor=color, lw=2, facecolor='none')
-            plt.gca().add_artist(ell)
+            # Compute the covariance matrix and find the major and minor axis only if there are enough data points
+            if len(df_samples) >= 3:
+                covmat = np.cov(df_samples[['PC1', 'PC2']].values.T)
+                if np.isinf(covmat).any() or np.isnan(covmat).any():
+                    print(f"Skipping ellipse for combination {combination} due to invalid covariance matrix.")
+                    continue
+                lambda_, v = np.linalg.eig(covmat)
+                lambda_ = np.sqrt(lambda_)
 
-            # Add the legend element
-            legend_elements.append(Line2D([0], [0], marker=marker, color='w', label=label,
-                                        markerfacecolor=color, markersize=10, alpha=0.6))
+                # Draw an ellipse around the samples
+                ell = Ellipse(xy=(np.mean(df_samples['PC1']), np.mean(df_samples['PC2'])),
+                              width=lambda_[0] * 3, height=lambda_[1] * 3,
+                              angle=np.rad2deg(np.arctan2(v[1, 0], v[0, 0])), edgecolor=color, lw=1, facecolor='none', alpha=0.6)
+                plt.gca().add_artist(ell)
+
 
         if crossout_outliers:
             # Plot the outliers
-            plt.scatter(outliers['PC1'], outliers['PC2'], color='black', marker='x', label='Outliers', alpha=0.6)
+            plt.scatter(outliers['PC1'], outliers['PC2'], color='black', marker='x', label='Outliers', alpha=0.6, s=20)
 
         # Create the legend
-        plt.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1, 1))
+        plt.legend(loc='upper left', bbox_to_anchor=(1, 1), frameon=False)
         plt.title('PCA Graph')
         plt.xlabel('PC1 - {0}%'.format(per_var[0]))
         plt.ylabel('PC2 - {0}%'.format(per_var[1]))
@@ -3001,14 +3025,14 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             ('image', name),])
         return fig, ax
 
-    def visualizer_PLSDA(self, cmap = 'viridis', plt_name_suffix = 'PLS-DA'):
+    def visualizer_PLSDA(self, cmap = 'nipy_spectral', plt_name_suffix = 'PLS-DA'):
         """
         Visualize the results of PLS-DA.
 
         Parameters
         ----------
         cmap : str
-            Name of the colormap. Default is 'viridis'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
+            Name of the colormap. Default is 'nipy_spectral'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
         plt_name_suffix : str
             Suffix for the plot name. Default is 'PLS-DA'. (Useful when using multiple times - to avoid overwriting the previous plot)
         """
@@ -3036,39 +3060,40 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         # Get the unique values of the response column
         response_unique_values = metadata[str(response_column_names)].unique()
+        # Order them alphabetically, taking numbers into account
+        response_unique_values = sorted(response_unique_values, key=self._natural_sort_key)
+
         num_unique_values = len(response_unique_values)
-        colors = [cmap(i/num_unique_values) for i in range(num_unique_values)]
+        color_indices = np.linspace(0.05, 0.95, num_unique_values)
+        colors = [cmap(i) for i in color_indices]
         response_colors = dict(zip(response_unique_values, colors))
-
-        # Create a dictionary that maps each unique response value to a unique index
-        response_to_index = {response: index for index, response in enumerate(response_unique_values)}
-
-        # Normalize the indices between 0 and 1
-        normalized_indices = {response: index / num_unique_values for response, index in response_to_index.items()}
-
-        # Create a dictionary that maps each response value to a color
-        response_colors = {response: mpl.colors.rgb2hex(cmap(normalized_indices[response])) for response in response_unique_values}
 
         # Create a scatter plot of the data
         for response in response_unique_values:
             df_samples = model.x_scores_[metadata[str(response_column_names)] == response]
-            ax.scatter(df_samples[:, 0], df_samples[:, 1], color=response_colors[response], label=response)
+            ax.scatter(df_samples[:, 0], df_samples[:, 1], color=response_colors[response], label=response, alpha=0.6, s=20)
         
         # Draw ellipses around the samples
         for response in response_unique_values:
             df_samples = model.x_scores_[metadata[str(response_column_names)] == response]
+            if len(df_samples) < 3: 
+                print(f"Skipping ellipse for response {response} due to insufficient data points. 2 is possible, but looks weird, so 3 is the minimum.")
+                continue
             covmat = np.cov(df_samples.T)
+            if np.isinf(covmat).any() or np.isnan(covmat).any():
+                print(f"Skipping ellipse for response {response} due to invalid covariance matrix.")
+                continue
             lambda_, v = np.linalg.eig(covmat)
             lambda_ = np.sqrt(lambda_)
             ell = Ellipse(xy=(np.mean(df_samples[:, 0]), np.mean(df_samples[:, 1])),
-                        width=lambda_[0]*2, height=lambda_[1]*2,
-                        angle=np.rad2deg(np.arctan2(v[1, 0], v[0, 0])), edgecolor=response_colors[response], lw=2, facecolor='none')
+                        width=lambda_[0] * 3, height=lambda_[1] * 3,
+                        angle=np.rad2deg(np.arctan2(v[1, 0], v[0, 0])), edgecolor=response_colors[response], lw=1, facecolor='none', alpha=0.6)
             ax.add_artist(ell)
             
         ax.set_xlabel('PLS-DA component 1')
         ax.set_ylabel('PLS-DA component 2')
         ax.set_title('PLS-DA')
-        ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05), shadow=True, ncol=2)
+        ax.legend(loc='upper left', bbox_to_anchor=(1, 1), frameon=False)
         name = main_folder +'/statistics/'+output_file_prefix + '_' + plt_name_suffix
         for suffix in suffixes:
             plt.savefig(name + suffix, bbox_inches='tight', dpi = 300)
@@ -3085,7 +3110,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig, ax
     
-    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, save_first = True, cmap = 'viridis', plt_name_suffix = 'violin_plots'):
+    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, save_first = True, cmap = 'nipy_spectral', plt_name_suffix = 'violin_plots', bw = 0.2, jitter = True):
         """
         Visualize violin plots of all features grouped by a column from the metadata. (And save them into a single PDF file)
 
@@ -3100,9 +3125,13 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         save_first : bool
             If True, save the first violin plot (and show it). Default is True. (If False, only the PDF file will be created.) If indexes are not 'all', then this parameter is ignored and all plots for specified indexes are saved.
         cmap : str
-            Name of the colormap. Default is 'viridis'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
+            Name of the colormap. Default is 'nipy_spectral'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
         plt_name_suffix : str
             Suffix for the plot name. Default is 'violin_plots'. (Useful when using multiple times - to avoid overwriting the previous plot)
+        bw : float
+            Bandwidth parameter for the kernel density estimation. Default is 0.2.
+        jitter : bool
+            If True, add jitter to the x-axis. Default is True
         """
         data = self.data
         metadata = self.metadata
@@ -3141,10 +3170,19 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         data_transposed[column_names] = column
 
         column_unique_values = data_transposed[column_names].unique()
+        
+        # Order them alphabetically, taking numbers into account
+        column_unique_values = sorted([val for val in column_unique_values if val is not None], key=self._natural_sort_key)
+
         num_unique_values = len(column_unique_values)
+        color_indices = np.linspace(0.05, 0.95, num_unique_values)
+        colors = [cmap(i) for i in color_indices]
 
         # Group 'data_transposed' by 'column_name'
         grouped = data_transposed.groupby(column_names)
+
+        # Create x-axis labels with the number of points
+        x_labels = [f"{val} ({len(group)})" for val, group in grouped if val is not None]
 
         # Delete this column from the data_transposed 
         data_transposed = data_transposed.drop([column_names], axis=1)
@@ -3164,9 +3202,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                         print(unique)
 
             if values:  # Check if 'values' is not empty
-                vp = plt.violinplot(values, showmeans=False, showmedians=False, showextrema=False)
-
-                colors = [cmap(i/len(values)) for i in range(len(values))]
+                vp = plt.violinplot(values, showmeans=False, showmedians=False, showextrema=False, bw_method=bw)
 
                 # Change the color and width of the violins
                 for i in range(len(vp['bodies'])):
@@ -3179,15 +3215,25 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     plt.plot([i + 1 - 0.2, i + 1 + 0.2], [np.mean(v)] * 2, color=colors[i], linewidth=0.5)  # mean line
                     plt.plot([i + 1 - 0.2, i + 1 + 0.2], [np.median(v)] * 2, color=colors[i], linewidth=0.5)  # median line
 
-                # Scatter all the points
-                for i in range(len(values)):
-                    plt.scatter([i+1]*len(values[i]), values[i], color=colors[i], s=5, alpha=1)
-
-                plt.xticks(np.arange(len(column_unique_values)), column_unique_values, rotation=90)
+                # Scatter all the points with adaptive jitter
+                if jitter:
+                    for i in range(len(values)):
+                        if len(values[i]) > 1:
+                            kde = gaussian_kde(values[i])
+                            densities = kde(values[i])
+                            x_jitter = 0.05 * densities / densities.max()
+                            x_jittered = np.random.normal(i + 1, x_jitter, size=len(values[i]))
+                        else:
+                            x_jittered = np.full(len(values[i]), i + 1)
+                        plt.scatter(x_jittered, values[i], color=colors[i], s=5, alpha=1)
+                else:
+                    for i in range(len(values)):
+                        plt.scatter(np.full(len(values[i]), i + 1), values[i], color=colors[i], s=5, alpha=1)
+                
+                plt.xticks(np.arange(1, len(column_unique_values) + 1), x_labels, rotation=90)
                 cpd_title = data_transposed.loc['cpdID', index]
                 plt.title(cpd_title)
 
-                
                 # Save the figure to a separate image file
                 if save_into_pdf:
                     file_name = self.main_folder + '/statistics/' + self.report_file_name+ '-' + str(column_names) + '_' + plt_name_suffix +  f'_{index}.pdf'
