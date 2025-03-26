@@ -363,7 +363,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     
     def _natural_sort_key(self, s):
-        return [int(text) if text.isdigit() else text.lower() for text in re.split('(\d+)', str(s))]
+        if isinstance(s, tuple):
+            # Convert tuple to a string in the format "A-B"
+            s = '-'.join(map(str, s))
+        return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', str(s))]
        
     def initializer_report(self, report_type = 'processing'):
         """
@@ -3051,7 +3054,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         # If metadata does not contain the response column it was performed by combination of columns
         if response_column_names not in metadata.columns:
-            metadata[str(response_column_names)] = metadata[response_column_names].apply(lambda x: '_'.join(x.map(str)), axis=1)
+            metadata[str(response_column_names)] = metadata[response_column_names].apply(lambda x: '-'.join(x.map(str)), axis=1)
         
         cmap = mpl.cm.get_cmap(cmap)
 
