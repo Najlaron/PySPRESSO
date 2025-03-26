@@ -13,7 +13,8 @@ from itertools import cycle, combinations
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-from matplotlib.patches import Ellipse
+import matplotlib.patches as patches
+from matplotlib.patches import Ellipse 
 from matplotlib.lines import Line2D
 import matplotlib.colors as mcolors
 from matplotlib.colors import LinearSegmentedColormap
@@ -22,7 +23,7 @@ from matplotlib.cm import ScalarMappable
 import seaborn as sns
 
 # Statistics and ML modules
-from scipy.stats import zscore, linregress, gaussian_kde
+from scipy.stats import zscore, linregress, gaussian_kde, ttest_ind
 from scipy.interpolate import UnivariateSpline
 from sklearn.model_selection import LeaveOneOut, KFold, cross_val_predict
 from sklearn.decomposition import PCA
@@ -362,7 +363,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     
     def _natural_sort_key(self, s):
-        return [int(text) if text.isdigit() else text.lower() for text in re.split('(\d+)', s)]
+        return [int(text) if text.isdigit() else text.lower() for text in re.split('(\d+)', str(s))]
        
     def initializer_report(self, report_type = 'processing'):
         """
@@ -2994,7 +2995,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
                 # Draw an ellipse around the samples
                 ell = Ellipse(xy=(np.mean(df_samples['PC1']), np.mean(df_samples['PC2'])),
-                              width=lambda_[0] * 3, height=lambda_[1] * 3,
+                              width=lambda_[0] * 2, height=lambda_[1] * 2, 
                               angle=np.rad2deg(np.arctan2(v[1, 0], v[0, 0])), edgecolor=color, lw=1, facecolor='none', alpha=0.6)
                 plt.gca().add_artist(ell)
 
@@ -3086,7 +3087,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             lambda_, v = np.linalg.eig(covmat)
             lambda_ = np.sqrt(lambda_)
             ell = Ellipse(xy=(np.mean(df_samples[:, 0]), np.mean(df_samples[:, 1])),
-                        width=lambda_[0] * 3, height=lambda_[1] * 3,
+                        width=lambda_[0] * 2, height=lambda_[1] * 2,
                         angle=np.rad2deg(np.arctan2(v[1, 0], v[0, 0])), edgecolor=response_colors[response], lw=1, facecolor='none', alpha=0.6)
             ax.add_artist(ell)
             
@@ -3110,7 +3111,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig, ax
     
-    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, save_first = True, cmap = 'nipy_spectral', plt_name_suffix = 'violin_plots', bw = 0.2, jitter = True):
+    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, save_first = True, cmap = 'nipy_spectral', plt_name_suffix = 'violin_plots', bw = 0.2, jitter = True, label_rotation = 0):
         """
         Visualize violin plots of all features grouped by a column from the metadata. (And save them into a single PDF file)
 
@@ -3132,6 +3133,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             Bandwidth parameter for the kernel density estimation. Default is 0.2.
         jitter : bool
             If True, add jitter to the x-axis. Default is True
+        label_rotation : int
+            Rotation of the x-axis labels. Default is 0. (Useful for long labels, then use 90)
         """
         data = self.data
         metadata = self.metadata
@@ -3230,7 +3233,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     for i in range(len(values)):
                         plt.scatter(np.full(len(values[i]), i + 1), values[i], color=colors[i], s=5, alpha=1)
                 
-                plt.xticks(np.arange(1, len(column_unique_values) + 1), x_labels, rotation=90)
+                plt.xticks(np.arange(1, len(column_unique_values) + 1), x_labels, rotation=label_rotation)
                 cpd_title = data_transposed.loc['cpdID', index]
                 plt.title(cpd_title)
 
@@ -3257,7 +3260,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 ending = '\n' if idx == len(indexes) - 1 else '\r'
                 print(f'Violin plots created: { (idx +1) / len(indexes) * 100:.2f}%', end=ending)
                 plt.close()
-        #---------------------------------------------
+              #---------------------------------------------
         # MERGING all the PDF files into a single PDF file 
         #(this way we should avoid loading all the plots into memory while creating all the plots)
         #(we will load them eventually when creating the final PDF file, but it will not slow down the process of creating the plots)   
@@ -3298,3 +3301,136 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 os.remove(file)
 
         return returning_vp
+    
+    
+    def visualizer_fold_change(self, groups_column_name, group1, group2, color_left = 'green', color_right = 'blue', fold2_change_threshold=1, p_value_threshold=0.05, plt_name_suffix='fold_change'):
+        """
+        Visualize fold change and p-value for two groups.
+
+        Parameters
+        ----------
+        groups_column_name : str
+            Name of the column in metadata that contains group labels.
+        group1 : str
+            Name of the first group.
+        group2 : str
+            Name of the second group.
+        color1 : str
+            Color for the first box. Default is 'blue'.
+        color2 : str
+            Color for the second box. Default is 'green'.
+        fold_change_threshold : float
+            Threshold for the fold change. Default is 1.
+        p_value_threshold : float
+            Threshold for the p-value. Default is 0.05.
+        plt_name_suffix : str
+            Suffix for the plot name. Default is 'fold_change'.
+        """
+        data = self.data
+        metadata = self.metadata
+        report = self.report
+        output_file_prefix = self.output_file_prefix
+        main_folder = self.main_folder
+        suffixes = self.suffixes
+
+        if p_value_threshold <= 0:
+            raise ValueError('P-value threshold must be greater than 0.')
+        
+        if fold2_change_threshold < 0:
+            raise ValueError('Fold change threshold must be greater than or equal to 0.')
+        
+        # Create masks for the two groups
+        group1_mask = metadata[groups_column_name] == group1
+        group2_mask = metadata[groups_column_name] == group2
+
+        # Add False to the beginning of the masks to align them with the data (first column is cpdID)
+        group1_mask = np.insert(group1_mask.to_numpy(), 0, False)
+        group2_mask = np.insert(group2_mask.to_numpy(), 0, False)
+
+        # Get the data for the two groups
+        group1_data = data.iloc[:, group1_mask]
+        group2_data = data.iloc[:, group2_mask]
+
+        fold_change = group2_data.mean(axis=1) / group1_data.mean(axis=1)
+        p_values = ttest_ind(group1_data, group2_data, axis=1)[1]
+
+        # Create a scatter plot
+        fig, ax = plt.subplots(figsize=(10, 8))
+
+        # Determine the limits for the rectangles based on the data
+        x_min = np.min(np.log2(fold_change)) - 0.05
+        x_max = np.max(np.log2(fold_change)) + 0.05
+        y_max = np.max(-np.log10(p_values)) + 0.5
+
+        # Add shaded regions for significant areas
+        ax.add_patch(patches.Rectangle((fold2_change_threshold, -np.log10(p_value_threshold)), x_max - (fold2_change_threshold), y_max + np.log10(p_value_threshold), color=color_right, alpha=0.1))
+        ax.add_patch(patches.Rectangle((x_min, -np.log10(p_value_threshold)), -(fold2_change_threshold) - x_min, y_max + np.log10(p_value_threshold), color=color_left, alpha=0.1))
+
+        # Scatter plot for all points
+        plt.scatter(np.log2(fold_change), -np.log10(p_values), color='grey', alpha=0.5)
+
+        # Highlight significant points
+        # significant_right = (np.log2(fold_change) > (fold2_change_threshold)) & (p_values < p_value_threshold)
+        # significant_right_but_not_above = (np.log2(fold_change) > (fold2_change_threshold)) & (p_values >= p_value_threshold)
+        # significant_left = (np.log2(fold_change) < -(fold2_change_threshold)) & (p_values < p_value_threshold)
+        # significant_left_but_not_above = (np.log2(fold_change) < -(fold2_change_threshold)) & (p_values >= p_value_threshold)
+
+        significant_fc_right = (np.log2(fold_change) > (fold2_change_threshold))
+        significant_fc_left = (np.log2(fold_change) < -(fold2_change_threshold))
+        significant_pv = (p_values < p_value_threshold)
+        significant_pv_right = (np.log2(fold_change) > 0) & (p_values < p_value_threshold)
+        significant_pv_left = (np.log2(fold_change) < 0) & (p_values < p_value_threshold)
+        significant_fc_right_and_pv = significant_fc_right & significant_pv
+        significant_fc_left_and_pv = significant_fc_left & significant_pv
+
+        
+        # Scatter the significant points for both P-values and fold changes
+        # plt.scatter(np.log2(fold_change[significant_right]), -np.log10(p_values[significant_right]), color=color_right, alpha=1)
+        # plt.scatter(np.log2(fold_change[significant_left]), -np.log10(p_values[significant_left]), color=color_left, alpha=1)
+
+        # Scatter those significant for pv
+        plt.scatter(np.log2(fold_change[significant_pv]), -np.log10(p_values[significant_pv]), color='grey', alpha=0.7)
+        
+        # Scatter those significant for fold changes right
+        plt.scatter(np.log2(fold_change[significant_fc_right]), -np.log10(p_values[significant_fc_right]), color=color_right, alpha=0.6)
+
+        # Scatter those significant for fold changes left
+        plt.scatter(np.log2(fold_change[significant_fc_left]), -np.log10(p_values[significant_fc_left]), color=color_left, alpha=0.6)
+
+        # Scatter those significant for P-values but not fold changes
+        # plt.scatter(np.log2(fold_change[significant_right_but_not_above]), -np.log10(p_values[significant_right_but_not_above]), color=color_right, alpha=0.6)
+        # plt.scatter(np.log2(fold_change[significant_left_but_not_above]), -np.log10(p_values[significant_left_but_not_above]), color=color_left, alpha=0.6)
+
+        # Scatter those significant for fold changes but not P-values
+        # plt.scatter(np.log2(fold_change[(np.log2(fold_change) > (fold2_change_threshold)) & (p_values >= p_value_threshold)]), -np.log10(p_values[(np.log2(fold_change) > (fold2_change_threshold)) & (p_values >= p_value_threshold)]), color='black', alpha=0.6)
+        # plt.scatter(np.log2(fold_change[(np.log2(fold_change) < -(fold2_change_threshold)) & (p_values >= p_value_threshold)]), -np.log10(p_values[(np.log2(fold_change) < -(fold2_change_threshold)) & (p_values >= p_value_threshold)]), color='black', alpha=0.6)
+        
+
+        # Add lines for 0 for both axes
+        plt.axvline(x=0, color='black', linestyle='-', alpha=0.5, linewidth=0.5)
+        plt.axhline(y=0, color='black', linestyle='-', alpha=0.5, linewidth=0.5)
+
+        plt.xlabel('Log2 Fold Change')
+        plt.ylabel('-Log10 P-Value')
+        plt.title(f'Fold Change vs P-Value: {group1} vs {group2}')
+
+        # Add values above the graph
+        
+        plt.text(0.99, 1.05, f'{sum(significant_fc_right_and_pv)} ↑ ({sum(significant_pv_right)} ≥  -Log10({str(p_value_threshold)}), {sum(significant_fc_right)} ≥  {str(fold2_change_threshold)}', color=color_right, transform=ax.transAxes, ha='right')
+        plt.text(0.01, 1.05, f'{sum(significant_fc_left_and_pv)} ↓ ({sum(significant_pv_left)} ≥  -Log10({str(p_value_threshold)}), {sum(significant_fc_left)} ≥  {str(fold2_change_threshold)}', color=color_left, transform=ax.transAxes, ha='left')
+        
+        # Save the plot
+        plt_name = main_folder + '/statistics/' + output_file_prefix + '_' + plt_name_suffix
+        for suffix in suffixes:
+            plt.savefig(plt_name + suffix + '.png', bbox_inches='tight', dpi=300)
+        plt.show()
+
+        #---------------------------------------------
+        # REPORTING
+        text = f'Fold change plot for {group1} vs {group2} was created and added into: {plt_name}'
+        report.add_together([
+            ('text', text),
+            ('image', plt_name),
+            'line'])
+
+        return plt_name
