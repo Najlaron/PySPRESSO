@@ -21,6 +21,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
 import seaborn as sns
+from adjustText import adjust_text
 
 # Statistics and ML modules
 from scipy.stats import zscore, linregress, gaussian_kde, ttest_ind
@@ -34,11 +35,9 @@ from sklearn.metrics import mean_squared_error, r2_score
 # My modules
 import pdf_reporter.pdf_reporter as pdf_rptr #since repo is a folder, now you can simply clone it
 
-
 # |--------------------------------------------------------------------------------------------|
 # |  PySPRESSO - (Python Statistical Processing and REporting for Scientific Studies in Omics) |
 # |--------------------------------------------------------------------------------------------|
-
 
 class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transforming, Normalizing, Statistics, etc.)
     """
@@ -70,16 +69,18 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.dil_concentrations = None
 
         # Statistics variables
+        self.pca_count = 0 # Variable to keep track of the number of PCA runs (to avoid overwriting) 
         self.pca = None
         self.pca_data = None
         self.pca_df = None
         self.pca_per_var = None
+        self.pca_loadings = None
 
         self.plsda = None
         self.plsda_response_column = None
 
-        # Candidate variables
-        self.candidate_variables = [] # List of lists with the candidate variables (each list contains the candidates obtained by the different methods)
+        # Candidate features (contains significant features based on different methods - features that might be interesting for further analysis - e.g. biomarkers)
+        self.candidates = pd.DataFrame(columns = ['feature', 'method', 'specifications', 'score', 'hits'])
 
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL THE FUNCTIONALITY TO INTERACT WITH WORKFLOW
@@ -148,7 +149,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             self.functions = pickle.load(f)
         print(f"Workflow loaded from {filename}.")
         
-
     def rename(self, name):
         """
         Rename the workflow.
@@ -221,8 +221,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.suffixes = suffixes
         print("suffixes set.")
 
-    # SAMPLE LABELS -------
-
+    # SAMPLE LABELS ---------------------------------------------------------
     def set_batch(self, batch):
         """
         Set the batch.
@@ -308,7 +307,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.dil_concentrations = dil_concentrations
         print("Dilution concentrations set.")
 
-
     def set_blank_samples(self, blank_samples):
         """
         Set the blank samples.
@@ -334,7 +332,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         print("Standards set.")
 
     #-------------------------
-
     def initialize(self):
         """
         Perform all the initialization steps of the workflow.
@@ -342,7 +339,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.report = self.initalizer_report(self.main_folder, self.report_file_name)
         self.functions = [self.loader_data, self.add_cpdID, self.extracter_variable_metadata, self.extracter_data, self.loader_batch_info, self.batch_by_name_reorder, self.extracter_metadata]
         print("Workflow initialized.")
-
     
     def function_change_parameters(self, index, **kwargs):
         """
@@ -721,23 +717,32 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 version = '_' + str(version_name)
             else:
                 version = str(version_name)
+        
+        #data
         data = data.reset_index(drop=True)
         data_name = main_folder + '/' + output_file_prefix + '-data' + version + '.csv'
         data.to_csv(data_name, sep = ';')
 
+        #variable_metadata
         variable_metadata = variable_metadata.reset_index(drop=True)
         variable_metadata_name = main_folder + '/' + output_file_prefix + '-variable_metadata' + version + '.csv'
         variable_metadata.to_csv(variable_metadata_name, sep = ';')
 
+        #metadata
         metadata = metadata.reset_index(drop=True)
         metadata_name = main_folder + '/' + output_file_prefix + '-metadata' + version + '.csv'
         metadata.to_csv(metadata_name, sep = ';')
+
+        #candidates
+        candidates = self.candidates.reset_index(drop=True)
+        candidates_name = main_folder + '/' + output_file_prefix + '-candidates' + version + '.csv'
+        candidates.to_csv(candidates_name, sep = ';')
 
         print("All datasets were saved.")
         #---------------------------------------------
         #REPORTING
         text0 = 'Processed data was saved into a files named (path) as follows:'
-        data_list = [data_name, variable_metadata_name, metadata_name]
+        data_list = [data_name, variable_metadata_name, metadata_name, candidates_name]
         text1 = ''
         for file in data_list:
             text1 += '<br/>' + file
@@ -746,6 +751,106 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                             'line'])
         return True
     
+    def add_candidates(self, features, method, specification, scores):
+        """
+        Add candidate features to the candidates list.
+
+        Parameters
+        ----------
+        features : list or np.ndarray or pd.Series
+            List of features to add.
+        method : str
+            Method used to identify the features.
+        specification : str
+            Specification of the method - columns used in PLSDA, etc.
+        scores : list or np.ndarray or pd.Series
+            Scores of the features - PCA loading, PLSDA VIP, etc.
+        """
+     
+        # Ensure features and scores are iterable
+        if not isinstance(features, (list, pd.Series, np.ndarray)):
+            features = [features]
+        if not isinstance(scores, (list, pd.Series, np.ndarray)):
+            scores = [scores]
+
+
+        # Repeat method and specification to match the length of features
+        if isinstance(method, list) and len(method) != len(features):
+            raise ValueError("Length of method list must match length of features.")
+        if isinstance(specification, list) and len(specification) != len(features):
+            raise ValueError("Length of specification list must match length of features.")
+        
+        if isinstance(method, str) or (isinstance(method, (list, pd.Series, np.ndarray)) and len(method) == 1):
+            method = [method] * len(features)
+        if isinstance(specification, str) or (isinstance(specification, (list, pd.Series, np.ndarray)) and len(specification) == 1):
+            specification = [specification] * len(features)
+
+        hits = [0] * len(features)  # Initialize hits to 0 for all features
+
+        # Initialize self.candidates if it is None
+        if self.candidates is None:
+            self.candidates = pd.DataFrame(columns=['feature', 'method', 'specification', 'score', 'hits'])
+
+        # Create a DataFrame for the new candidates
+        new_candidates = pd.DataFrame({
+            'feature': features,
+            'method': method,
+            'specification': specification,
+            'score': scores,
+            'hits': hits
+        })
+
+        # Handle the case where self.candidates is empty
+        if self.candidates.empty:
+            self.candidates = new_candidates
+        else:
+            # Concatenate the new candidates with the existing ones
+            self.candidates = pd.concat([self.candidates, new_candidates], ignore_index=True)
+
+        # Calculate hits for the candidates
+        self.candidates = self._candidates_calculate_hits()
+
+        # Order the candidates
+        self.candidates = self._candidates_order(how='method')
+
+        return self.candidates
+
+    def _candidates_calculate_hits(self):
+        """
+        Help function to calculate hits for the candidates.
+
+        """
+        # Calculate hits for the candidates
+        hits = []
+        for feature in self.candidates['feature']:
+            # Count the number of times the feature appears in the candidates list
+            hit = self.candidates[self.candidates['feature'] == feature].shape[0]
+            hits.append(hit)
+        self.candidates['hits'] = hits
+        return self.candidates
+    
+    def _candidates_order(self, how = 'method'):
+        """
+        Help function to order the candidates.
+
+        Parameters
+        ----------
+        how : str
+            How to order the candidates. Default is 'method'. Other option is 'hits'.
+
+        """
+        # Order the candidates by method and score
+        if how == 'method':
+            self.candidates = self.candidates.sort_values(by=['method', 'score'], ascending=[False, False])
+        # Order the candidates by hits and method
+        elif how == 'hits':
+            self.candidates = self.candidates.sort_values(by=['hits', 'method'], ascending=[False, False])
+
+        # Reset the index
+        self.candidates.reset_index(drop=True, inplace=True)
+        
+        return self.candidates
+
     def finalizer_report(self):
         """
         Finalize the report. (Has to be called at the end of the script otherwise the pdf file will be "corrupted".)
@@ -2293,11 +2398,16 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return correlation_matrix
     
-    def statistics_PCA(self):
+    def statistics_PCA(self, n_components_for_candidates = 2):
         """
         Perform PCA on the data and visualize the results.
 
         (It stores the results in the object to be used in the future.)
+
+        Parameters
+        ----------
+        n_components_for_candidates : int
+            Number of components to use for the calculation of the candidates. Default is 2.
         """
         data = self.data
         report = self.report
@@ -2315,9 +2425,40 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.pca_data = pca_data
         self.pca_df = pca_df
         self.pca = pca
+
+        self.pca_count += 1
+
+        # Loadings 
+        eigenvectors = pca.components_.T
+        eigenvalues = pca.explained_variance_
+        loadings = eigenvectors * np.sqrt(eigenvalues) # Loadings are the eigenvectors scaled by the square root of the eigenvalues        
+
+        #index = feature_names = data.iloc[:, 0]
+        loadings_df = pd.DataFrame(loadings, index=data.iloc[:, 0], columns=labels)
+        self.pca_loadings = loadings_df
+
+        # Add 99.5th percentile of the distances to the loadings dataframe BUT TAKE INTO ACCOUNT ONLY the first n PCs
+        # check if n_components_for_candidates is less than the number of components
+        if n_components_for_candidates > len(labels):
+            n_components_for_candidates = len(labels)
+        loadings_df['distance'] = np.sqrt(np.sum(loadings_df.iloc[:, :n_components_for_candidates]**2, axis=1)) # Calculate the distance of each loading from the origin and take into account only the first n PCs 
+        loadings_df['distance'] = loadings_df['distance'] / np.max(loadings_df['distance']) # Normalize the distances
+        loadings_df['distance'] = loadings_df['distance'] * 100
+        loadings_df['distance'] = loadings_df['distance'].round(1)
+
+        # Get the candidates based on the distance
+        candidate_loadings = loadings_df[loadings_df['distance'] > np.percentile(loadings_df['distance'], 99.5)].index
+        # Get the candidate loadings scores
+        candidate_loadings_scores = loadings_df[loadings_df['distance'] > np.percentile(loadings_df['distance'], 99.5)]['distance']
+
+        # Add the candidate features to the list
+        self.add_candidates(features = candidate_loadings.to_list(), method = 'PCA-loadings', specification = 'PCA' + str(self.pca_count), scores = candidate_loadings_scores.to_list())
+
         #---------------------------------------------
         # REPORTING
-        report.add_text('<b>PCA was performed.</b>')
+        #report.add_text('<b>PCA was performed.</b>')
+        # add text to report with PCA and count of PCA
+        report.add_text('<b>PCA (' + str(self.pca_count) + ') was performed. </b>')
         return self.pca_data
     
     def _vip(self, model):
@@ -2388,6 +2529,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         for train, test in kf.split(data_transposed):
             model.fit(data_transposed.iloc[train], y.iloc[train])
             y_cv[test] = model.predict(data_transposed.iloc[test])
+
         # Fit the model on the entire dataset
         model.fit(data.iloc[:, 1:].T, y)
         # Calculate the VIP scores
@@ -2396,8 +2538,13 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Print the names of the compounds with the VIP scores in the 99.5th percentile
         candidate_vips = data.iloc[:, 0][vips > np.percentile(vips, 99.5)]
 
+        # Candidate features cpdIDs
+        candidate_vips = candidate_vips
+        # Their VIP scores
+        candidate_vips_scores = vips[vips > np.percentile(vips, 99.5)]
+
         # Store the candidate variables
-        self.candidate_variables.append(['PLS-DA vips', candidate_vips])
+        self.add_candidates(features = candidate_vips, method = 'PLSDA-vips', specification=str(response_column_names), scores = candidate_vips_scores)
 
         # Calculate the R2 and Q2
         r2 = r2_score(y, y_cv)
@@ -2796,66 +2943,68 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             ('image', name),])
         return fig, ax
     
-    def visualizer_PCA_loadings(self, components = 'all', color = 'blue', plt_name_suffix = 'PCA_loadings'):
+    def visualizer_PCA_loadings(self, color = 'blue', plt_name_suffix = 'PCA_loadings', components_to_show = [0, 1], annotate_candidates = True, axis_log = False):
         """
         Create a PCA loadings plot. (And suggest candidate features based on the 99.5th percentile of the distances from the origin)
 
         Parameters
         ----------
-        components: int or 'all'
-            Decide for how many first components you wanna show loadings, usually you wanna use 2 or 'all' which takes into account all componments. Default is 'all'.
         color : str
             Color for the plot. Default is 'lightblue'.
         plt_name_suffix : str
             Suffix for the plot name. Default is 'PCA_loadings'. (Useful when using multiple times - to avoid overwriting the previous plot)
+        components_to_show : list
+            List of components to show. Default is [0, 1]. ([0, 1] means PC1 and PC2 - indexing from 0)
+        annotate_candidates : bool
+            If True, the candidates will be annotated in the plot. Default is True. !!! Candidates are those above 99.5th percentile of the distances from the origin based on the PC1 and PC2 loadings, so annotating them while plotting different PCs might be confusing!.
+        axis_log : bool
+            If True, the axes will be logarithmic. Default is True.        
         """
         data = self.data
         report = self.report
         output_file_prefix = self.output_file_prefix
         main_folder = self.main_folder
         suffixes = self.suffixes
-        if self.pca_data is None:
-            raise ValueError('PCA was not performed yet. Run PCA first.')
-        else:
-            pca = self.pca       
+        loadings = self.pca_loadings
+        candidates = self.candidates
 
-        if components == 'all':
-            loadings = pca.components_
-        elif isinstance(components, int):
-            if components > pca.n_components_:
-                loadings = pca.components_
-                print('You cannot show more components then there is; all are shown.')
-            else:
-                # Get the loadings for the first X principal components
-                loadings = pca.components_[:components, :]
-        else:
-            raise ValueError('The components parameter must be an integer or "all".')
+        if self.pca_data is None:
+            raise ValueError('PCA was not performed yet. Run PCA first.')    
 
         # Create a figure and axis
         fig, ax = plt.subplots()
 
         # Plot the loadings colored by chosen column
-        plt.scatter(loadings[0, :], loadings[1, :], color = color, marker='o', alpha=0.3)
+        plt.scatter(loadings.iloc[:, components_to_show[0]], loadings.iloc[:, components_to_show[1]], color = color, marker='o', alpha=0.5)
+    
+        # Loadings to annotate (those above 99.5th percentile = those in the candidates df)
+        candidates_names = candidates['feature'][candidates['specification'] == 'PCA'+str(self.pca_count)] # Get the names of candidates from this PCA 
+        
+        # Find the candidate loadings in the loadings dataframe
+        candidate_loadings = loadings.index[loadings.index.isin(candidates_names)].tolist()
 
-        # Get the explained variance ratios
-        explained_variance_ratios = pca.explained_variance_ratio_[:2]
+        print(candidate_loadings)
+      
+        if annotate_candidates:
+            texts = []  # List to store text annotations
+            # Annotate
+            for candidate in candidate_loadings:
+                candidate_index = loadings.index.get_loc(candidate)
+                texts.append(ax.text(loadings.iloc[candidate_index, components_to_show[0]], loadings.iloc[candidate_index, components_to_show[1]], candidate, fontsize=8, color='black', alpha=1))
+                
+            # Adjust text to avoid overlap
+            adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.8))
 
-        # Calculate the distance of each point from the origin, weighted by the explained variance ratios
-        distances = np.sqrt((loadings[0, :]**2 * explained_variance_ratios[0]) + (loadings[1, :]**2 * explained_variance_ratios[1]))
-
-        # Calculate the 99.5th percentile of the distances
-        threshold = np.percentile(distances, 99.5)
-
-        # Annotate the points that are farther than the threshold from the origin
-        candidate_loadings = []
-        for i, feature in enumerate(data.iloc[:,0]):
-            if distances[i] > threshold:
-                plt.text(loadings[0, i], loadings[1, i], feature)
-                candidate_loadings.append(feature)
-
-        # Add the identified candidate features to the list of candidates
-        self.candidate_variables.append(['PCA-Loadings', candidate_loadings]) 
-
+        if axis_log:
+            # Logarithmic scale for the axes
+            ax.set_xscale('log')
+            ax.set_yscale('log')
+        
+        # Add grid lines with bold lines for 0 values for both axes
+        ax.axhline(0, color='black', linewidth=1)
+        ax.axvline(0, color='black', linewidth=1)
+        ax.grid(color='grey', linewidth=0.5)
+           
         # Add a title and labels
         ax.set_title('PCA Loadings')
         ax.set_xlabel('PC1 Loadings')
@@ -2863,6 +3012,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         name = main_folder +'/statistics/'+ output_file_prefix + '_' + plt_name_suffix
         for suffix in suffixes:
             plt.savefig(name + suffix, bbox_inches='tight', dpi = 300)
+
         plt.show()
 
         #---------------------------------------------
@@ -3373,11 +3523,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         plt.scatter(np.log2(fold_change), -np.log10(p_values), color='grey', alpha=0.5)
 
         # Highlight significant points
-        # significant_right = (np.log2(fold_change) > (fold2_change_threshold)) & (p_values < p_value_threshold)
-        # significant_right_but_not_above = (np.log2(fold_change) > (fold2_change_threshold)) & (p_values >= p_value_threshold)
-        # significant_left = (np.log2(fold_change) < -(fold2_change_threshold)) & (p_values < p_value_threshold)
-        # significant_left_but_not_above = (np.log2(fold_change) < -(fold2_change_threshold)) & (p_values >= p_value_threshold)
-
         significant_fc_right = (np.log2(fold_change) > (fold2_change_threshold))
         significant_fc_left = (np.log2(fold_change) < -(fold2_change_threshold))
         significant_pv = (p_values < p_value_threshold)
@@ -3386,11 +3531,30 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         significant_fc_right_and_pv = significant_fc_right & significant_pv
         significant_fc_left_and_pv = significant_fc_left & significant_pv
 
-        
-        # Scatter the significant points for both P-values and fold changes
-        # plt.scatter(np.log2(fold_change[significant_right]), -np.log10(p_values[significant_right]), color=color_right, alpha=1)
-        # plt.scatter(np.log2(fold_change[significant_left]), -np.log10(p_values[significant_left]), color=color_left, alpha=1)
+        # Add those significant for both fold changes and p-values into candidates
+        # Get the feature names 
+        feature_names = data.iloc[:, 0].to_numpy()
+     
+        # Calculate scores from -log10(p-values * fold changes)
+        scores = -np.log10(p_values * fold_change)
 
+        # Convert feature_names to a pandas Series
+        feature_names_series = pd.Series(feature_names)
+
+        # Add candidates using the filtered feature names
+        self.add_candidates(
+            feature_names_series[significant_fc_right_and_pv].tolist(),  # Convert back to a list if needed
+            method='Fold Change (right)',
+            specification=str(group1 + ' - ' + group2),
+            scores=scores[significant_fc_right_and_pv]
+        )
+
+        self.add_candidates(
+            feature_names_series[significant_fc_left_and_pv].tolist(),  # Convert back to a list if needed
+            method='Fold Change (left)',
+            specification=str(group1 + ' - ' + group2),
+            scores=scores[significant_fc_left_and_pv]
+)
         # Scatter those significant for pv
         plt.scatter(np.log2(fold_change[significant_pv]), -np.log10(p_values[significant_pv]), color='grey', alpha=0.7)
         
@@ -3399,19 +3563,18 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         # Scatter those significant for fold changes left
         plt.scatter(np.log2(fold_change[significant_fc_left]), -np.log10(p_values[significant_fc_left]), color=color_left, alpha=0.6)
-
-        # Scatter those significant for P-values but not fold changes
-        # plt.scatter(np.log2(fold_change[significant_right_but_not_above]), -np.log10(p_values[significant_right_but_not_above]), color=color_right, alpha=0.6)
-        # plt.scatter(np.log2(fold_change[significant_left_but_not_above]), -np.log10(p_values[significant_left_but_not_above]), color=color_left, alpha=0.6)
-
-        # Scatter those significant for fold changes but not P-values
-        # plt.scatter(np.log2(fold_change[(np.log2(fold_change) > (fold2_change_threshold)) & (p_values >= p_value_threshold)]), -np.log10(p_values[(np.log2(fold_change) > (fold2_change_threshold)) & (p_values >= p_value_threshold)]), color='black', alpha=0.6)
-        # plt.scatter(np.log2(fold_change[(np.log2(fold_change) < -(fold2_change_threshold)) & (p_values >= p_value_threshold)]), -np.log10(p_values[(np.log2(fold_change) < -(fold2_change_threshold)) & (p_values >= p_value_threshold)]), color='black', alpha=0.6)
         
-
         # Add lines for 0 for both axes
         plt.axvline(x=0, color='black', linestyle='-', alpha=0.5, linewidth=0.5)
         plt.axhline(y=0, color='black', linestyle='-', alpha=0.5, linewidth=0.5)
+
+        # Annotate the significant points (for both fold changes and p-values)
+        texts = []
+        for i in range(len(fold_change)):
+            if significant_fc_right_and_pv[i] or significant_fc_left_and_pv[i]:
+                texts.append(plt.annotate(feature_names[i], (np.log2(fold_change[i]), -np.log10(p_values[i])), fontsize=8, alpha=0.7))
+        
+        adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.8))
 
         plt.xlabel('Log2 Fold Change')
         plt.ylabel('-Log10 P-Value')
@@ -3437,3 +3600,72 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'line'])
 
         return plt_name
+    
+    def visualizer_candidates(self, cmap = 'nipy_spectral', plt_name_suffix = 'candidates'):
+        """
+        Visualize all candidates found during the analysis.
+
+
+        Parameters
+        ----------
+        cmap : str
+            Name of the colormap. Default is 'nipy_spectral'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
+        plt_name_suffix : str
+            Suffix for the plot name. Default is 'candidates'. (Useful when using multiple times - to avoid overwriting the previous plot)
+        
+        """
+        candidates = self.candidates # DataFrame with candidates
+        report = self.report
+        output_file_prefix = self.output_file_prefix
+        main_folder = self.main_folder
+        suffixes = self.suffixes
+        if candidates is None:
+            raise ValueError('No candidates were found. You need to run PCA, PLS-DA or other analysis that produces candidates first.')
+        
+        plot_names = []
+        plots = []
+        # For each group of candidates (method + specification) create a bar plot
+        for method, group in candidates.groupby(['method', 'specification']):
+            # Create a bar plot for each group of candidates
+            fig, ax = plt.subplots(figsize=(10, 8))
+
+            # Get the score for each candidate
+            scores = group['score'].values
+            # Get the name of each candidate
+            names = group['feature'].values
+
+            # Get the color for each candidate
+            cmap = mpl.cm.get_cmap(cmap)
+            num_candidates = len(scores)
+            color_indices = np.linspace(0.05, 0.95, num_candidates)
+            colors = [cmap(i) for i in color_indices]
+            candidates_colors = dict(zip(names, colors))
+
+            # Create a bar plot
+            ax.barh(names, scores, color=[candidates_colors[name] for name in names], alpha=0.6)
+            ax.set_xlabel(f'Score - {method}')
+            ax.set_title(f'Candidates - {method}')
+            ax.set_xlim(0, 1.05 * max(scores))
+            ax.set_ylim(-1, num_candidates + 1)
+            ax.set_yticks(np.arange(num_candidates))
+            ax.set_yticklabels(names, rotation=0)
+            ax.invert_yaxis()
+
+            name = main_folder + '/statistics/' + output_file_prefix + '_' + plt_name_suffix + '_' + str(method)
+            # Save the plot
+            for suffix in suffixes:
+                plt.savefig(name + suffix, bbox_inches='tight', dpi=300)
+            plt.show()
+        
+        #---------------------------------------------
+        # REPORTING
+        text = 'Candidates were shown in the bar plots and added into: ' + str(plot_names)
+        report.add_text(text)
+        # Add the plots to the report
+        for img in plots:
+            report.add_image(img)
+        report.add_line()    
+        
+        return plot_names, plots
+
+
