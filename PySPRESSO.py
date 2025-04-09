@@ -25,6 +25,7 @@ from adjustText import adjust_text
 
 # Statistics and ML modules
 from scipy.stats import zscore, linregress, gaussian_kde, ttest_ind
+from statsmodels.stats.multitest import multipletests
 from scipy.interpolate import UnivariateSpline
 from sklearn.model_selection import LeaveOneOut, KFold, cross_val_predict
 from sklearn.decomposition import PCA
@@ -75,6 +76,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.pca_df = None
         self.pca_per_var = None
         self.pca_loadings = None
+        self.fold_change = None
 
         self.plsda = None
         self.plsda_response_column = None
@@ -704,6 +706,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report = self.report
         main_folder = self.main_folder
         output_file_prefix = self.output_file_prefix
+        candidates = self.candidates
         saves_count = self.saves_count + 1
 
         if versionless:
@@ -733,16 +736,27 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         metadata_name = main_folder + '/' + output_file_prefix + '-metadata' + version + '.csv'
         metadata.to_csv(metadata_name, sep = ';')
 
+        #fold_change
+        if self.fold_change is not None:
+            fold_change = self.fold_change.reset_index(drop=True)
+            fold_change_name = main_folder + '/' + output_file_prefix + '-fold_change' + version + '.csv'
+            fold_change.to_csv(fold_change_name, sep = ';')
+        else:
+            fold_change_name = 'No fold_change data to save.'
+        
         #candidates
-        candidates = self.candidates.reset_index(drop=True)
-        candidates_name = main_folder + '/' + output_file_prefix + '-candidates' + version + '.csv'
-        candidates.to_csv(candidates_name, sep = ';')
+        if self.candidates is not None:
+            candidates = candidates.reset_index(drop=True)
+            candidates_name = main_folder + '/' + output_file_prefix + '-candidates' + version + '.csv'
+            candidates.to_csv(candidates_name, sep = ';')
+        else:
+            candidates_name = 'No candidates data to save.'
 
         print("All datasets were saved.")
         #---------------------------------------------
         #REPORTING
         text0 = 'Processed data was saved into a files named (path) as follows:'
-        data_list = [data_name, variable_metadata_name, metadata_name, candidates_name]
+        data_list = [data_name, variable_metadata_name, metadata_name, fold_change_name, candidates_name]
         text1 = ''
         for file in data_list:
             text1 += '<br/>' + file
@@ -814,6 +828,26 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.candidates = self._candidates_order(how='method')
 
         return self.candidates
+    
+    def get_candidates_indexes(self):
+        """
+        Get the indexes of all the candidates. (For example to use them to create violin plots.)
+
+        """
+        candidates = self.candidates
+        data = self.data
+
+        # Get the indexes of the candidates
+        if candidates is None:
+            raise ValueError("No candidates found yet, they are identified during PCA, PLSDA, fold_change, etc.")
+        else:
+            # Find the indexes of the candidates in the data
+            indexes = []
+            for feature in candidates['feature']:
+                # Find the index of the feature in the data
+                index = data[data['cpdID'] == feature].index.tolist()
+                indexes.append(index[0])
+        return indexes
 
     def _candidates_calculate_hits(self):
         """
@@ -2452,7 +2486,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         candidate_loadings_scores = loadings_df[loadings_df['distance'] > np.percentile(loadings_df['distance'], 99.5)]['distance']
 
         # Add the candidate features to the list
-        self.add_candidates(features = candidate_loadings.to_list(), method = 'PCA-loadings', specification = 'PCA' + str(self.pca_count), scores = candidate_loadings_scores.to_list())
+        self.add_candidates(features = candidate_loadings.to_list(), method = 'PCA-loadings', specification = 'Analysis-' + str(self.pca_count), scores = candidate_loadings_scores.to_list())
 
         #---------------------------------------------
         # REPORTING
@@ -2978,22 +3012,26 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         plt.scatter(loadings.iloc[:, components_to_show[0]], loadings.iloc[:, components_to_show[1]], color = color, marker='o', alpha=0.5)
     
         # Loadings to annotate (those above 99.5th percentile = those in the candidates df)
-        candidates_names = candidates['feature'][candidates['specification'] == 'PCA'+str(self.pca_count)] # Get the names of candidates from this PCA 
+        candidates_names = candidates['feature'][candidates['specification'] == 'Analysis-'+str(self.pca_count)] # Get the names of candidates from this PCA 
         
         # Find the candidate loadings in the loadings dataframe
         candidate_loadings = loadings.index[loadings.index.isin(candidates_names)].tolist()
-
-        print(candidate_loadings)
       
+
         if annotate_candidates:
             texts = []  # List to store text annotations
             # Annotate
-            for candidate in candidate_loadings:
-                candidate_index = loadings.index.get_loc(candidate)
-                texts.append(ax.text(loadings.iloc[candidate_index, components_to_show[0]], loadings.iloc[candidate_index, components_to_show[1]], candidate, fontsize=8, color='black', alpha=1))
+            if len(candidate_loadings) > 25:
+                print('Too many candidates to annotate (more then 25). Skipping annotation.')
+            else:
+                for candidate in candidate_loadings:
+                    candidate_index = loadings.index.get_loc(candidate)
+                    texts.append(ax.text(loadings.iloc[candidate_index, components_to_show[0]], loadings.iloc[candidate_index, components_to_show[1]], candidate, fontsize=8, color='black', alpha=1))
+                    
+                    # Adjust text to avoid overlap
+                    adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.8))
+
                 
-            # Adjust text to avoid overlap
-            adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.8))
 
         if axis_log:
             # Logarithmic scale for the axes
@@ -3264,7 +3302,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig, ax
     
-    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, save_first = True, cmap = 'nipy_spectral', plt_name_suffix = 'violin_plots', bw = 0.2, jitter = True, label_rotation = 0):
+    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, save_first = True, cmap = 'nipy_spectral', plt_name_suffix = 'violin_plots', bw = 0.2, jitter = True, label_rotation = 0, show_all = False):
         """
         Visualize violin plots of all features grouped by a column from the metadata. (And save them into a single PDF file)
 
@@ -3288,6 +3326,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             If True, add jitter to the x-axis. Default is True
         label_rotation : int
             Rotation of the x-axis labels. Default is 0. (Useful for long labels, then use 90)
+        show_all : bool
+            If True, show all violin plots during the process. Default is False (to speed up the process).
         """
         data = self.data
         metadata = self.metadata
@@ -3298,16 +3338,18 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             all_indexes = True
             indexes = range(len(data))
             if save_into_pdf == False:
-                raise ValueError('Showing all violin plots without saving them into a PDF file is not recommended due to the large number of plots.')
+                raise ValueError('Showing all violin plots without saving them into a PDF file is not recommended due to the large number of plots that will be created but not saved for later use.')
         elif isinstance(indexes, int):
             indexes = [indexes]
             all_indexes = False
         elif isinstance(indexes, list):
-            indexes = indexes
+            # remove all duplicates from the list (there is no need to plot the same feature multiple times)
+            indexes = list(set(indexes))
             all_indexes = False
         else:
             raise ValueError('Indexes must be either "all", int or list of ints.')
         
+
         cmap = mpl.cm.get_cmap(cmap)
 
         example_name = None
@@ -3344,7 +3386,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         data_transposed = data_transposed.drop([column_names], axis=1)
 
         pdf_files = []
-
+        first_plot = True
         # Create a folder for the violin plots
         for idx, index in enumerate(indexes):
             values = []
@@ -3389,7 +3431,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 plt.xticks(np.arange(1, len(column_unique_values) + 1), x_labels, rotation=label_rotation)
                 cpd_title = data_transposed.loc['cpdID', index]
                 plt.title(cpd_title)
-
+            
                 # Save the figure to a separate image file
                 if save_into_pdf:
                     file_name = self.main_folder + '/statistics/' + self.report_file_name+ '-' + str(column_names) + '_' + plt_name_suffix +  f'_{index}.pdf'
@@ -3400,20 +3442,25 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     example_name = self.main_folder + '/statistics/'+ plt_name_suffix +'-example-' + str(index)
                     for suffix in suffixes:
                         plt.savefig(example_name + suffix, bbox_inches='tight', dpi = 300)
-                    plt.show() # Show the plot
+                    if first_plot == True or show_all == True:
+                        plt.show() # Show the plot
                     returning_vp = vp
                 elif save_first and all_indexes: # Save the first violin plot (is ignored if indexes are not 'all')
                     example_name = self.main_folder + '/statistics/'+ plt_name_suffix +'-example'
                     for suffix in suffixes:
                         plt.savefig(example_name + suffix, bbox_inches='tight', dpi = 300)
-                    plt.show() # Show the plot
+                    if first_plot == True or show_all == True:
+                        plt.show() # Show the plot
                     returning_vp = vp
                     save_first = False
+                
                 #print progress
                 ending = '\n' if idx == len(indexes) - 1 else '\r'
                 print(f'Violin plots created: { (idx +1) / len(indexes) * 100:.2f}%', end=ending)
                 plt.close()
               #---------------------------------------------
+            first_plot = False
+
         # MERGING all the PDF files into a single PDF file 
         #(this way we should avoid loading all the plots into memory while creating all the plots)
         #(we will load them eventually when creating the final PDF file, but it will not slow down the process of creating the plots)   
@@ -3456,7 +3503,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         return returning_vp
     
     
-    def visualizer_fold_change(self, groups_column_name, group1, group2, color_left = 'green', color_right = 'blue', fold2_change_threshold=1, p_value_threshold=0.05, plt_name_suffix='fold_change'):
+    def visualizer_fold_change(self, groups_column_name, group1, group2, color_left = 'green', color_right = 'blue', fold2_change_threshold=1, p_value_threshold=0.05, p_value_correction_method = 'fdr_bh',plt_name_suffix='fold_change'):
         """
         Visualize fold change and p-value for two groups.
 
@@ -3468,14 +3515,16 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             Name of the first group.
         group2 : str
             Name of the second group.
-        color1 : str
-            Color for the first box. Default is 'blue'.
-        color2 : str
-            Color for the second box. Default is 'green'.
-        fold_change_threshold : float
+        color_left : str
+            Color for the left box. Default is 'green'.
+        color_right : str
+            Color for the right box. Default is 'blue'.
+        fold2_change_threshold : float
             Threshold for the fold change. Default is 1.
         p_value_threshold : float
             Threshold for the p-value. Default is 0.05.
+        p_value_correction_method : str
+            Method for p-value correction. Default is 'fdr_bh' = "Benjamini/Hochberg.; others are: 'bonferroni', 'holm', 'simes-hochberg', 'hommel', 'fdr_by', 'fdr_tsbh', 'fdr_tsbky'. (for more information see: https://www.statsmodels.org/stable/generated/statsmodels.stats.multitest.multipletests.html#statsmodels.stats.multitest.multipletests )
         plt_name_suffix : str
             Suffix for the plot name. Default is 'fold_change'.
         """
@@ -3505,7 +3554,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         group2_data = data.iloc[:, group2_mask]
 
         fold_change = group2_data.mean(axis=1) / group1_data.mean(axis=1)
+        # Get p-values
         p_values = ttest_ind(group1_data, group2_data, axis=1)[1]
+        # Use correction for p-values 
+        p_values = multipletests(p_values, method=p_value_correction_method)[1]
 
         # Create a scatter plot
         fig, ax = plt.subplots(figsize=(10, 8))
@@ -3535,8 +3587,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Get the feature names 
         feature_names = data.iloc[:, 0].to_numpy()
      
-        # Calculate scores from -log10(p-values * fold changes)
-        scores = -np.log10(p_values * fold_change)
+        # Calculate scores from -log10(p-values)
+        scores = -np.log10(p_values)
 
         # Convert feature_names to a pandas Series
         feature_names_series = pd.Series(feature_names)
@@ -3568,14 +3620,18 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         plt.axvline(x=0, color='black', linestyle='-', alpha=0.5, linewidth=0.5)
         plt.axhline(y=0, color='black', linestyle='-', alpha=0.5, linewidth=0.5)
 
-        # Annotate the significant points (for both fold changes and p-values)
-        texts = []
-        for i in range(len(fold_change)):
-            if significant_fc_right_and_pv[i] or significant_fc_left_and_pv[i]:
-                texts.append(plt.annotate(feature_names[i], (np.log2(fold_change[i]), -np.log10(p_values[i])), fontsize=8, alpha=0.7))
-        
-        adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.8))
+        # Identify indices of significant points
+        significant_indices = [i for i in range(len(fold_change)) if significant_fc_right_and_pv[i] or significant_fc_left_and_pv[i]]
 
+        # Check if the number of significant points exceeds the threshold
+        if len(significant_indices) > 25:
+            print('Too many candidates to annotate (more than 25). Skipping annotation.')
+        else:
+            # Annotate the significant points
+            texts = [plt.annotate(feature_names[i], (np.log2(fold_change[i]), -np.log10(p_values[i])), fontsize=8, alpha=0.7) for i in significant_indices]
+            # Adjust text to avoid overlap
+            adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.8))
+       
         plt.xlabel('Log2 Fold Change')
         plt.ylabel('-Log10 P-Value')
         plt.title(f'Fold Change vs P-Value: {group1} vs {group2}')
@@ -3585,10 +3641,22 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         plt.text(0.99, 1.05, f'{sum(significant_fc_right_and_pv)} ↑ ({sum(significant_pv_right)} ≥  -Log10({str(p_value_threshold)}), {sum(significant_fc_right)} ≥  {str(fold2_change_threshold)}', color=color_right, transform=ax.transAxes, ha='right')
         plt.text(0.01, 1.05, f'{sum(significant_fc_left_and_pv)} ↓ ({sum(significant_pv_left)} ≥  -Log10({str(p_value_threshold)}), {sum(significant_fc_left)} ≥  {str(fold2_change_threshold)}', color=color_left, transform=ax.transAxes, ha='left')
         
+        # Add fold_change and p-value to the DataFrame
+        fold_change_df = pd.DataFrame({
+            'cpdID': feature_names,
+            'fold_change': fold_change,
+            'p_value ('+ (p_value_correction_method)+ ')': p_values
+        })
+        # Order by lowest p-value
+        fold_change_df = fold_change_df.sort_values(by='p_value ('+ (p_value_correction_method)+ ')', ascending=True)
+        fold_change_df = fold_change_df.reset_index(drop=True)
+        
+        self.fold_change = fold_change_df
+
         # Save the plot
         plt_name = main_folder + '/statistics/' + output_file_prefix + '_' + plt_name_suffix
         for suffix in suffixes:
-            plt.savefig(plt_name + suffix + '.png', bbox_inches='tight', dpi=300)
+            plt.savefig(plt_name + suffix, bbox_inches='tight', dpi=300)
         plt.show()
 
         #---------------------------------------------
