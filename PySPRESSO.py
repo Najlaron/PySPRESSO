@@ -76,7 +76,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.pca_df = None
         self.pca_per_var = None
         self.pca_loadings = None
+        
         self.fold_change = None
+        self.fold_change_count = 0 # Variable to keep track of the number of fold_change runs (to avoid overwriting)
 
         self.plsda = None
         self.plsda_response_column = None
@@ -3503,7 +3505,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         return returning_vp
     
     
-    def visualizer_fold_change(self, groups_column_name, group1, group2, color_left = 'green', color_right = 'blue', fold2_change_threshold=1, p_value_threshold=0.05, p_value_correction_method = 'fdr_bh',plt_name_suffix='fold_change'):
+    def visualizer_fold_change(self, groups_column_name, group1, group2, color_left = 'green', color_right = 'blue', fold2_change_threshold=1, p_value_threshold=0.05, p_value_correction_method = '',plt_name_suffix='fold_change'):
         """
         Visualize fold change and p-value for two groups.
 
@@ -3524,7 +3526,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         p_value_threshold : float
             Threshold for the p-value. Default is 0.05.
         p_value_correction_method : str
-            Method for p-value correction. Default is 'fdr_bh' = "Benjamini/Hochberg.; others are: 'bonferroni', 'holm', 'simes-hochberg', 'hommel', 'fdr_by', 'fdr_tsbh', 'fdr_tsbky'. (for more information see: https://www.statsmodels.org/stable/generated/statsmodels.stats.multitest.multipletests.html#statsmodels.stats.multitest.multipletests )
+            Method for p-value correction. Default is '' (which means without a correction); others are: 'fdr_bh', 'bonferroni', 'holm', 'simes-hochberg', 'hommel', 'fdr_by', 'fdr_tsbh', 'fdr_tsbky'. (for more information see: https://www.statsmodels.org/stable/generated/statsmodels.stats.multitest.multipletests.html#statsmodels.stats.multitest.multipletests )
         plt_name_suffix : str
             Suffix for the plot name. Default is 'fold_change'.
         """
@@ -3534,6 +3536,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         output_file_prefix = self.output_file_prefix
         main_folder = self.main_folder
         suffixes = self.suffixes
+        fold_change_count = self.fold_change_count
 
         if p_value_threshold <= 0:
             raise ValueError('P-value threshold must be greater than 0.')
@@ -3556,20 +3559,13 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         fold_change = group2_data.mean(axis=1) / group1_data.mean(axis=1)
         # Get p-values
         p_values = ttest_ind(group1_data, group2_data, axis=1)[1]
-        # Use correction for p-values 
-        p_values = multipletests(p_values, method=p_value_correction_method)[1]
+
+        if p_value_correction_method  != '':
+            # Use correction for p-values 
+            p_values = multipletests(p_values, method=p_value_correction_method)[1]
 
         # Create a scatter plot
         fig, ax = plt.subplots(figsize=(10, 8))
-
-        # Determine the limits for the rectangles based on the data
-        x_min = np.min(np.log2(fold_change)) - 0.05
-        x_max = np.max(np.log2(fold_change)) + 0.05
-        y_max = np.max(-np.log10(p_values)) + 0.5
-
-        # Add shaded regions for significant areas
-        ax.add_patch(patches.Rectangle((fold2_change_threshold, -np.log10(p_value_threshold)), x_max - (fold2_change_threshold), y_max + np.log10(p_value_threshold), color=color_right, alpha=0.1))
-        ax.add_patch(patches.Rectangle((x_min, -np.log10(p_value_threshold)), -(fold2_change_threshold) - x_min, y_max + np.log10(p_value_threshold), color=color_left, alpha=0.1))
 
         # Scatter plot for all points
         plt.scatter(np.log2(fold_change), -np.log10(p_values), color='grey', alpha=0.5)
@@ -3593,32 +3589,39 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Convert feature_names to a pandas Series
         feature_names_series = pd.Series(feature_names)
 
+        fold_change_count += 1
         # Add candidates using the filtered feature names
         self.add_candidates(
             feature_names_series[significant_fc_right_and_pv].tolist(),  # Convert back to a list if needed
-            method='Fold Change (right)',
-            specification=str(group1 + ' - ' + group2),
+            method='FoldChange(right; ' + str(p_value_correction_method) +')',
+            specification=str(group1 + ' - ' + group2) + ' Analysis-' + str(fold_change_count),
             scores=scores[significant_fc_right_and_pv]
         )
 
         self.add_candidates(
             feature_names_series[significant_fc_left_and_pv].tolist(),  # Convert back to a list if needed
-            method='Fold Change (left)',
-            specification=str(group1 + ' - ' + group2),
+            method='FoldChange(left; ' + str(p_value_correction_method) +')',
+            specification=str(group1 + ' - ' + group2) + ' Analysis-' + str(fold_change_count),
             scores=scores[significant_fc_left_and_pv]
 )
         # Scatter those significant for pv
-        plt.scatter(np.log2(fold_change[significant_pv]), -np.log10(p_values[significant_pv]), color='grey', alpha=0.7)
+        plt.scatter(np.log2(fold_change[significant_pv]), -np.log10(p_values[significant_pv]), color='grey', alpha=0.7, edgecolors="black")
         
         # Scatter those significant for fold changes right
-        plt.scatter(np.log2(fold_change[significant_fc_right]), -np.log10(p_values[significant_fc_right]), color=color_right, alpha=0.6)
+        plt.scatter(np.log2(fold_change[significant_fc_right]), -np.log10(p_values[significant_fc_right]), color=color_right, alpha=0.6, edgecolors="black")
 
         # Scatter those significant for fold changes left
-        plt.scatter(np.log2(fold_change[significant_fc_left]), -np.log10(p_values[significant_fc_left]), color=color_left, alpha=0.6)
+        plt.scatter(np.log2(fold_change[significant_fc_left]), -np.log10(p_values[significant_fc_left]), color=color_left, alpha=0.6, edgecolors="black")
         
         # Add lines for 0 for both axes
         plt.axvline(x=0, color='black', linestyle='-', alpha=0.5, linewidth=0.5)
         plt.axhline(y=0, color='black', linestyle='-', alpha=0.5, linewidth=0.5)
+
+        # Add lines for fold change threshold and p-value threshold
+        plt.axvline(x=fold2_change_threshold, color=color_right, linestyle='--', alpha=0.5, linewidth=1)
+        plt.axvline(x=-fold2_change_threshold, color=color_left, linestyle='--', alpha=0.5, linewidth=1)
+        plt.axhline(y=-np.log10(p_value_threshold), color='black', linestyle='--', alpha=0.5, linewidth=1)
+
 
         # Identify indices of significant points
         significant_indices = [i for i in range(len(fold_change)) if significant_fc_right_and_pv[i] or significant_fc_left_and_pv[i]]
@@ -3628,9 +3631,17 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             print('Too many candidates to annotate (more than 25). Skipping annotation.')
         else:
             # Annotate the significant points
-            texts = [plt.annotate(feature_names[i], (np.log2(fold_change[i]), -np.log10(p_values[i])), fontsize=8, alpha=0.7) for i in significant_indices]
+            texts = [plt.annotate(
+                feature_names[i], 
+                (np.log2(fold_change[i]), -np.log10(p_values[i])), 
+                fontsize=10, 
+                alpha=1, 
+                color="darkred",
+                bbox=dict(facecolor="white", alpha=0.5, edgecolor="none")  # Semi-transparent white background
+            ) for i in significant_indices]
+            
             # Adjust text to avoid overlap
-            adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.8))
+            adjust_text(texts, arrowprops=dict(arrowstyle='-', color='darkred', lw=0.8))
        
         plt.xlabel('Log2 Fold Change')
         plt.ylabel('-Log10 P-Value')
@@ -3652,6 +3663,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         fold_change_df = fold_change_df.reset_index(drop=True)
         
         self.fold_change = fold_change_df
+        self.fold_change_count = fold_change_count
 
         # Save the plot
         plt_name = main_folder + '/statistics/' + output_file_prefix + '_' + plt_name_suffix
@@ -3692,6 +3704,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         
         plot_names = []
         plots = []
+        k = 0
         # For each group of candidates (method + specification) create a bar plot
         for method, group in candidates.groupby(['method', 'specification']):
             # Create a bar plot for each group of candidates
@@ -3719,11 +3732,12 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             ax.set_yticklabels(names, rotation=0)
             ax.invert_yaxis()
 
-            name = main_folder + '/statistics/' + output_file_prefix + '_' + plt_name_suffix + '_' + str(method)
+            name = main_folder + '/statistics/' + output_file_prefix + '_' + plt_name_suffix + '_' + str(k)
             # Save the plot
             for suffix in suffixes:
                 plt.savefig(name + suffix, bbox_inches='tight', dpi=300)
             plt.show()
+            k += 1
         
         #---------------------------------------------
         # REPORTING
