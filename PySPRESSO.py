@@ -76,6 +76,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.pca_df = None
         self.pca_per_var = None
         self.pca_loadings = None
+        self.pca_loadings_candidates = None
         
         self.fold_change = None
         self.fold_change_count = 0 # Variable to keep track of the number of fold_change runs (to avoid overwriting)
@@ -579,12 +580,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         # Convert the 'Creation Date' column to datetime format
         batch_info['Creation Date'] = pd.to_datetime(batch_info['Creation Date'], format = format) #, dayfirst=True
-       
-
+    
         # Sort the DataFrame based on the 'Creation Date' column
         batch_info = batch_info.sort_values('Creation Date')
         batch_info = batch_info.reset_index(drop=True)
-
 
         if distinguisher is None:
             # If all in one batch, use None
@@ -634,7 +633,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         # Reorder data
         data = data[['cpdID'] + new_data_order]
-
 
         batch_info = batch_info.drop(not_found_indexes)
         batch_info = batch_info.reset_index(drop=True)
@@ -753,6 +751,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             candidates.to_csv(candidates_name, sep = ';')
         else:
             candidates_name = 'No candidates data to save.'
+
+        self.saves_count = saves_count
 
         print("All datasets were saved.")
         #---------------------------------------------
@@ -877,10 +877,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         """
         # Order the candidates by method and score
         if how == 'method':
-            self.candidates = self.candidates.sort_values(by=['method', 'score'], ascending=[False, False])
+            self.candidates = self.candidates.sort_values(by=['method', 'specification', 'score', 'hits'], ascending=[False, False, False, False])
         # Order the candidates by hits and method
         elif how == 'hits':
-            self.candidates = self.candidates.sort_values(by=['hits', 'method'], ascending=[False, False])
+            self.candidates = self.candidates.sort_values(by=['hits', 'method', 'specification', 'score'], ascending=[False, False, False, False])
 
         # Reset the index
         self.candidates.reset_index(drop=True, inplace=True)
@@ -2480,15 +2480,19 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         loadings_df['distance'] = np.sqrt(np.sum(loadings_df.iloc[:, :n_components_for_candidates]**2, axis=1)) # Calculate the distance of each loading from the origin and take into account only the first n PCs 
         loadings_df['distance'] = loadings_df['distance'] / np.max(loadings_df['distance']) # Normalize the distances
         loadings_df['distance'] = loadings_df['distance'] * 100
-        loadings_df['distance'] = loadings_df['distance'].round(1)
+    
+        #loadings_df['distance'] = loadings_df['distance'].round(1)
 
         # Get the candidates based on the distance
         candidate_loadings = loadings_df[loadings_df['distance'] > np.percentile(loadings_df['distance'], 99.5)].index
         # Get the candidate loadings scores
-        candidate_loadings_scores = loadings_df[loadings_df['distance'] > np.percentile(loadings_df['distance'], 99.5)]['distance']
+        candidate_loadings_scores = loadings_df[loadings_df['distance'] > np.percentile(loadings_df['distance'], 99.5)]['distance'].round(2)
+
+        # Save candidate loadings
+        self.pca_loadings_candidates = candidate_loadings
 
         # Add the candidate features to the list
-        self.add_candidates(features = candidate_loadings.to_list(), method = 'PCA-loadings', specification = 'Analysis-' + str(self.pca_count), scores = candidate_loadings_scores.to_list())
+        self.add_candidates(features = candidate_loadings.to_list(), method = 'PCA-loadings', specification = 'Analysis-' + str(self.pca_count) + '; PCA-components-'+str(n_components_for_candidates), scores = candidate_loadings_scores.to_list())
 
         #---------------------------------------------
         # REPORTING
@@ -2986,7 +2990,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         Parameters
         ----------
         color : str
-            Color for the plot. Default is 'lightblue'.
+            Color for the plot. Default is 'blue'.
         plt_name_suffix : str
             Suffix for the plot name. Default is 'PCA_loadings'. (Useful when using multiple times - to avoid overwriting the previous plot)
         components_to_show : list
@@ -3001,8 +3005,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         output_file_prefix = self.output_file_prefix
         main_folder = self.main_folder
         suffixes = self.suffixes
-        loadings = self.pca_loadings
-        candidates = self.candidates
+        pca_loadings = self.pca_loadings
+        pca_loadings_candidates = self.pca_loadings_candidates
 
         if self.pca_data is None:
             raise ValueError('PCA was not performed yet. Run PCA first.')    
@@ -3010,15 +3014,22 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Create a figure and axis
         fig, ax = plt.subplots()
 
+        # Check components_to_show
+        if len(components_to_show) != 2:
+            raise ValueError('components_to_show must be a list of two integers.')
+
         # Plot the loadings colored by chosen column
-        plt.scatter(loadings.iloc[:, components_to_show[0]], loadings.iloc[:, components_to_show[1]], color = color, marker='o', alpha=0.5)
+        plt.scatter(pca_loadings.iloc[:, components_to_show[0]], pca_loadings.iloc[:, components_to_show[1]], color = color, marker='o', alpha=0.5)
     
-        # Loadings to annotate (those above 99.5th percentile = those in the candidates df)
-        candidates_names = candidates['feature'][candidates['specification'] == 'Analysis-'+str(self.pca_count)] # Get the names of candidates from this PCA 
+        # Loadings to annotate (those above 99.5th percentile)
+        candidate_loadings_names = pca_loadings_candidates
         
         # Find the candidate loadings in the loadings dataframe
-        candidate_loadings = loadings.index[loadings.index.isin(candidates_names)].tolist()
-      
+        candidate_loadings = [name for name in candidate_loadings_names if name in pca_loadings.index]
+        # Get the candidate loadings scores
+        candidate_loadings_scores = pca_loadings.loc[candidate_loadings].iloc[:, components_to_show]
+
+        print(candidate_loadings_names)
 
         if annotate_candidates:
             texts = []  # List to store text annotations
@@ -3027,13 +3038,14 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 print('Too many candidates to annotate (more then 25). Skipping annotation.')
             else:
                 for candidate in candidate_loadings:
-                    candidate_index = loadings.index.get_loc(candidate)
-                    texts.append(ax.text(loadings.iloc[candidate_index, components_to_show[0]], loadings.iloc[candidate_index, components_to_show[1]], candidate, fontsize=8, color='black', alpha=1))
-                    
-                    # Adjust text to avoid overlap
-                    adjust_text(texts, arrowprops=dict(arrowstyle='-', color='gray', lw=0.8))
+                    # Get the index of the candidate in the loadings dataframe
+                    candidate_index = pca_loadings.index.get_loc(candidate)
+                    texts.append(ax.text(pca_loadings.iloc[candidate_index, components_to_show[0]], pca_loadings.iloc[candidate_index, components_to_show[1]], candidate, fontsize=10, color='darkred', alpha=1, bbox=dict(facecolor="white", alpha=0.5, edgecolor="none")))  # Semi-transparent white background))
+                    # Annotate the significant points
+            
+            # Adjust text to avoid overlap
+            adjust_text(texts, arrowprops=dict(arrowstyle='-', color='darkred', lw=0.8))
 
-                
 
         if axis_log:
             # Logarithmic scale for the axes
