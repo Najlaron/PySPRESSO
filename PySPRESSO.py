@@ -82,6 +82,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.fold_change_count = 0 # Variable to keep track of the number of fold_change runs (to avoid overwriting)
 
         self.plsda = None
+        self.plsda_metadata = None
         self.plsda_response_column = None
 
         # Candidate features (contains significant features based on different methods - features that might be interesting for further analysis - e.g. biomarkers)
@@ -1057,7 +1058,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
     
     def filter_relative_standard_deviation(self, rsd_threshold = 20, to_plot = False):
         """
-        Filter out features with RSD% over the threshold.
+        Filter out features with QC samples with RSD% (relative standard deviation) over the threshold.
 
         Parameters
         ----------
@@ -1073,8 +1074,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         #QC_samples mask
         is_qc_sample = [True if col in QC_samples else False for col in data.columns[1:]]
-        print(len(is_qc_sample))
-
+        
         #Calculate RSD for only QC samples
         qc_rsd = data[data.columns[1:][is_qc_sample]].std(axis=1)/data[data.columns[1:][is_qc_sample]].mean(axis=1)*100
         qc_rsd = qc_rsd.copy()
@@ -1101,17 +1101,19 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         if len(indexes)  == 0:
             print("No compounds with RSD > " + str(rsd_threshold) + " were found.")
         else:   
-            alphas = [0.7 if qc else 0.5 for qc in is_qc_sample]
-            colors = ['grey' if qc else 'blue' for qc in is_qc_sample]
+            # plot only the QC samples
             for i in range(number_plotted):
-                plt.scatter(range(len(data.columns[1:])), data.iloc[indexes[i],1:], color= colors, alpha=alphas, marker='o')
+                plt.figure(figsize=(10, 6))
+                plt.scatter(range(len(data.iloc[indexes[i], 1:][is_qc_sample])),
+                            data.iloc[indexes[i], 1:][is_qc_sample], 
+                            label=data.iloc[indexes[i], 0], 
+                            s=10, alpha=0.5)
                 plt.xlabel('Samples in order')
                 plt.ylabel('Peak Area')
                 plt.title("High RSD compound: cpID = " + data.iloc[indexes[i], 0])
                 for suffix in self.suffixes:
                     plt.savefig(self.main_folder + '/figures/QC_samples_scatter_' + str(indexes[i]) + '_high_RSD-deleted_by_correction' + suffix, dpi=400, bbox_inches='tight')
-                    if to_plot == True:
-                        plt.show()
+                plt.show()
         
         #reset index
         data = data.reset_index(drop=True)
@@ -1429,11 +1431,13 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Drop rows with dropped samples from metadata
         metadata = metadata.drop(metadata.index[column_indexes_to_drop])
         metadata.reset_index(drop=True, inplace=True)
-        # Update batch_info
-        batch_info = batch_info.drop(column_indexes_to_drop)
-        batch_info.reset_index(drop=True, inplace=True)
-        # Update batch
-        batch = [batch[i] for i in range(len(batch)) if i not in column_indexes_to_drop]
+        #if batch info is Not None, drop the samples from batch_info
+        if batch_info is not None:
+            # Update batch_info
+            batch_info = batch_info.drop(column_indexes_to_drop)
+            batch_info.reset_index(drop=True, inplace=True)
+            # Update batch
+            batch = [batch[i] for i in range(len(batch)) if i not in column_indexes_to_drop]
         # Update variable_metadata
         variable_metadata = self._filter_match_variable_metadata(data, self.variable_metadata)
         
@@ -1743,7 +1747,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Invert the z-scores
         mean = mean.to_numpy()
         std = std.to_numpy()
-        data = (zscores - 1) * std + mean # Subtract 1 (10 was added, but then it was divided in the correction step)
+        data = (zscores - 1) * 10 * std + mean # Subtract 1 (10 was added, but then it was divided in the correction step); Multiply by 10 (this comes from correction step, where we divide by spline values (which are around 0 (from z-scores) + 10 added to avoid division by zero in normalization step))
         # Return the inverted z-scores
         data = pd.DataFrame(data, index=zscores.index, columns=zscores.columns)
         return data
@@ -2144,7 +2148,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 row_data = data[feature].values
                 alphas = [0.4 if qc else 0.1 if zero else 0.8 for qc, zero in zip(is_qc_sample, row_data == 0)]
 
-                
                 # Initialize a dictionary to store the zero counts for each batch
                 zero_counts = {batch_id: 0 for batch_id in unique_batches}
                 qc_zero_counts = {batch_id: 0 for batch_id in unique_batches}
@@ -2330,14 +2333,14 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         if use_norm:
             # Calculate new std
-            #std_new = df.std(axis=0)
-
+            #new_std = data.std(axis=0)
+            
             # Invert the normalization (based on the old mean and the new std (is it good or bad?)) 
             data = self._invert_zscores(data, mean, std)
 
         if use_log:
             # Invert the log transformation
-            data= self._transformer_log(data, invert=True)
+            data = self._transformer_log(data, invert=True)
 
         # Transpose the dataframe back    
         data = data.T
@@ -2523,7 +2526,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         return vips
     
     
-    def statistics_PLSDA(self, response_column_names):
+    def statistics_PLSDA(self, response_column_names, ignored_groups = None):
         """
         Perform PLSDA on the data and visualize the results.
 
@@ -2531,12 +2534,15 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         Parameters
         ----------
+
         response_column_names : str or list
             Name of the column to use as a response variable. (From metadata, e.g. 'Sample Type' or list for multiple columns ['Sample Type', 'Diagnosis'], etc.)
+        ignored_groups : None or list of lists 
+            List of lists - groups to ignore in format [[Column Name, Group Name]]. Default is None. (e.g. [['Sample Type', 'QC'], ['Sample Type', 'Blank']]) - to ignore 'QC' and 'Blank' groups from 'Sample Type' column. If None, then no groups are ignored.
 
         """
-        data = self.data
-        metadata = self.metadata
+        data = self.data.copy()
+        metadata = self.metadata.copy()
         report = self.report
 
         # Define the number of components to be used
@@ -2544,10 +2550,28 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Define the number of folds for cross-validation
         n_folds = 10
 
+        if ignored_groups == None:
+            ignored_groups = []
+        # Handle case where only one pair [Column Name, Group Name] is provided (and isnt nested)
+        if isinstance(ignored_groups, list) and isinstance(ignored_groups[0], str):
+            ignored_groups = [ignored_groups]
+
+        # Remove the ignored groups from the data; group = [Column Name, Group Name]
+        for group in ignored_groups:
+            # Remove the group from the metadata
+            metadata = metadata[metadata[group[0]] != group[1]].reset_index(drop=True)
+
+        # Now filter the data columns (samples) to match the filtered metadata
+        # Keep 'cpdID' column and only those columns whose names are in metadata['Sample File']
+        columns_to_keep = ['cpdID'] + metadata['Sample File'].tolist()
+        data = data.loc[:, data.columns.isin(columns_to_keep)]
+
         if isinstance(response_column_names, list):
             # create temporary column for the response variable by concatenating the response columns
             metadata[str(response_column_names)] = metadata[response_column_names].apply(lambda x: '_'.join(x.map(str)), axis=1)
             response_column_names = str(response_column_names)
+
+        self.plsda_metadata = metadata.copy()
             
         # Define the response column(s)
         y = metadata[str(response_column_names)]
@@ -2557,6 +2581,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Convert the categorical variable to a dummy (binary) variable
         y = pd.get_dummies(y)
 
+
         # Define the PLS-DA model
         model = PLSRegression(n_components=n_comp)
         # Define the KFold cross-validator
@@ -2565,6 +2590,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         y_cv = np.zeros(y.shape)
     
         data_transposed = data.iloc[:, 1:].T
+        y = y
 
         for train, test in kf.split(data_transposed):
             model.fit(data_transposed.iloc[train], y.iloc[train])
@@ -2608,6 +2634,76 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                             'line'])
         return self.plsda_model
 
+    def statistics_ttest(self, groups_column_name, group1, group2, p_value_correction_method = None, table_name_suffix = 'ttest_results'):
+        """
+        Perform t-test on two chosen groups of samples and return the results in a table.
+        
+        Parameters
+        ----------
+
+        groups_column_name : str
+            Name of the column to group the data by. (From metadata, e.g. 'Sample Type')
+        group1 : str
+            Name of the first group to compare. (From metadata, e.g. 'Control')
+        group2 : str
+            Name of the second group to compare. (From metadata, e.g. 'Treatment')
+        p_value_correction_method : str or None
+            Method for p-value correction method. Default is None. (Options are: 'fdr_bh', 'bonferroni', 'holm-sidak', 'holm', 'simes-hochberg', 'fdr_by', 'fdr_tsbh', 'fdr_tsbky'; for more information: https://statsmodels.org/stable/generated/statsmodels.stats.multitest.multipletests.html)
+        table_name_suffix : str
+            Suffix for the table name. Default is 'ttest_results'. (Useful when using multiple times - to avoid overwriting the previous table)
+        """
+        data = self.data.copy()
+        metadata = self.metadata.copy()
+        report = self.report
+        output_file_prefix = self.output_file_prefix
+        
+
+        #Create masks for the two groups
+        group1_mask = metadata[groups_column_name] == group1
+        group2_mask = metadata[groups_column_name] == group2
+
+        # Add False to the beginning of the masks to align them with the data (first column is cpdID)
+        group1_mask = np.insert(group1_mask.to_numpy(), 0, False)
+        group2_mask = np.insert(group2_mask.to_numpy(), 0, False)
+
+        # Get the data for the two groups
+        group1_data = data.iloc[:, group1_mask]
+        group2_data = data.iloc[:, group2_mask]
+
+        fold_change = group2_data.mean(axis=1) / group1_data.mean(axis=1)
+        # Get p-values
+        p_values = ttest_ind(group1_data, group2_data, axis=1)[1]
+
+        if p_value_correction_method  != '' or p_value_correction_method is not None or p_value_correction_method != 'None' or p_value_correction_method != False:
+            # Use correction for p-values 
+            p_values = multipletests(p_values, method=p_value_correction_method)[1]
+        
+        # Create a DataFrame with the results
+        p_values_table = pd.DataFrame({
+            'cpdID': data['cpdID'],
+            'Fold Change': fold_change,
+            'p-value': p_values,
+            'group': [f"{group1} vs {group2}"] * len(data)
+        })
+        # Sort the table by p-value
+        p_values_table = p_values_table.sort_values(by='p-value', ascending=True).reset_index(drop=True)
+        
+        #-----------------------------------------------
+        # REPORTING
+        text0 = f'<b>t-test</b> was performed for the groups: {group1} vs {group2}.'
+        text1 = 'The results are shown in the table below.'
+        report.add_together([('text', text0),
+                            ('text', text1),
+                            ('table', p_values_table),
+                            'line'])
+        # Save the table to a CSV file
+        csv_name = self.main_folder + '/statistics/' + output_file_prefix + group1 + '_vs_' + group2 + table_name_suffix +'.csv'
+        p_values_table.to_csv(csv_name, index=False)
+        report.add_text(f'The t-test results were saved to: {csv_name}')
+        
+        return p_values_table
+
+
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL VISUALIZING METHODS (keyword: visualizer_...)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -2638,11 +2734,35 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         data = self.data
         report = self.report
         QC_samples = self.QC_samples
+        blank_samples = self.blank_samples
+        dilution_series_samples = self.dilution_series_samples
+        standard_samples = self.standard_samples
+
         main_folder = self.main_folder
         suffixes = self.suffixes
 
+        # QC_samples mask
+        if QC_samples != False and QC_samples != None:
+            is_qc_sample = [True if col in QC_samples else False for col in data.columns[1:]]
+        else:
+            is_qc_sample = [False for col in data.columns[1:]]
+        # Blank samples mask
+        print(blank_samples)
+        if blank_samples != False and blank_samples != None:
+            is_blank_sample = [True if col in blank_samples else False for col in data.columns[1:]]
+        else:
+            is_blank_sample = [False for col in data.columns[1:]]
+        # Dilution series samples mask
+        if dilution_series_samples != False and dilution_series_samples != None:
+            is_dilution_series_sample = [True if col in dilution_series_samples else False for col in data.columns[1:]]
+        else:
+            is_dilution_series_sample = [False for col in data.columns[1:]]
+        # Standard samples mask
+        if standard_samples != False and standard_samples != None:
+            is_standard_sample = [True if col in standard_samples else False for col in data.columns[1:]]
+        else:
+            is_standard_sample = [False for col in data.columns[1:]]
 
-        is_qc_sample = [True if col in QC_samples else False for col in data.columns[1:]]
         # Create the figure and axis objects
         fig, ax = plt.subplots(figsize=(18, 12))
 
@@ -2651,7 +2771,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         plt.title('Boxplot of all samples')
 
         #Color boxplots of QC samples in red and the rest in blue
-        colors = ['red' if qc else 'lightblue' for qc in is_qc_sample]
+        colors = ['grey' if qc else 'darkred' if is_blank else 'blue' if is_dilution else 'darkgreen' if is_standard else 'lightblue' for qc, is_blank, is_dilution, is_standard in zip(is_qc_sample, is_blank_sample, is_dilution_series_sample, is_standard_sample)]
         # Set the colors for the individual boxplots
         for patch, color in zip(box['boxes'], colors):
             patch.set_facecolor(color)
@@ -2661,7 +2781,15 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         plt.ylabel('Peak Area')
         xx = np.arange(0, len(data.columns[1:])+1, 100)
         plt.xticks(xx, xx)
-        plt.legend()
+
+        # Add a legend
+        legend_elements = [plt.Line2D([0], [0], marker='o', color='w', label='QC samples', markerfacecolor='grey', markersize=10),
+                        plt.Line2D([0], [0], marker='o', color='w', label='Blank samples', markerfacecolor='darkred', markersize=10),
+                        plt.Line2D([0], [0], marker='o', color='w', label='Dilution series samples', markerfacecolor='blue', markersize=10),
+                        plt.Line2D([0], [0], marker='o', color='w', label='Standard samples', markerfacecolor='darkgreen', markersize=10),
+                        plt.Line2D([0], [0], marker='o', color='w', label='Samples', markerfacecolor='lightblue', markersize=10)]
+        plt.legend(handles=legend_elements, loc='upper left', fontsize=12, title='Sample types', title_fontsize='13', frameon=True)
+        
 
         # Save the plot
         plt_name = main_folder + '/figures/QC_samples_' + plt_name_suffix
@@ -2698,6 +2826,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         data = self.data
         report = self.report
         QC_samples = self.QC_samples
+        blank_samples = self.blank_samples
+        dilution_series_samples = self.dilution_series_samples
+        standard_samples = self.standard_samples
         main_folder = self.main_folder
         suffixes = self.suffixes
         batch = self.batch
@@ -2736,7 +2867,27 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         batch_to_color = {batch_id: batch_colors[i % len(batch_colors)] for i, batch_id in enumerate(unique_batches)}
 
         # QC_samples mask
-        is_qc_sample = [True if col in QC_samples else False for col in data.columns[1:]]
+        if QC_samples != False and QC_samples != None:
+            is_qc_sample = [True if col in QC_samples else False for col in data.columns[1:]]
+        else:
+            is_qc_sample = [False for col in data.columns[1:]]
+        # Blank samples mask
+        print(blank_samples)
+        if blank_samples != False and blank_samples != None:
+            is_blank_sample = [True if col in blank_samples else False for col in data.columns[1:]]
+        else:
+            is_blank_sample = [False for col in data.columns[1:]]
+        # Dilution series samples mask
+        if dilution_series_samples != False and dilution_series_samples != None:
+            is_dilution_series_sample = [True if col in dilution_series_samples else False for col in data.columns[1:]]
+        else:
+            is_dilution_series_sample = [False for col in data.columns[1:]]
+        # Standard samples mask
+        if standard_samples != False and standard_samples != None:
+            is_standard_sample = [True if col in standard_samples else False for col in data.columns[1:]]
+        else:
+            is_standard_sample = [False for col in data.columns[1:]]
+
         # Create a boolean mask for the x array
         x_mask = np.full(len(data.columns) - 1, False)
         x_mask[is_qc_sample] = True
@@ -2745,9 +2896,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         for feature in show:
 
             # Colors and alphas and markers
-            colors = ['black' if qc else batch_to_color[batch[i]] for i, qc in enumerate(is_qc_sample)]
+            colors = ['black' if qc else 'darkblue' if is_blank else 'darkred' if is_dilution else 'darkgreen' if is_standard else batch_to_color[b] for b, qc, is_blank, is_dilution, is_standard in zip(batch, is_qc_sample, is_blank_sample, is_dilution_series_sample, is_standard_sample)]
             row_data = data.iloc[feature, 1:]
-            alphas = [0.4 if qc else 0.1 if zero else 0.8 for qc, zero in zip(is_qc_sample, row_data == 0)]
+            alphas = [0.5 if qc else 0.1 if zero else 0.8 for qc, zero in zip(is_qc_sample, row_data == 0)]
 
             # Create a zero mask (for qc samples)
             zeros_mask = data.iloc[feature, 1:][is_qc_sample] == 0
@@ -2778,6 +2929,17 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             plt.ylabel('Peak Area')
             plt.title("cpID = " + data.iloc[feature, 0])
 
+            #add legend
+            legend_elements = [Line2D([0], [0], marker='o', color='w', label='QC samples', markerfacecolor='black', markersize=10, alpha = 0.5),
+                            Line2D([0], [0], marker='o', color='w', label='Blank samples', markerfacecolor='darkblue', markersize=10),
+                            Line2D([0], [0], marker='o', color='w', label='Dilution series samples', markerfacecolor='darkred', markersize=10),
+                            Line2D([0], [0], marker='o', color='w', label='Standard samples', markerfacecolor='darkgreen', markersize=10)]
+            for batch_id, color in batch_to_color.items():
+                legend_elements.append(Line2D([0], [0], marker='o', color='w', label="Batch:" + str(batch_id), markerfacecolor=color, markersize=10))
+
+            # Add the legend to the plot            
+            plt.legend(handles=legend_elements, loc='upper left', fontsize=10, bbox_to_anchor=(1, 1), title='Sample Types', title_fontsize='13', frameon=False)
+            
             # Create a table to display the zero counts
             plt.subplot(gs[1])
             plt.axis('tight')  # Remove axis
@@ -2901,7 +3063,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             ('image', name)])
         return fig
     
-    def visualizer_PCA_run_order(self, connected = True, colors_for_cmap = ['yellow', 'red'], plt_name_suffix = 'PCA_plot_colored_by_run_order'):
+    def visualizer_PCA_run_order(self, connected = True, colors_for_cmap = ['yellow', 'red'], plt_name_suffix = 'PCA_plot_colored_by_run_order', annotate_samples = False, nm_to_annotate = 10):
         """
         Create a PCA plot colored by run order. (To see if there is any batch effect)
 
@@ -2913,6 +3075,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             List of colors for the colormap. Default is ['yellow', 'red']. 
         plt_name_suffix : str
             Suffix for the plot name. Default is 'PCA_plot_colored_by_run_order'. (Useful when using multiple times - to avoid overwriting the previous plot)       
+        annotate_samples : bool
+            If True, the samples will be annotated with their names. Default is False.
+        nm_to_annotate : int
+            Number of samples to annotate. Default is 10. (Samples with the farthest distance from the origin will be annotated)
         """
         data = self.data
         report = self.report
@@ -2946,6 +3112,19 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         for sample_type in sample_type_colors.keys():
             df_samples = pca_df[data.columns[1:] == sample_type]
             plt.scatter(df_samples['PC1'], df_samples['PC2'], color=sample_type_colors[sample_type], label=sample_type)
+
+        texts = []
+        if annotate_samples:
+            # Calculate distances from origin for all samples
+            pca_df['distance'] = np.linalg.norm(pca_df[['PC1', 'PC2']].values, axis=1)
+            # Select top N farthest samples
+            farthest = pca_df.nlargest(nm_to_annotate, 'distance')
+            for i, row in farthest.iterrows():
+                sample_name = self.metadata.iloc[i]['Sample File']
+                texts.append(ax.text(row['PC1'], row['PC2'], sample_name, fontsize=8, color='black', alpha=0.7, bbox=dict(facecolor="white", alpha=0.5, edgecolor="none")))
+        # Adjust text to avoid overlap
+        adjust_text(texts, arrowprops=dict(arrowstyle='-', color='black', lw=0.5))
+        
 
         plt.title('PCA Graph - run order colored')
         plt.xlabel('PC1 - {0}%'.format(per_var[0]))
@@ -3078,7 +3257,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig
     
-    def visualizer_PCA_grouped(self, color_column, marker_column, cmap = 'nipy_spectral', crossout_outliers = False, plt_name_suffix = 'PCA_grouped'):
+    def visualizer_PCA_grouped(self, color_column, marker_column, cmap = 'nipy_spectral', crossout_outliers = False, plt_name_suffix = 'PCA_grouped', graph_title = 'PCA graph', annotate_samples = False, nm_to_annotate = 10):
         """
         Create a PCA plot with colors based on one column and markers based on another column from the metadata.
 
@@ -3094,6 +3273,12 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             If True, the outliers will be marked with an 'X'. Default is False.
         plt_name_suffix : str
             Suffix for the plot name. Default is 'PCA_grouped'. (Useful when using multiple times - to avoid overwriting the previous plot)  
+        graph_title : str
+            Title of the graph. Default is 'PCA graph'.
+        annotate_samples : bool
+            If True, the samples will be annotated with their names. Default is False.
+        nm_to_annotate : int
+            Number of samples to annotate. Default is 10. (Samples with the farthest distance from the origin will be annotated)
         """
         metadata = self.metadata
         report = self.report
@@ -3204,14 +3389,26 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                               angle=np.rad2deg(np.arctan2(v[1, 0], v[0, 0])), edgecolor=color, lw=1, facecolor='none', alpha=0.6)
                 plt.gca().add_artist(ell)
 
+        texts = []
+        if annotate_samples:
+            # Calculate distances from origin for all samples
+            pca_df['distance'] = np.linalg.norm(pca_df[['PC1', 'PC2']].values, axis=1)
+            # Select top N farthest samples
+            farthest = pca_df.nlargest(nm_to_annotate, 'distance')
+            for i, row in farthest.iterrows():
+                sample_name = self.metadata.iloc[i]['Sample File']
+                texts.append(ax.text(row['PC1'], row['PC2'], sample_name, fontsize=8, color='black', alpha=0.7, bbox=dict(facecolor="white", alpha=0.5, edgecolor="none")))
+        # Adjust text to avoid overlap
+        adjust_text(texts, arrowprops=dict(arrowstyle='-', color='black', lw=0.5))
 
+        # If outliers are to be crossed out
         if crossout_outliers:
             # Plot the outliers
             plt.scatter(outliers['PC1'], outliers['PC2'], color='black', marker='x', label='Outliers', alpha=0.6, s=20)
 
         # Create the legend
         plt.legend(loc='upper left', bbox_to_anchor=(1, 1), frameon=False)
-        plt.title('PCA Graph')
+        plt.title(graph_title)
         plt.xlabel('PC1 - {0}%'.format(per_var[0]))
         plt.ylabel('PC2 - {0}%'.format(per_var[1]))
         name = main_folder +'/statistics/'+ output_file_prefix + '_' + plt_name_suffix
@@ -3231,7 +3428,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             ('image', name),])
         return fig, ax
 
-    def visualizer_PLSDA(self, cmap = 'nipy_spectral', plt_name_suffix = 'PLS-DA'):
+    def visualizer_PLSDA(self, cmap = 'nipy_spectral', plt_name_suffix = 'PLS-DA', graph_title = 'PLS-DA graph'):
         """
         Visualize the results of PLS-DA.
 
@@ -3241,8 +3438,12 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             Name of the colormap. Default is 'nipy_spectral'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
         plt_name_suffix : str
             Suffix for the plot name. Default is 'PLS-DA'. (Useful when using multiple times - to avoid overwriting the previous plot)
+        graph_title : str
+            Title for the plot. Default is 'PLS-DA graph'.
         """
-        metadata = self.metadata
+        metadata = self.plsda_metadata
+        if metadata is None:
+            raise ValueError('PLS-DA was not performed yet. Run PLS-DA first.') 
         report = self.report
         output_file_prefix = self.output_file_prefix
         main_folder = self.main_folder
@@ -3298,7 +3499,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             
         ax.set_xlabel('PLS-DA component 1')
         ax.set_ylabel('PLS-DA component 2')
-        ax.set_title('PLS-DA')
+        ax.set_title(graph_title)
         ax.legend(loc='upper left', bbox_to_anchor=(1, 1), frameon=False)
         name = main_folder +'/statistics/'+output_file_prefix + '_' + plt_name_suffix
         for suffix in suffixes:
@@ -3453,14 +3654,14 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     pdf_files.append(file_name)
 
                 if not all_indexes: # Specific indexes were selected
-                    example_name = self.main_folder + '/statistics/'+ plt_name_suffix +'-example-' + str(index)
+                    example_name = self.main_folder + '/statistics/'+ str(column_names) + '-' + plt_name_suffix +'-example-' + str(index)
                     for suffix in suffixes:
                         plt.savefig(example_name + suffix, bbox_inches='tight', dpi = 300)
                     if first_plot == True or show_all == True:
                         plt.show() # Show the plot
                     returning_vp = vp
                 elif save_first and all_indexes: # Save the first violin plot (is ignored if indexes are not 'all')
-                    example_name = self.main_folder + '/statistics/'+ plt_name_suffix +'-example'
+                    example_name = self.main_folder + '/statistics/'+ str(column_names) + '-' + plt_name_suffix +'-example'
                     for suffix in suffixes:
                         plt.savefig(example_name + suffix, bbox_inches='tight', dpi = 300)
                     if first_plot == True or show_all == True:
