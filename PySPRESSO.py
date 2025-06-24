@@ -2553,7 +2553,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         if ignored_groups == None:
             ignored_groups = []
         # Handle case where only one pair [Column Name, Group Name] is provided (and isnt nested)
-        if isinstance(ignored_groups, list) and isinstance(ignored_groups[0], str):
+        elif isinstance(ignored_groups, list) and isinstance(ignored_groups[0], str):
             ignored_groups = [ignored_groups]
 
         # Remove the ignored groups from the data; group = [Column Name, Group Name]
@@ -2674,7 +2674,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Get p-values
         p_values = ttest_ind(group1_data, group2_data, axis=1)[1]
 
-        if p_value_correction_method  != '' or p_value_correction_method is not None or p_value_correction_method != 'None' or p_value_correction_method != False:
+        if p_value_correction_method  != '' and p_value_correction_method is not None and p_value_correction_method != 'None' and p_value_correction_method != False:
             # Use correction for p-values 
             p_values = multipletests(p_values, method=p_value_correction_method)[1]
         
