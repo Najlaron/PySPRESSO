@@ -27,7 +27,7 @@ from adjustText import adjust_text
 from scipy.stats import zscore, linregress, gaussian_kde, ttest_ind
 from statsmodels.stats.multitest import multipletests
 from scipy.interpolate import UnivariateSpline
-from sklearn.model_selection import LeaveOneOut, KFold, cross_val_predict
+from sklearn.model_selection import LeaveOneOut, KFold, cross_val_predict, StratifiedKFold
 from sklearn.decomposition import PCA
 from sklearn.cross_decomposition import PLSRegression
 from sklearn.metrics import mean_squared_error, r2_score
@@ -783,6 +783,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         scores : list or np.ndarray or pd.Series
             Scores of the features - PCA loading, PLSDA VIP, etc.
         """
+        variable_metadata = self.variable_metadata
      
         # Ensure features and scores are iterable
         if not isinstance(features, (list, pd.Series, np.ndarray)):
@@ -806,7 +807,14 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         # Initialize self.candidates if it is None
         if self.candidates is None:
-            self.candidates = pd.DataFrame(columns=['feature', 'method', 'specification', 'score', 'hits'])
+            self.candidates = pd.DataFrame(columns=['feature', 'method', 'specification', 'score', 'hits', 'Name', 'Formula', 'Annot. DeltaMass [ppm]', 'Annotation MW'])
+        else:
+            # Find features in variable_metadata - Name, Formula, ... (Matching is done by cpdID)
+            names = variable_metadata[variable_metadata['cpdID'].isin(features)]['Name'].tolist()
+            formulas = variable_metadata[variable_metadata['cpdID'].isin(features)]['Formula'].tolist()
+            annotdeltamass = variable_metadata[variable_metadata['cpdID'].isin(features)]['Annot. DeltaMass [ppm]'].tolist()
+            annotation_mw = variable_metadata[variable_metadata['cpdID'].isin(features)]['Annotation MW'].tolist()
+
 
         # Create a DataFrame for the new candidates
         new_candidates = pd.DataFrame({
@@ -814,7 +822,11 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'method': method,
             'specification': specification,
             'score': scores,
-            'hits': hits
+            'hits': hits,
+            'Name': names,
+            'Formula': formulas,
+            'Annot. DeltaMass [ppm]': annotdeltamass,
+            'Annotation MW': annotation_mw
         })
 
         # Handle the case where self.candidates is empty
@@ -1661,7 +1673,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         else:
             print("No standards were found to remove.")
         return self.data
-
+    
 
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL TRANSFORMING METHODS (keyword: transformer_...)
@@ -1824,7 +1836,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL CORRECTING METHODS (keyword: correcter_...)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-    def _cubic_spline_smoothing(self, x, y, p, use_norm = True):
+    def _cubic_spline_smoothing(self, x, y, p):
         """
         Help functin to fit a cubic spline to the data.
         
@@ -1836,20 +1848,18 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             Array with the y values.
         p : float
             Smoothing parameter.
-        use_norm : bool
-            Use normalization. Default is True. if True, then y is already z-scores Cause normalization was used before.
         """
         # Fit a cubic spline to the data
-        if use_norm: # Data is already normalized (it is z_scores)
-            weights = 1 / (1 + (y - 10)** 2) # 10 is added in normalization
-            s = UnivariateSpline(x, y, w = weights, s=p)
-        else:
-            zscores = zscore(y, axis=0) 
-            weights = 1 / (1 + (zscores ** 2))
-            s = UnivariateSpline(x, y, w = weights, s=p)   
-        return s
+        y = np.asarray(y)
+        if len(y) < 4 or np.std(y) == 0:
+            return None  # not enough points or constant series
 
-    def _leave_one_out_cross_validation(self, x, y, p_values, use_norm = True):
+        zscores = zscore(y, axis=0, nan_policy='omit')
+        zscores[np.isnan(zscores)] = 0  # handle NaNs safely
+        weights = 1 / (1 + zscores**2)
+        return UnivariateSpline(x, y, w=weights, s=p)
+    
+    def _leave_one_out_cross_validation(self, x, y, p_values):
         """
         Help fucntion to perform leave-one-out cross validation to find the best smoothing parameter.
         
@@ -1861,8 +1871,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             Array with the y values.
         p_values : array
             Array with the smoothing parameters.
-        use_norm : bool
-            Use normalization. Default is True.
         """
         # Initialize leave-one-out cross validation
         loo = LeaveOneOut()
@@ -1883,7 +1891,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 y_train, y_test = y[train_index], y[test_index]
                 
                 # Fit a cubic spline to the training set
-                s = self._cubic_spline_smoothing(x_train, y_train, p, use_norm)
+                s = self._cubic_spline_smoothing(x_train, y_train, p)
                 
                 # Calculate the mean squared error on the test set
                 mse += ((s(x_test) - y_test) ** 2).sum()
@@ -1898,486 +1906,450 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Return the best smoothing parameter
         return best_p
     
-    def _custom_k_fold_cross_validation(self, x, y, p_values, k = 3, use_norm = True, min = 5, minloo = 5): 
+    def _cv_best_smoothing_param(self, x, y, p_values, k=3, min_points=5, minloo=5):
         """
-        Help function to perform k-fold cross validation to find the best smoothing parameter.
+        Find best spline smoothing parameter using time-aware (blocked) K-fold CV.
+        Falls back to Leave-One-Out if data is scarce.
 
         Parameters
         ----------
-        x : array
-            Array with the x values.
-        y : array
-            Array with the y values.
-        p_values : array
-            Array with the smoothing parameters.
+        x : array-like
+            1D array of time points (e.g. injection order).
+        y : array-like
+            1D array of intensities (for a single feature).
+        p_values : array-like
+            Candidate smoothing parameters to evaluate.
         k : int
-            Number of folds. Default is 3.
-        use_norm : bool
-            Use normalization. Default is True.
-        min : int
-            Minimum number of data points. Default is 5. 
+            Number of folds for K-Fold CV. Default is 3.
+        min_points : int
+            Minimum number of data points required to perform CV. Default is 5.
         minloo : int
-            Minimum number of data points for leave-one-out cross validation. Default is 5;
-            
-            (cubic_spline requires atleast 4 data-points to fit a cubic spline (degree 3), and one is left out (hence we use 5), might be lowered in future versions of the code, but then we have to use lesser degree spline)
+            Minimum number of data points required to perform Leave-One-Out CV. Default is 5.
         """
-        # Initialize the best smoothing parameter and the minimum mean squared error
+
+        n = len(x)
+        if n < min_points:
+            return None
+
+        # Use Leave-One-Out if very few points
+        if n < k or k <= 1:
+            if n < minloo:
+                return None
+            splitter = LeaveOneOut()
+        else:
+            splitter = KFold(n_splits=min(k, n), shuffle=False)
+
         best_p = None
         min_mse = np.inf
 
-        # If there would be less data points then the minimum parameter, decrease the k until it works 
-        while len(x)/k < min:
-            k -= 1
-            if k == 0:
-                break
-        if k <= 1:
-            #Leave one out cross validation
-            if len(x) < minloo:
-                # Not enough data for leave-one-out cross validation
-                return None
-            else:
-                return self._leave_one_out_cross_validation(x, y, p_values, use_norm)
-
-        # For each smoothing parameter
         for p in p_values:
-            # Initialize the mean squared error
-            mse = 0
-            
-            # For each fold
-            for i in range(k):
+            fold_mse = 0.0
+            for train_idx, test_idx in splitter.split(x):
+                s = self._cubic_spline_smoothing(x[train_idx], y[train_idx], p)
+                preds = s(x[test_idx])
+                fold_mse += mean_squared_error(y[test_idx], preds)
+            fold_mse /= splitter.get_n_splits(x)
 
-                # Split the data into a training set and a test set
-                test_indices = np.arange(i, len(x), k) # Takes every k-th element starting from i
-
-                x_test = x[test_indices]
-                y_test = y[test_indices]
-
-                x_train = np.delete(x, test_indices)
-                y_train = np.delete(y, test_indices)
-
-                # Fit a cubic spline to the training set
-                s = self._cubic_spline_smoothing(x_train, y_train, p, use_norm)
-
-                # Calculate the mean squared error on the test set
-                mse += ((s(x_test) - y_test) ** 2).sum()
-
-            # Calculate the mean squared error
-            mse /= len(x)
-
-            # If this is the best smoothing parameter so far, update the best smoothing parameter and the minimum mean squared error
-            if mse < min_mse:
+            if fold_mse < min_mse:
+                min_mse = fold_mse
                 best_p = p
-                min_mse = mse
-        # Return the best smoothing parameter
+
         return best_p
 
-    def correcter_qc_interpolation(self, show = 'default', p_values = 'default', use_log = True, use_norm = True, use_zeros = False, cmap  = 'viridis'):
+    def correcter_qc_interpolation(self, show='default', p_values='default', delog=True, use_zeros=False, cmap='viridis'):
         """
+        Correct batch effects and systematic errors using QC-sample interpolation.
 
-        Correct batch effects and systematic errors using the QC samples for interpolation. (Includes visualization of the results.)
-    
-        ----------
+        Workflow:
+        1) Work in log2 space (always).
+        2) Fit per-batch splines on QC-only points for each feature.
+        3) Subtract the fitted drift and re-anchor to the GLOBAL QC median (log2).
+        4) Optionally de-log to raw space if `delog=True`.
+        5) Plot BEFORE/AFTER for selected features, overlaying the fitted spline(s).
 
         Parameters
         ----------
-        show : list or str
-            List of features to show. Default is 'default'. Other options are 'all', 'none' or index of the feature.
-        p_values : array or str
-            Array with the smoothing parameters. Default is 'default'. If 'default', then the default values are used.
-        use_log : bool
-            Apply log transformation. Default is True.
-        use_norm : bool
-            Use normalization. Default is True.
+        show : 'default' | 'all' | 'none' | list[int|str] | int | str
+            Which features to plot (indices or names). 'default' = 5 evenly spaced.
+        p_values : 'default' | array-like
+            Candidate smoothing parameters for spline fitting.
+            If 'default', uses m ± sqrt(2m), where m = #QC points in that batch.
+        delog : bool
+            If True, return data back-transformed from log2 to raw intensities.
+            If False, keep the output in log2 space (common in many workflows).
         use_zeros : bool
-            Use zeros (Not using zeros is better for interpolating sparse QC data). Default is False.
+            If False (recommended), zero intensities are excluded from QC fitting.
         cmap : str
-            Name of the colormap. Default is 'viridis'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
-        ----------
-        
-        It is important to note that the function is computationally expensive and may take a long time to run.
-
-        Additionally it is highly advised to use the default values for the p_values parameter and both logaritmic and normalization transformations (unless they were already applied to the data).
-
-
+            Matplotlib colormap name for batches.
         """
-        data = self.data
+        # ---------------------------
+        # Inputs & basic prep
+        # ---------------------------
+        df_in = self.data                      # features x samples with 'cpdID' as col 0
         variable_metadata = self.variable_metadata
         report = self.report
-        QC_samples = self.QC_samples
+        QC_samples = list(self.QC_samples)
         main_folder = self.main_folder
         suffixes = self.suffixes
         batch = self.batch
 
-        # Initialize is_zero to None
-        is_zero = None
+        feature_names = df_in.iloc[:, 0]
+        # Work matrix: samples x features (no cpdID column)
+        data = df_in.iloc[:, 1:].copy().T
 
-        # If show isnt list or numpy array
-        if type(show) != list and type(show) != np.ndarray: 
-            if show == 'default':
-                show = np.linspace(0, len(data.columns)-1, 5, dtype=int)
-            elif show == 'all':
-                show = np.arange(len(data.columns))
-            elif show == 'none':
-                show = []
-            else:
-                show = [show]
-
-        # Find zeros in the data (if needed)
-        if not use_zeros:
-            # Mask for zeros
-            is_zero = data == 0
-            is_zero = is_zero.T # Transpose the mask to match the data
-
-        feature_names = data.iloc[:, 0]
-        # Transpose the dataframe
-        data = data.iloc[:, 1:].copy()
-        data = data.T
-
-
-        #QC_samples
-        is_qc_sample = [True if col in QC_samples else False for col in data.index]
-
-        cmap = mpl.cm.get_cmap(cmap)   
-
+        # Batch handling
         if batch is None:
-            batch = ['all_one_batch' for i in range(len(data.index))] # Dummy batch information (for cases where its all the same batch) (not columns because of the transposition)
+            batch = ['all_one_batch'] * len(data.index)
+        unique_batches = list(dict.fromkeys(batch))
 
-        if p_values != 'default':
-            p_values_to_use = p_values
+        # QC flags
+        is_qc_sample = np.array([idx in QC_samples for idx in data.index], dtype=bool)
 
+        # Colors per batch / QC
+        cmap_obj = mpl.cm.get_cmap(cmap)
+        b2i = {b: i for i, b in enumerate(unique_batches)}
+        norm_idx = {b: i / max(1, len(unique_batches)) for b, i in b2i.items()}
+        batch_colors = [mpl.colors.rgb2hex(cmap_obj(norm_idx[b])) for b in unique_batches]
+        batch_to_color = {bid: batch_colors[i % len(batch_colors)] for i, bid in enumerate(unique_batches)}
+        point_colors = ['black' if qc else batch_to_color[batch[i]] for i, qc in enumerate(is_qc_sample)]
 
-        unique_batches = list(dict.fromkeys(batch))  # Preserve the order of batches as they appear in the data
-        
-        # Create a dictionary that maps each unique batch to a unique index
-        batch_to_index = {batch: index for index, batch in enumerate(unique_batches)}
+        # Zeros mask aligned to transposed matrix
+        if not use_zeros:
+            is_zero = (df_in.iloc[:, 1:].T == 0)
+            is_zero = is_zero.reindex(index=data.index, columns=data.columns, fill_value=False)
+        else:
+            is_zero = None
 
-        # Normalize the indices between 0 and 1
-        normalized_indices = {batch: index / len(unique_batches) for batch, index in batch_to_index.items()}
+        # ---------------------------
+        # Normalize `show` (after transpose)
+        # ---------------------------
+        nfeat = data.shape[1]
+        if isinstance(show, str):
+            if show == 'default':
+                show_idx = set(np.linspace(0, nfeat - 1, 5, dtype=int))
+            elif show == 'all':
+                show_idx = set(range(nfeat))
+            elif show == 'none':
+                show_idx = set()
+            else:
+                try:
+                    show_idx = {int(show)}
+                except ValueError:
+                    name2idx = {c: i for i, c in enumerate(list(data.columns))}
+                    idx = name2idx.get(show)
+                    show_idx = set() if idx is None else {idx}
+        else:
+            show_idx = set(int(x) for x in (show.tolist() if isinstance(show, np.ndarray) else show))
 
-        # Create a dictionary that maps each batch to a color
-        batch_colors = [mpl.colors.rgb2hex(cmap(normalized_indices[batch])) for batch in unique_batches]
+        # ---------------------------
+        # Forward transform: LOG2 only (always)
+        # ---------------------------
+        # Use eps to avoid -inf; keep consistent across features
+        eps = 1e-9
+        data = np.log2(np.maximum(data, eps))
 
-        batch_to_color = {batch_id: batch_colors[i % len(batch_colors)] for i, batch_id in enumerate(unique_batches)}
-
-        # Colors and alphas and markers
-        colors = ['black' if qc else batch_to_color[batch[i]] for i, qc in enumerate(is_qc_sample)]
-
-        if use_log:
-            # Apply log transformation to the data
-            data = self._transformer_log(data)
-            
-        if use_norm:
-            # Normalize the data using z-scores
-            data, mean, std = self._normalizer_zscores(data)
-            
+        # ---------------------------
+        # Correction
+        # ---------------------------
         start_time = time.time()
-        # Create lists to store the plot names to plot into REPORT
         plot_names_orig = []
         plot_names_corr = []
-        
-        # For each feature
         chosen_p_values = []
         numbers_of_correctable_batches = []
 
-
-        for feature in data.columns:
-            # Iterate over batches
+        for feat_idx, feature in enumerate(data.columns):
             splines = []
             is_correctable_batch = []
-            number_of_correctable_batches = 0
-            for batch_index, batch_name in enumerate(unique_batches):
-                # This batch mask
-                is_batch = [True if b == batch_name else False for b in batch]
-                # Get the QC data mask
-                qc_indexes = data.index.isin(QC_samples)
+            num_corr_batches = 0
+
+            # Global QC anchor in log space (across all batches)
+            anchor_log = np.nanmedian(data.loc[is_qc_sample, feature]) if is_qc_sample.any() else 0.0
+
+            # Fit per-batch QC splines
+            for b_idx, bname in enumerate(unique_batches):
+                is_batch = np.array([bb == bname for bb in batch], dtype=bool)
+                qc_mask = is_qc_sample.copy()
 
                 if not use_zeros:
-                    # Use is_zero mask for this feature
-                    if is_zero[feature].any():
-                        # Find the maximum non-zero value for this feature
-                        new_zero_value = data[is_zero][feature].max()
-                    else:
-                        new_zero_value = 0
-                    # Mask for zeros
-                    isnt_zero = data[feature] > new_zero_value
-                    # Combine the masks
-                    qc_indexes = np.logical_and(qc_indexes, isnt_zero)
+                    nz_mask = ~is_zero[feature].values
+                    qc_mask = np.logical_and(qc_mask, nz_mask)
 
-                #Combine the masks
-                qc_indexes_batched = np.logical_and(qc_indexes, is_batch)
-                qc_data = data[qc_indexes_batched] 
+                qc_batched = np.logical_and(qc_mask, is_batch)
+                qc_y = data.loc[qc_batched, feature]
 
-                x = np.arange(len(data))[qc_indexes_batched]
-                y = qc_data[feature].values
+                x = np.arange(len(data))[qc_batched]
+                y = qc_y.values
 
-                #Citation: "Recommended values of s depend on the weights, w. If the weights represent the inverse of the standard-deviation of y, then a good s value should be found in the range (m-sqrt(2*m),m+sqrt(2*m)) where m is the number of datapoints in x, y, and w." (standard-deviation is wrong tho, that doesn't work for each datapoint...) 
                 if p_values == 'default':
-                    m = len(qc_data)
-                    p_values_to_use = np.linspace(m-math.sqrt(2*m), m+math.sqrt(2*m), 10)
+                    m = len(qc_y)
+                    p_vals = np.clip(
+                        np.linspace(m - math.sqrt(2 * m), m + math.sqrt(2 * m), 10),
+                        a_min=0, a_max=None
+                    )
+                else:
+                    p_vals = p_values
 
-                # Fit a cubic spline to the QC data
-                p = self._custom_k_fold_cross_validation(x, y, p_values_to_use, 5, use_norm)
+                p = self._cv_best_smoothing_param(x, y, p_vals, k=5)  # no z-scores anymore
                 chosen_p_values.append(p)
+
                 if p is None:
-                    # This batch doesn't have enough data (might be due to filtering out zeros)
                     s = None
                     is_correctable_batch.append(False)
                 else:
-                    s = self._cubic_spline_smoothing(x, y, p, use_norm)
+                    s = self._cubic_spline_smoothing(x, y, p)
                     is_correctable_batch.append(True)
-                    number_of_correctable_batches += 1
+                    num_corr_batches += 1
+
                 splines.append(s)
 
-                #Print out progress
-                percentage_done = round((feature + 1) / len(data.columns) * 100, 3)
-                print(f'Progress: {percentage_done}%; last chosen p: {p}. Time estimate: {round((time.time() - start_time) / (feature + 1) * (len(data.columns) - feature - 1)/60, 2)}m       ', end='\r')
+            numbers_of_correctable_batches.append(num_corr_batches)
 
-            numbers_of_correctable_batches.append(number_of_correctable_batches)        
+            # ---------------------------
+            # BEFORE plot (selected only)
+            # ---------------------------
+            if feat_idx in show_idx:
+                zeros_feat = (is_zero[feature].values if is_zero is not None
+                            else np.zeros(len(data), dtype=bool))
+                alphas = [0.4 if qc else (0.1 if z else 0.8) for qc, z in zip(is_qc_sample, zeros_feat)]
 
-            x = np.arange(len(data))
-            y = data[feature].values
+                gs = gridspec.GridSpec(2, 1, height_ratios=[3, 1])
+                fig = plt.figure(figsize=(20, 4))
 
-            reds = cycle(['red', 'tomato', 'firebrick'])
+                # top
+                plt.subplot(gs[0])
+                x_all = np.arange(len(data))
+                y_before = data[feature].values
+                plt.scatter(x_all, y_before, color=point_colors, alpha=alphas)
 
-            # Plot the original QC data and the fitted spline
-            if feature in show:
-                
-                # Colors and alphas and markers
-                colors = ['black' if qc else batch_to_color[batch[i]] for i, qc in enumerate(is_qc_sample)]
-                #row_data = data.iloc[feature, 1:] # Previously this was looking back into the original data, now it works with the data already transposed
-                row_data = data[feature].values
-                alphas = [0.4 if qc else 0.1 if zero else 0.8 for qc, zero in zip(is_qc_sample, row_data == 0)]
+                reds = cycle(['red', 'tomato', 'firebrick'])
+                for b_idx, bname in enumerate(unique_batches):
+                    is_batch = np.array([bb == bname for bb in batch], dtype=bool)
+                    xb = x_all[is_batch]
+                    s = splines[b_idx]
+                    if s is not None:
+                        plt.plot(xb, s(xb), color=next(reds), linewidth=2)
 
-                # Initialize a dictionary to store the zero counts for each batch
-                zero_counts = {batch_id: 0 for batch_id in unique_batches}
-                qc_zero_counts = {batch_id: 0 for batch_id in unique_batches}
+                # baseline = global QC anchor in log space
+                plt.axhline(anchor_log, color='0.5', linestyle='--', linewidth=1, alpha=0.8, label='QC anchor')
 
-                # Update the zero counts for each batch
-                for i, (b, value) in enumerate(zip(batch, row_data)):
-                    if is_zero is not None and is_zero.loc[data.index[i], feature]:
-                        zero_counts[b] += 1
+                plt.xlabel('Injection Order')
+                plt.ylabel('log2 Peak Area (before)')
+                plt.title(feature_names[feature] if len(feature_names) > 0 else f'Feature: {feature}')
+
+                # ensure baseline visible
+                ymin, ymax = np.nanmin(y_before), np.nanmax(y_before)
+                ymin = min(ymin, anchor_log); ymax = max(ymax, anchor_log)
+                pad = 0.01 * max(1e-6, (ymax - ymin))
+                plt.ylim(ymin - pad, ymax + pad)
+                plt.legend(loc='best', frameon=False)
+
+                # bottom table
+                plt.subplot(gs[1]); plt.axis('tight'); plt.axis('off'); fig.subplots_adjust(bottom=-0.5)
+                zero_counts = {bid: 0 for bid in unique_batches}
+                qc_zero_counts = {bid: 0 for bid in unique_batches}
+                for i, (bcur, zflag) in enumerate(zip(batch, zeros_feat)):
+                    if zflag:
+                        zero_counts[bcur] += 1
                         if is_qc_sample[i]:
-                            qc_zero_counts[b] += 1
-
-                #print(f'Feature: {feature} - Zero counts: {zero_counts} - QC zero counts: {qc_zero_counts}')
-                
-                # Create a gridspec object
-                gs = gridspec.GridSpec(2, 1, height_ratios=[3, 1])  # 3:1 height ratio
-                fig = plt.figure(figsize=(20, 4))
-
-                plt.subplot(gs[0])
-                plt.scatter(x, y, color = colors, alpha = alphas)
-                for batch_index, batch_name in enumerate(unique_batches):
-                    is_batch = [True if b == batch_name else False for b in batch]
-                    x = np.arange(len(data))[is_batch]
-                    spline = splines[batch_index]
-                    if spline != None: # None means that there wasn't enough data for this batch
-                        plt.plot(x, spline(x), color=next(reds), linewidth = 2) # Plot the fitted spline (only its relevant part)
-
-                plt.xlabel('Sample Order')
-                plt.ylabel('Peak Area Z-score')
-                if len(feature_names) > 0:
-                    plt.title(feature_names[feature])
-                else:
-                    plt.title(f'Feature: {feature}')
-
-                # Create a table to display the zero counts
-                plt.subplot(gs[1])
-                plt.axis('tight')  # Remove axis
-                plt.axis('off')  # Hide axis
-                fig.subplots_adjust(bottom=-0.5) # Adjust the bottom of the figure to make room for the table
-
-                # Calculate the total number of samples and QC samples for each batch
-                total_samples = {batch_id: batch.count(batch_id) for batch_id in unique_batches}
-                total_qc_samples = {batch_id: sum(1 for b, qc in zip(batch, is_qc_sample) if (b == batch_id and qc)) for batch_id in unique_batches}
-
-                # Calculate the total number of QC samples
-                total_qc_samples_count = sum(qc_zero_counts.values())
-                total_qc_percentage = total_qc_samples_count / sum(is_qc_sample) * 100
-
-                # Calculate the percentage of zeros for each batch
-                zero_percentages = {batch_id: zero_counts[batch_id] / total_samples[batch_id] * 100 for batch_id in unique_batches}
-
-                # Calculate the percentage of QC zeros for each batch
-                qc_zero_percentages = {batch_id: qc_zero_counts[batch_id] / total_qc_samples[batch_id] * 100 if total_qc_samples[batch_id] > 0 else 0 for batch_id in unique_batches}
-                
-                # Format the zero counts and percentages as strings
-                formatted_zero_counts = [f"{zero_counts[batch_id]} ({zero_percentages[batch_id]:.2f}%)" for batch_id in unique_batches]
-
-                # Format the QC zero counts and percentages as strings
-                formatted_qc_zero_counts = [f"{qc_zero_counts[batch_id]} ({qc_zero_percentages[batch_id]:.2f}%)" for batch_id in unique_batches]
-                
-                # Calculate the total number of missing values
-                total_missing = sum(zero_counts.values()) 
-                total_percentage = total_missing / len(batch) * 100
-                
-                # Append 'white' to the batch colors for the total
-                table_batch_colors = batch_colors + ['white']
-
-                # Append the total to the sorted lists
+                            qc_zero_counts[bcur] += 1
+                total_samples = {bid: batch.count(bid) for bid in unique_batches}
+                total_qc_samples = {bid: sum(1 for bcur, qc in zip(batch, is_qc_sample) if (bcur == bid and qc))
+                                    for bid in unique_batches}
+                zero_percentages = {bid: (zero_counts[bid] / total_samples[bid] * 100) if total_samples[bid] else 0.0
+                                    for bid in unique_batches}
+                qc_zero_percentages = {bid: (qc_zero_counts[bid] / total_qc_samples[bid] * 100)
+                                    if total_qc_samples[bid] > 0 else 0.0
+                                    for bid in unique_batches}
+                formatted_zero_counts = [f"{zero_counts[bid]} ({zero_percentages[bid]:.2f}%)" for bid in unique_batches]
+                formatted_qc_zero_counts = [f"{qc_zero_counts[bid]} ({qc_zero_percentages[bid]:.2f}%)"
+                                            for bid in unique_batches]
+                total_missing = sum(zero_counts.values())
+                total_percentage = total_missing / len(batch) * 100 if len(batch) else 0.0
+                total_qc_zeros = sum(qc_zero_counts.values())
+                total_qc_percentage = total_qc_zeros / sum(is_qc_sample) * 100 if sum(is_qc_sample) else 0.0
                 col_labels = unique_batches + ['Total']
-
-                # Append the total to the formatted zero counts
-                formatted_zero_counts.append(f"{total_missing} ({total_percentage:.2f}%)")
-                formatted_qc_zero_counts.append(f"{total_qc_samples_count} ({total_qc_percentage:.2f}%)")
-
-                # Convert all colors in the list to RGBA format
+                table_batch_colors = batch_colors + ['white']
                 table_batch_colors_rgba = [self._convert_to_rgba(color, 0.6) for color in table_batch_colors]
-
-                # Create the table 
-                table = plt.table(cellText=[formatted_zero_counts, formatted_qc_zero_counts],  # Sorted values of the table
-                    #cellColours=[table_batch_colors, table_batch_colors],
-                    cellColours=[table_batch_colors_rgba, table_batch_colors_rgba], # Sorted colors of the table
-                    rowLabels=['All Samples', 'QC Samples'],  # Row label
-                    colLabels=col_labels,  # Sorted column labels
-                    cellLoc='center',  # Alignment of the data in the table
-                    fontsize=10,  # Font size
-                    loc='center')  # Position of the table
-                
-                # Change color of text in cells of uncorrectable batches
-                cells_to_change_color = [(2, i) for i, correctable in enumerate(is_correctable_batch) if not correctable]
+                formatted_zero_counts.append(f"{total_missing} ({total_percentage:.2f}%)")
+                formatted_qc_zero_counts.append(f"{total_qc_zeros} ({total_qc_percentage:.2f}%)")
+                table = plt.table(
+                    cellText=[formatted_zero_counts, formatted_qc_zero_counts],
+                    cellColours=[table_batch_colors_rgba, table_batch_colors_rgba],
+                    rowLabels=['All Samples', 'QC Samples'],
+                    colLabels=col_labels,
+                    cellLoc='center', fontsize=10, loc='center'
+                )
+                cells_to_change_color = [(2, i) for i, ok in enumerate(is_correctable_batch) if not ok]
                 for cell in cells_to_change_color:
-                    table.get_celld()[cell].set_text_props(fontweight='bold', color='red') # Set the text to bold and red if the batch wasn't correctable
+                    table.get_celld()[cell].set_text_props(fontweight='bold', color='red')
+                plt.text(x=-0.005, y=0.65, s='Zero Counts', fontsize=15,
+                        transform=plt.gca().transAxes, ha='right', va='center')
 
-                # Add a text annotation for "Zero Counts"
-                plt.text(x=-0.005, y=0.65, s='Zero Counts', fontsize=15, transform=plt.gca().transAxes, ha='right', va='center')
-
-                #Save the plot
                 for suffix in suffixes:
-                    plt_name = main_folder + '/figures/QC_correction_' + str(feature) + '_original'
+                    plt_name = f"{main_folder}/figures/QC_correction_{feature}_original"
                     plt.savefig(plt_name + suffix, dpi=300, bbox_inches='tight')
-                plot_names_orig.append(plt_name +'.png')
+                plot_names_orig.append(plt_name + '.png')
                 plt.show()
 
-            #CORRECTION of the data for the feature BATCH by BATCH
-            for batch_index, batch_name in enumerate(unique_batches):
-                #This batch mask
-                is_batch = [True if b == batch_name else False for b in batch]
-                
-                # Use fitted spline to correct all the data for the feature batch by batch
-                x = np.arange(len(data[feature]))
-                if splines[batch_index] is not None: # None means that there wasn't enough data for this batch
-                    data.loc[is_batch, feature] = data.loc[is_batch, feature] / abs(splines[batch_index](x[is_batch])) # !! the order of things matter a lot here; to only use relevant parts of the spline !!
-                else:
-                    data.loc[is_batch, feature] = 0 # If there wasn't enough data, then just set the values to 0
+            # ---------------------------
+            # Apply correction per batch (log space)
+            # ---------------------------
+            x_all = np.arange(len(data))
+            for b_idx, bname in enumerate(unique_batches):
+                is_batch = np.array([bb == bname for bb in batch], dtype=bool)
+                s = splines[b_idx]
+                if s is None:
+                    continue
+                preds = s(x_all[is_batch])
+                # subtract drift and re-anchor to global QC anchor in log space
+                data.loc[is_batch, feature] = data.loc[is_batch, feature] - preds + anchor_log
 
-            # Plot the corrected data
-            if feature in show: 
-                # Create a gridspec object
-                gs = gridspec.GridSpec(2, 1, height_ratios=[3, 1])  # 3:1 height ratio
+            # ---------------------------
+            # AFTER plot (selected only)
+            # ---------------------------
+            if feat_idx in show_idx:
+                zeros_feat = (is_zero[feature].values if is_zero is not None
+                            else np.zeros(len(data), dtype=bool))
+                alphas = [0.4 if qc else (0.1 if z else 0.8) for qc, z in zip(is_qc_sample, zeros_feat)]
+
+                gs = gridspec.GridSpec(2, 1, height_ratios=[3, 1])
                 fig = plt.figure(figsize=(20, 4))
 
+                # top
                 plt.subplot(gs[0])
-                plt.scatter(x, y, color = colors, alpha = alphas)
-                plt.plot(x, [1 for i in range(len(x))], color='green', label='mean', alpha = 0.4)
+                y_corr = data[feature].values
+                plt.scatter(x_all, y_corr, color=point_colors, alpha=alphas)
 
-                # Calculate min and max values for the y axis (excluding zeros)
+                # overlay original splines (what was removed)
+                preds_min, preds_max = np.inf, -np.inf
+                for b_idx, bname in enumerate(unique_batches):
+                    is_batch = np.array([bb == bname for bb in batch], dtype=bool)
+                    xb = x_all[is_batch]
+                    s = splines[b_idx]
+                    if s is not None:
+                        yb = s(xb)
+                        preds_min = min(preds_min, np.nanmin(yb))
+                        preds_max = max(preds_max, np.nanmax(yb))
+                        plt.plot(xb, yb, color='green', linewidth=2, alpha=0.6,
+                                label='fitted spline' if b_idx == 0 else None)
 
-                non_zero_series = data[feature][data[feature] != 0]
-                if not non_zero_series.empty:
-                    y_min = non_zero_series.min()
-                else:
-                    y_min = 0
+                # baseline = global QC anchor (log)
+                plt.axhline(anchor_log, color='0.5', linestyle='--', linewidth=1, alpha=0.8, label='QC anchor')
 
-                if not data[feature].isna().all():
-                    y_max = data[feature].max()
-                else:
-                    y_max = 1 
+                plt.xlabel('Injection Order')
+                plt.ylabel('log2 Peak Area (corrected)' if not delog else 'Peak Area (corrected)')
+                plt.title(feature_names[feature] if len(feature_names) > 0 else f'Feature: {feature}')
 
-                offset = 0.01 * (y_max - y_min) # 1% of the range
-                plt.ylim(y_min - offset, y_max + offset) # Set the y axis limits (no interpolation = zeros - are not shown)
+                # y-limits include corrected data, splines, and baseline
+                corr_min = np.nanmin(y_corr[~zeros_feat]) if (~zeros_feat).any() else np.nanmin(y_corr)
+                corr_max = np.nanmax(y_corr)
+                y_min = min(corr_min, preds_min, anchor_log) if np.isfinite(preds_min) else min(corr_min, anchor_log)
+                y_max = max(corr_max, preds_max, anchor_log) if np.isfinite(preds_max) else max(corr_max, anchor_log)
+                pad = 0.01 * max(1e-6, (y_max - y_min))
+                plt.ylim(y_min - pad, y_max + pad)
 
-                plt.xlabel('Sample Order')
-                plt.ylabel('Peak Area Normalized')
-                if len(feature_names) > 0:
-                    plt.title(feature_names[feature])
-                else:
-                    plt.title(f'Feature: {feature}')
+                plt.legend(loc='best', frameon=False)
 
-                # Create a table to display the zero counts
-                plt.subplot(gs[1])
-                plt.axis('tight')  # Remove axis
-                plt.axis('off')  # Hide axis
-                fig.subplots_adjust(bottom=-0.5) # Adjust the bottom of the figure to make room for the table
-                
-                # Create the table 
-                table = plt.table(cellText=[formatted_zero_counts, formatted_qc_zero_counts],  # Sorted values of the table
-                    #cellColours=[table_batch_colors, table_batch_colors],
-                    cellColours=[table_batch_colors_rgba, table_batch_colors_rgba], # Sorted colors of the table
-                    rowLabels=['All Samples', 'QC Samples'],  # Row label
-                    colLabels=col_labels,  # Sorted column labels
-                    cellLoc='center',  # Alignment of the data in the table
-                    fontsize=10,  # Font size
-                    loc='center') # Position of the table
-                    
-                # Change color of text in cells of uncorrectable batches
-                cells_to_change_color = [(2, i) for i, correctable in enumerate(is_correctable_batch) if not correctable]
+                # bottom table
+                plt.subplot(gs[1]); plt.axis('tight'); plt.axis('off'); fig.subplots_adjust(bottom=-0.5)
+                zero_counts = {bid: 0 for bid in unique_batches}
+                qc_zero_counts = {bid: 0 for bid in unique_batches}
+                for i, (bcur, zflag) in enumerate(zip(batch, zeros_feat)):
+                    if zflag:
+                        zero_counts[bcur] += 1
+                        if is_qc_sample[i]:
+                            qc_zero_counts[bcur] += 1
+                total_samples = {bid: batch.count(bid) for bid in unique_batches}
+                total_qc_samples = {bid: sum(1 for bcur, qc in zip(batch, is_qc_sample) if (bcur == bid and qc))
+                                    for bid in unique_batches}
+                zero_percentages = {bid: (zero_counts[bid] / total_samples[bid] * 100) if total_samples[bid] else 0.0
+                                    for bid in unique_batches}
+                qc_zero_percentages = {bid: (qc_zero_counts[bid] / total_qc_samples[bid] * 100)
+                                    if total_qc_samples[bid] > 0 else 0.0
+                                    for bid in unique_batches}
+                formatted_zero_counts = [f"{zero_counts[bid]} ({zero_percentages[bid]:.2f}%)" for bid in unique_batches]
+                formatted_qc_zero_counts = [f"{qc_zero_counts[bid]} ({qc_zero_percentages[bid]:.2f}%)"
+                                            for bid in unique_batches]
+                total_missing = sum(zero_counts.values())
+                total_percentage = total_missing / len(batch) * 100 if len(batch) else 0.0
+                total_qc_zeros = sum(qc_zero_counts.values())
+                total_qc_percentage = total_qc_zeros / sum(is_qc_sample) * 100 if sum(is_qc_sample) else 0.0
+                col_labels = unique_batches + ['Total']
+                table_batch_colors = batch_colors + ['white']
+                table_batch_colors_rgba = [self._convert_to_rgba(color, 0.6) for color in table_batch_colors]
+                formatted_zero_counts.append(f"{total_missing} ({total_percentage:.2f}%)")
+                formatted_qc_zero_counts.append(f"{total_qc_zeros} ({total_qc_percentage:.2f}%)")
+                table = plt.table(
+                    cellText=[formatted_zero_counts, formatted_qc_zero_counts],
+                    cellColours=[table_batch_colors_rgba, table_batch_colors_rgba],
+                    rowLabels=['All Samples', 'QC Samples'],
+                    colLabels=col_labels,
+                    cellLoc='center', fontsize=10, loc='center'
+                )
+                cells_to_change_color = [(0, i) for i, ok in enumerate(is_correctable_batch) if not ok]
                 for cell in cells_to_change_color:
-                    table.get_celld()[cell].set_text_props(fontweight='bold', color='red') # Set the text to bold and red if the batch wasn't correctable
+                    if cell in table.get_celld():
+                        table.get_celld()[cell].set_text_props(fontweight='bold', color='red')
+                plt.text(x=-0.005, y=0.65, s='Zero Counts', fontsize=15,
+                        transform=plt.gca().transAxes, ha='right', va='center')
 
-                # Add a text annotation for "Zero Counts"
-                plt.text(x=-0.005, y=0.65, s='Zero Counts', fontsize=15, transform=plt.gca().transAxes, ha='right', va='center')
-
-                
-                #Save the plot
                 for suffix in suffixes:
-                    plt_name = main_folder + '/figures/QC_correction_' + str(feature) + '_corrected'
+                    plt_name = f"{main_folder}/figures/QC_correction_{feature}_corrected"
                     plt.savefig(plt_name + suffix, dpi=300, bbox_inches='tight')
-                plot_names_corr.append(plt_name +'.png')
+                plot_names_corr.append(plt_name + '.png')
                 plt.show()
 
-        # Create a dictionary with the chosen p values
-        chosen_p_values = pd.Series(chosen_p_values).value_counts().to_dict()
-        # Sort the dictionary by the number of occurrences
-        chosen_p_values = {k: v for k, v in sorted(chosen_p_values.items(), key=lambda item: item[1], reverse=True)}
+            # progress
+            pct = round((feat_idx + 1) / nfeat * 100, 3)
+            eta_min = round((time.time() - start_time) / (feat_idx + 1) * (nfeat - feat_idx - 1) / 60, 2)
+            print(f'Progress: {pct}%; last feature: {feature}. ETA ~ {eta_min}m       ', end='\r')
 
-        if use_norm:
-            # Calculate new std
-            #new_std = data.std(axis=0)
-            
-            # Invert the normalization (based on the old mean and the new std (is it good or bad?)) 
-            data = self._invert_zscores(data, mean, std)
+        # ---------------------------
+        # Optional: back-transform (de-log)
+        # ---------------------------
+        if delog:
+            data = np.power(2.0, data)
 
-        if use_log:
-            # Invert the log transformation
-            data = self._transformer_log(data, invert=True)
-
-        # Transpose the dataframe back    
+        # ---------------------------
+        # Wrap up
+        # ---------------------------
+        # Back to features x samples with cpdID in col 0
         data = data.T
-        # Add cpdID as a first column (back)
         data.insert(0, 'cpdID', feature_names)
-        
-        # Create a dictionary to store the correction batch information
-        correction_dict = {cpdID: corrected_batches for cpdID, corrected_batches in zip(feature_names, numbers_of_correctable_batches)}
-        # Add the correction batch information to the variable metadata
+
+        # chosen p-values (summary)
+        chosen_p_values = pd.Series(chosen_p_values).value_counts().to_dict()
+        chosen_p_values = {k: v for k, v in sorted(chosen_p_values.items(), key=lambda kv: kv[1], reverse=True)}
+
+        # number of corrected batches per feature
+        correction_dict = {cpdID: ncb for cpdID, ncb in zip(feature_names, numbers_of_correctable_batches)}
         variable_metadata['corrected_batches'] = variable_metadata['cpdID'].map(correction_dict)
 
+        # assign back
         self.data = data
         self.variable_metadata = self._filter_match_variable_metadata(data, variable_metadata)
 
-        #---------------------------------------------
-        #REPORTING 1
-        text0 = 'QC correction was performed.'
+        # REPORT
+        text0 = 'QC-based drift correction (log2 space) was performed.'
         texts = []
-        text1 = 'In the correction process, the data ' + ('WAS' if use_log else "WASN'T") + ' log-transformed and ' + ('WAS' if use_norm else "WASN'T") +' normalized.'
-        texts.append(('text', text1, 'italic'))
-        if use_log or use_norm:
-            text2 = 'This step was then inverted after the correction.'
-            texts.append(('text', text2, 'italic'))
-        text3 = "The smoothing parameter was optimized using variation of k-fold cross-validation from a range defined as <m-math.sqrt(2*m), m+math.sqrt(2*m)>. which was: <"+ str(int(m-math.sqrt(2*m))) + "; " + str(int(m+math.sqrt(2*m))) + ">; where m is the amount of data-points interpolated (in this case the number of QCs)"
-        texts.append(('text', text3))
+        texts.append(('text', f'Output returned in {"raw" if delog else "log2"} space.', 'italic'))
+        if p_values == 'default':
+            texts.append(('text',
+                        'Spline smoothness was optimized by k-fold CV over a batch-wise range m ± √(2m), '
+                        'where m is the number of QC points available in that batch.'))
         together = [('text', text0, 'bold')]
         together.extend(texts)
         report.add_together(together)
         report.add_line()
-        for plot_names in zip(plot_names_orig, plot_names_corr):
+        for pn_orig, pn_corr in zip(plot_names_orig, plot_names_corr):
             report.add_together([('text', 'Original data:', 'bold'),
-                                ('image', plot_names[0]),
+                                ('image', pn_orig),
                                 ('text', 'Corrected data:', 'bold'),
-                                ('image', plot_names[1]),
+                                ('image', pn_corr),
                                 'line'])
+
         return self.data
-    
+        
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL STATISTICS METHODS (keyword: statistics_...)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -2549,89 +2521,142 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         n_comp = 2
         # Define the number of folds for cross-validation
         n_folds = 10
+        # Random state for reproducibility
+        rng = 42
 
-        if ignored_groups == None:
+         # Normalize ignored_groups argument into a list of [col, value]
+        if ignored_groups is None:
             ignored_groups = []
-        # Handle case where only one pair [Column Name, Group Name] is provided (and isnt nested)
-        elif isinstance(ignored_groups, list) and isinstance(ignored_groups[0], str):
+        if isinstance(ignored_groups, list) and len(ignored_groups) > 0 and isinstance(ignored_groups[0], str):
             ignored_groups = [ignored_groups]
 
-        # Remove the ignored groups from the data; group = [Column Name, Group Name]
-        for group in ignored_groups:
-            # Remove the group from the metadata
-            metadata = metadata[metadata[group[0]] != group[1]].reset_index(drop=True)
+        # ----------- Filter metadata by ignored groups -----------
+        for col_name, grp_name in ignored_groups:
+            metadata = metadata[metadata[col_name] != grp_name].reset_index(drop=True)
 
-        # Now filter the data columns (samples) to match the filtered metadata
-        # Keep 'cpdID' column and only those columns whose names are in metadata['Sample File']
+        # ----------- Align data columns with (filtered) metadata -----------
+        # Keep 'cpdID' plus all sample columns listed in metadata['Sample File']
+        if 'Sample File' not in metadata.columns:
+            raise ValueError("Expected 'Sample File' in metadata to align samples.")
         columns_to_keep = ['cpdID'] + metadata['Sample File'].tolist()
         data = data.loc[:, data.columns.isin(columns_to_keep)]
 
+        # Reorder data columns to match metadata sample order (after 'cpdID')
+        fixed_cols = ['cpdID']
+        sample_cols = [c for c in metadata['Sample File'].tolist() if c in data.columns]
+        data = pd.concat([data[fixed_cols], data[sample_cols]], axis=1)
+
+        # ----------- Build response y (one-hot) -----------
+        # If multiple response columns, concatenate values with underscores
         if isinstance(response_column_names, list):
-            # create temporary column for the response variable by concatenating the response columns
-            metadata[str(response_column_names)] = metadata[response_column_names].apply(lambda x: '_'.join(x.map(str)), axis=1)
-            response_column_names = str(response_column_names)
+            tmp_col = str(response_column_names)
+            metadata[tmp_col] = metadata[response_column_names].apply(lambda x: '_'.join(x.map(str)), axis=1)
+            response_col = tmp_col
+        else:
+            response_col = str(response_column_names)
 
         self.plsda_metadata = metadata.copy()
-            
-        # Define the response column(s)
-        y = metadata[str(response_column_names)]
-    
-        # Convert the response variable to a categorical variable
-        y = pd.Categorical(y)
-        # Convert the categorical variable to a dummy (binary) variable
-        y = pd.get_dummies(y)
+        y_labels = pd.Categorical(metadata[response_col])  # categorical labels
+        y_strat = y_labels.codes                          # integer labels for stratification
+        y_onehot = pd.get_dummies(y_labels)               # one-hot matrix (n_samples, n_classes)
+        class_names = list(y_onehot.columns)
 
+        # Prepare X (samples in rows) 
+        # data: first column is 'cpdID', the rest are samples
+        X_full = data.iloc[:, 1:].T.values     # shape: (n_samples, n_features)
+        Y_full = y_onehot.values               # shape: (n_samples, n_classes)
 
-        # Define the PLS-DA model
+        #  Safety: adjust n_folds if any class is too small 
+        # Each class must have at least n_folds samples for StratifiedKFold
+        class_counts = pd.Series(y_strat).value_counts().to_dict()
+        min_class = min(class_counts.values()) if len(class_counts) else 0
+        if min_class < n_folds:
+            # reduce folds to the minimum class count (>=2)
+            new_folds = max(2, min_class)
+            if new_folds != n_folds:
+                n_folds = new_folds
+
+        # Cross-validated predictions (StratifiedKFold) 
+        skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=rng)
+        y_cv = np.zeros_like(Y_full, dtype=float)  # CV predictions placeholder
+
+        for train_idx, test_idx in skf.split(X_full, y_strat):
+            model_cv = PLSRegression(n_components=n_comp)
+            model_cv.fit(X_full[train_idx], Y_full[train_idx])
+            y_cv[test_idx] = model_cv.predict(X_full[test_idx])
+
+        # Final fit on all data (for VIPs & visualization) 
         model = PLSRegression(n_components=n_comp)
-        # Define the KFold cross-validator
-        kf = KFold(n_splits=n_folds)
-        # Initialize an array to hold the cross-validated predictions
-        y_cv = np.zeros(y.shape)
-    
-        data_transposed = data.iloc[:, 1:].T
-        y = y
+        model.fit(X_full, Y_full)
 
-        for train, test in kf.split(data_transposed):
-            model.fit(data_transposed.iloc[train], y.iloc[train])
-            y_cv[test] = model.predict(data_transposed.iloc[test])
+        # VIPs (uses your existing helper)
+        vips = self._vip(model)  # expects shape (n_features,)
+        candidate_mask = vips > np.percentile(vips, 99.5)
+        candidate_vips = data.iloc[:, 0][candidate_mask]       # cpdID for selected features
+        candidate_vips_scores = vips[candidate_mask]
+        self.add_candidates(features=candidate_vips,
+                            method='PLSDA-vips',
+                            specification=str(response_column_names),
+                            scores=candidate_vips_scores)
 
-        # Fit the model on the entire dataset
-        model.fit(data.iloc[:, 1:].T, y)
-        # Calculate the VIP scores
-        vips = self._vip(model)
-        #print(vips)
-        # Print the names of the compounds with the VIP scores in the 99.5th percentile
-        candidate_vips = data.iloc[:, 0][vips > np.percentile(vips, 99.5)]
+        # Metrics computed FROM CV predictions (your definition) 
+        # Per-class metrics (each dummy column separately)
+        r2_per_class = {}
+        q2_per_class = {}
+        for i, cname in enumerate(class_names):
+            yt = Y_full[:, i]
+            yp = y_cv[:, i]
+            r2_i = r2_score(yt, yp)
+            mse_i = mean_squared_error(yt, yp)
+            var_i = np.var(yt)  # population variance (ddof=0), same as your code
+            q2_i = 1.0 - (mse_i / var_i) if var_i > 0 else np.nan
+            r2_per_class[cname] = float(r2_i)
+            q2_per_class[cname] = float(q2_i)
 
-        # Candidate features cpdIDs
-        candidate_vips = candidate_vips
-        # Their VIP scores
-        candidate_vips_scores = vips[vips > np.percentile(vips, 99.5)]
+        # Global metrics across all classes (flattened)
+        yt_all = Y_full.ravel()
+        yp_all = y_cv.ravel()
+        r2_global = float(r2_score(yt_all, yp_all))
+        mse_global = float(mean_squared_error(yt_all, yp_all))
+        var_global = float(np.var(yt_all))
+        q2_global = float(1.0 - (mse_global / var_global)) if var_global > 0 else np.nan
 
-        # Store the candidate variables
-        self.add_candidates(features = candidate_vips, method = 'PLSDA-vips', specification=str(response_column_names), scores = candidate_vips_scores)
+        # Cross-validated classification accuracy (argmax over class scores)
+        y_true_int = Y_full.argmax(axis=1)
+        y_pred_int = y_cv.argmax(axis=1)
+        cv_accuracy = float((y_true_int == y_pred_int).mean())
 
-        # Calculate the R2 and Q2
-        r2 = r2_score(y, y_cv)
-        mse = mean_squared_error(y, y_cv)
-        q2 = 1 - mse / np.var(y)
-
-        # Print the R2 and Q2
-        print('R2:', r2)
-        print('Q2:')
-        print(q2)
-
+        # Store & report 
         self.plsda_model = model
         self.plsda_response_column = response_column_names
+        self.plsda_stats = {
+            "n_components": n_comp,
+            "n_folds": n_folds,
+            "classes": class_names,
+            "R2_global": r2_global,
+            "Q2_global": q2_global,
+            "CV_accuracy": cv_accuracy,
+            "R2_per_class": r2_per_class,
+            "Q2_per_class": q2_per_class,
+        }
 
-        #---------------------------------------------
+        # Console print 
+        print("R2 (global):", r2_global)
+        print("Q2 (global):", q2_global)
+        print("Per-class R2:", r2_per_class)
+        print("Per-class Q2:", q2_per_class)
+        print("CV accuracy:", cv_accuracy)
+
+        # ------------------------------
         # REPORTING
-        text0 = f'<b>PLS-DA</b> was performed with the ' + str(response_column_names) +' column(s) as a response variable for the model'
-        text1 = 'R2: ' + str(round(r2, 2)) + ', Q2: ' + str(round(q2, 2)) + '.'
-        report.add_together([('text', text0),
-                            ('text', text1),
-                            'line'])
+        text0 = f"<b>PLS-DA</b> was performed with the {str(response_column_names)} column(s) as the response."
+        text1 = f"R2_global: {r2_global:.3f}, Q2_global: {q2_global:.3f}, CV accuracy: {cv_accuracy:.3f}."
+        report.add_together([
+            ('text', text0),
+            ('text', text1),
+            'line'
+        ])
+
         return self.plsda_model
 
     def statistics_ttest(self, groups_column_name, group1, group2, p_value_correction_method = None, table_name_suffix = 'ttest_results'):
@@ -2674,7 +2699,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Get p-values
         p_values = ttest_ind(group1_data, group2_data, axis=1)[1]
 
-        if p_value_correction_method  != '' and p_value_correction_method is not None and p_value_correction_method != 'None' and p_value_correction_method != False:
+        if p_value_correction_method  != '' or p_value_correction_method is not None or p_value_correction_method != 'None' or p_value_correction_method != False:
             # Use correction for p-values 
             p_values = multipletests(p_values, method=p_value_correction_method)[1]
         
@@ -2697,8 +2722,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                             ('table', p_values_table),
                             'line'])
         # Save the table to a CSV file
-        csv_name = self.main_folder + '/statistics/' + output_file_prefix + group1 + '_vs_' + group2 + table_name_suffix +'.csv'
-        p_values_table.to_csv(csv_name, index=False)
+        csv_name = self.main_folder + '/statistics/' + output_file_prefix + '-' + group1 + '_vs_' + group2 + table_name_suffix +'.csv'
+        p_values_table.to_csv(csv_name, index=False, sep=';')
         report.add_text(f'The t-test results were saved to: {csv_name}')
         
         return p_values_table
@@ -3455,10 +3480,21 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             model = self.plsda_model
             response_column_names = self.plsda_response_column
 
-        # If metadata does not contain the response column it was performed by combination of columns
-        if response_column_names not in metadata.columns:
-            metadata[str(response_column_names)] = metadata[response_column_names].apply(lambda x: '-'.join(x.map(str)), axis=1)
-        
+        if isinstance(response_column_names, list):
+            missing = [col for col in response_column_names if col not in metadata.columns]
+            if missing:
+                # Combine columns to create a new one for visualization
+                combined_col_name = str(response_column_names)
+                metadata[combined_col_name] = metadata[response_column_names].apply(lambda x: '-'.join(x.map(str)), axis=1)
+            else:
+                combined_col_name = response_column_names[0] if len(response_column_names) == 1 else str(response_column_names)
+        else:
+            if response_column_names not in metadata.columns:
+                combined_col_name = str(response_column_names)
+                metadata[combined_col_name] = metadata[response_column_names].astype(str)
+            else:
+                combined_col_name = response_column_names
+
         cmap = mpl.cm.get_cmap(cmap)
 
         # Plot the data in the space of the first two components
@@ -3517,7 +3553,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig, ax
     
-    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, save_first = True, cmap = 'nipy_spectral', plt_name_suffix = 'violin_plots', bw = 0.2, jitter = True, label_rotation = 0, show_all = False):
+    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, cmap = 'nipy_spectral', plt_name_suffix = 'violin_plots', bw = 0.2, jitter = True, label_rotation = 0, show_all = False):
         """
         Visualize violin plots of all features grouped by a column from the metadata. (And save them into a single PDF file)
 
@@ -3529,8 +3565,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             Indexes of the features to create/save violin plots for. Default is 'all'. (Other options are either int or list of ints)
         save_into_pdf : bool
             If True, save each violin plot into a PDF file (multiple and later merged into a single PDF file). Default is True. (Usefull but slows down the process) If False, violin plots will be only shown.
-        save_first : bool
-            If True, save the first violin plot (and show it). Default is True. (If False, only the PDF file will be created.) If indexes are not 'all', then this parameter is ignored and all plots for specified indexes are saved.
         cmap : str
             Name of the colormap. Default is 'nipy_spectral'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
         plt_name_suffix : str
@@ -3563,7 +3597,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             all_indexes = False
         else:
             raise ValueError('Indexes must be either "all", int or list of ints.')
-        
 
         cmap = mpl.cm.get_cmap(cmap)
 
@@ -3603,6 +3636,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         pdf_files = []
         first_plot = True
         # Create a folder for the violin plots
+        example = True
         for idx, index in enumerate(indexes):
             values = []
             for unique, group in grouped:
@@ -3653,21 +3687,14 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     plt.savefig(file_name, bbox_inches='tight')
                     pdf_files.append(file_name)
 
-                if not all_indexes: # Specific indexes were selected
+                if example:
                     example_name = self.main_folder + '/statistics/'+ str(column_names) + '-' + plt_name_suffix +'-example-' + str(index)
                     for suffix in suffixes:
                         plt.savefig(example_name + suffix, bbox_inches='tight', dpi = 300)
                     if first_plot == True or show_all == True:
                         plt.show() # Show the plot
                     returning_vp = vp
-                elif save_first and all_indexes: # Save the first violin plot (is ignored if indexes are not 'all')
-                    example_name = self.main_folder + '/statistics/'+ str(column_names) + '-' + plt_name_suffix +'-example'
-                    for suffix in suffixes:
-                        plt.savefig(example_name + suffix, bbox_inches='tight', dpi = 300)
-                    if first_plot == True or show_all == True:
-                        plt.show() # Show the plot
-                    returning_vp = vp
-                    save_first = False
+                    example = False
                 
                 #print progress
                 ending = '\n' if idx == len(indexes) - 1 else '\r'
@@ -3709,7 +3736,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             ('text', text1),
             ('image', example_name),
             'line'])
-
         # Delete the temporary PDF files
         if save_into_pdf:
             for file in pdf_files:
