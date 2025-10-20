@@ -7,6 +7,12 @@ import time
 import math
 import json
 import pickle
+import warnings
+# warnings.filterwarnings(
+#     "ignore",
+#     message=".*maximal number of iterations maxit.*s too small.*",
+#     category=UserWarning
+# )
 from itertools import cycle, combinations
 
 # Plotting modules
@@ -294,8 +300,12 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 # find the numeric value behind conc_distinguisher
                 if conc_distinguisher in name:
                     pattern  = re.escape(conc_distinguisher) + r'(\d+)' #find the number after the conc_distinguisher
-                    conc = re.search(pattern, name).group(1)
-                    concentrations.append(float(conc))
+                    m = re.search(pattern, name)
+                    if not m:
+                        raise ValueError("No concentration value found in the name: " + name + " after the conc_distinguisher: " + conc_distinguisher)
+                    else:
+                        value = m.group(1)
+                    concentrations.append(float(value))
         
         self.dilution_series_samples = dilution_series_samples
         self.dil_concentrations = concentrations
@@ -342,7 +352,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         """
         Perform all the initialization steps of the workflow.
         """
-        self.report = self.initalizer_report(self.main_folder, self.report_file_name)
+        self.report = self.initializer_report(self.main_folder, self.report_file_name)
         self.functions = [self.loader_data, self.add_cpdID, self.extracter_variable_metadata, self.extracter_data, self.loader_batch_info, self.batch_by_name_reorder, self.extracter_metadata]
         print("Workflow initialized.")
     
@@ -715,12 +725,13 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         elif version_name == None:
             version = '-v' + str(saves_count)
         else:
-            if type(version_name) != str or type(version_name) != int:
-                raise ValueError("Version name has to be a string. (or a number)")
-            elif str(version_name)[0] != '_' or str(version_name)[0] != '-':
-                version = '_' + str(version_name)
+            if not isinstance(version_name, (str, int)):
+                raise ValueError("Version name has to be a string or an int.")
+            version_name = str(version_name)
+            if version_name[0] not in "_-":
+                version = "_" + version_name
             else:
-                version = str(version_name)
+                version = version_name
         
         #data
         data = data.reset_index(drop=True)
@@ -1654,7 +1665,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             self.batch = [batch[i] for i in range(len(batch)) if i not in standard_indexes]
             self.batch_info = batch_info.drop(standard_indexes)
             self.batch_info.reset_index(drop=True, inplace=True)
-            self.blank_samples = False
+            self.standard_samples = False
 
             # drop rows with blank samples
             self.metadata = self.metadata.drop(self.metadata.index[standard_indexes])
@@ -1724,45 +1735,48 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                             'line'])
         return data
     
+    def center_data(self, method='median'):
+        """
+        Center the data by subtracting either the mean or the median
+        of each variable (column).
+
+        Parameters
+        ----------
+        method : str, optional
+            The method of centering to use:
+            - 'mean'   : mean centering
+            - 'median' : median centering (default)
+        """
+        data = self.data
+        report = self.report
+
+        # Select only numeric columns (skip sample identifiers, etc.)
+        X = data.iloc[:, 1:]
+
+        # Compute centering values
+        if method == 'mean':
+            center_values = np.mean(X, axis=0)
+            center_type = 'mean'
+        elif method == 'median':
+            center_values = np.median(X, axis=0)
+            center_type = 'median'
+        else:
+            raise ValueError("Invalid method. Use 'mean' or 'median'.")
+
+        # Apply centering
+        data.iloc[:, 1:] = X - center_values
+        self.data = data
+
+        #---------------------------------------------
+        # REPORTING
+        text = f'Data was centered using {center_type} centering.'
+        report.add_together([('text', text), 'line'])
+
+        return self.data
+    
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL NORMALIZING METHODS (keyword: normalizer_...)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-    def _normalizer_zscores(self, data):
-        """
-        Help function to calculate the z-scores for the data.
-
-        Parameters
-        ----------
-        data : DataFrame
-            DataFrame with the data.
-        """
-        # Calculate the z-scores for the data
-        zscores = zscore(data, axis=0) + 10 # Add 10 to avoid division by zero (or close to zero)
-        zscores = pd.DataFrame(zscores, index=data.index, columns=data.columns)
-        # Return the z-scores
-        return zscores, zscores.mean(axis=0), zscores.std(axis=0)
-    
-    def _invert_zscores(self, zscores, mean, std):
-        """
-        Help function to invert the z-scores for the data.
-
-        Parameters
-        ----------
-        zscores : DataFrame
-            DataFrame with the z-scores. 
-        mean : DataFrame
-            DataFrame with the mean values.
-        std : DataFrame
-            DataFrame with the standard deviation values.
-        """
-        # Invert the z-scores
-        mean = mean.to_numpy()
-        std = std.to_numpy()
-        data = (zscores - 1) * 10 * std + mean # Subtract 1 (10 was added, but then it was divided in the correction step); Multiply by 10 (this comes from correction step, where we divide by spline values (which are around 0 (from z-scores) + 10 added to avoid division by zero in normalization step))
-        # Return the inverted z-scores
-        data = pd.DataFrame(data, index=zscores.index, columns=zscores.columns)
-        return data
     
     def normalizer_zscores(self):
         """
@@ -1836,29 +1850,202 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL CORRECTING METHODS (keyword: correcter_...)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-    def _cubic_spline_smoothing(self, x, y, p):
+    def _cubic_spline_smoothing(self, x, y, s_value, grow=10.0, max_tries=4, tol=1.0):
         """
-        Help functin to fit a cubic spline to the data.
-        
+        Fit a cubic smoothing spline with robust weights from z-scores.
+        Returns a fitted UnivariateSpline or None if not enough signal.
+
         Parameters
         ----------
         x : array
             Array with the x values.
         y : array
             Array with the y values.
-        p : float
+        s_value : float
             Smoothing parameter.
+        grow : float
+            Factor to increase s_value if fitting fails. Default is 10.0.
+        max_tries : int
+            Maximum number of attempts to fit the spline. Default is 4.
+        tol : float
+            Tolerance for increasing s_value. Default is 0.1.
         """
-        # Fit a cubic spline to the data
+        x = np.asarray(x)
         y = np.asarray(y)
-        if len(y) < 4 or np.std(y) == 0:
-            return None  # not enough points or constant series
 
-        zscores = zscore(y, axis=0, nan_policy='omit')
-        zscores[np.isnan(zscores)] = 0  # handle NaNs safely
-        weights = 1 / (1 + zscores**2)
-        return UnivariateSpline(x, y, w=weights, s=p)
+        if y.size < 4 or not np.isfinite(y).all() or np.nanstd(y) == 0:
+            return None
+
+        # robust weights
+        z = zscore(y, nan_policy='omit')
+        z = np.where(np.isfinite(z), z, 0.0)
+        w = 1.0 / (1.0 + z**2)
+
+        # strictly increasing x
+        if np.any(np.diff(x) <= 0):
+            order = np.argsort(x)
+            x, y, w = x[order], y[order], w[order]
+
+        s_cur = float(s_value)
+
+        for _ in range(max_tries):
+            with warnings.catch_warnings(record=True) as wlist:
+                warnings.simplefilter("always")
+                try:
+                    spline = UnivariateSpline(x, y, w=w, s=s_cur)
+                except Exception:
+                    spline = None
+
+            bad = False
+            # detect "too small s" warnings
+            if wlist:
+                text = " ".join(str(w.message) for w in wlist)
+                if "maximal number of iterations maxit" in text and "s too small" in text:
+                    bad = True
+
+            # residual consistency check (relaxed for large s)
+            if spline is not None:
+                fp = spline.get_residual()  # weighted RSS
+                if s_cur > 0 and np.isfinite(fp):
+                    ratio = abs(fp - s_cur) / s_cur
+                    # only enforce strict residual match for small s
+                    if ratio > tol and s_cur < 1e5:
+                        bad = True
+
+             # success → return the spline
+            if spline is not None and not bad:
+                return spline
+            
+            # otherwise, relax smoothness and retry
+            s_cur *= grow  
+
+        # all attempts failed
+        return None
+                
+    def _cv_best_smoothing_param(self, x, y, p_values, k=5, min_points=5, minloo=5):
+        """
+        Time-aware CV (contiguous folds). Falls back to LOO for tiny series.
+        Returns the p (smoothing parameter) that minimizes CV MSE, or None.
+
+        Parameters
+        ----------
+        x : array-like
+            1D array of time points (e.g. injection order).
+        y : array-like
+            1D array of intensities (for a single feature).
+        p_values : array-like
+            Candidate smoothing parameters to evaluate.
+        k : int
+            Number of folds for K-Fold CV. Default is 5.
+        min_points : int
+            Minimum number of data points required to perform CV. Default is 5.
+        minloo : int
+            Minimum number of data points required to perform Leave-One-Out CV. Default is 5.
+        """
+        x = np.asarray(x); y = np.asarray(y)
+        n = y.size
+
+        # basic guards
+        if n < min_points or not np.isfinite(y).all():
+            return None
+        if np.nanstd(y) == 0:
+            return None
+
+        # choose splitter: contiguous KFold or LOO
+        splitter = LeaveOneOut() if (n < k or k <= 1 or n < minloo) else KFold(n_splits=min(k, n), shuffle=False)
+
+        best_p, best_mse = None, np.inf
+        for p in p_values:
+            fold_err = 0.0
+            n_splits = 0
+            for tr_idx, te_idx in splitter.split(x):
+                s = self._cubic_spline_smoothing(x[tr_idx], y[tr_idx], p)
+                if s is None:
+                    # if the model can’t fit on this fold, penalize heavily
+                    fold_err += 1e12
+                else:
+                    yhat = s(x[te_idx])
+                    fold_err += mean_squared_error(y[te_idx], yhat)
+                n_splits += 1
+            fold_mse = fold_err / max(1, n_splits)
+
+            if fold_mse < best_mse:
+                best_mse, best_p = fold_mse, p
+
+        return best_p
     
+    def _estimate_batchwise_s_ranges(self, data_log2, batch, is_qc_sample, n_features=100, k=5):
+        """
+        For each batch:
+        - sample up to n_features features (evenly across columns),
+        - run a wide log grid to find typical best s,
+        - return a narrowed per-batch grid for the main loop.
+
+        Parameters
+        ----------
+        data_log2 : DataFrame
+            DataFrame with log2-transformed data (samples x features).
+        batch : list or array
+            List or array of batch ids aligned to rows of data_log2.
+        is_qc_sample : array
+            Boolean array aligned to rows of data_log2 indicating which samples are QC samples.
+        n_features : int
+            How many features to probe per batch. Default is 100.
+        k : int
+            Number of folds for K-Fold CV. Default is 5.
+
+        """
+        unique_batches = list(dict.fromkeys(batch))
+        n_total_feats = data_log2.shape[1]
+
+        # choose probe feature indices evenly spaced across all features
+        probe_idx = np.linspace(0, n_total_feats - 1, min(n_features, n_total_feats), dtype=int)
+
+        batch_p_ranges = {}
+        batch_best_s = {} 
+
+        for b in unique_batches:
+            is_b = np.array([bb == b for bb in batch], dtype=bool)
+            qc_mask_b = np.logical_and(is_qc_sample, is_b)
+
+            best_s_vals = []
+            for fi in probe_idx:
+                y = data_log2.iloc[qc_mask_b, fi].values
+                x = np.arange(y.size)
+
+                # guard for tiny/noisy series
+                if y.size < 5 or not np.isfinite(y).all() or np.nanstd(y) == 0:
+                    continue
+
+                # wide grid scaled by variance * n  (order-of-magnitude scan)
+                var_y = max(np.nanvar(y), 1e-6)
+                p_wide = np.logspace(-3, 3, 9) * var_y * y.size
+                p_wide = np.clip(p_wide, 1.0, None) # never below 1.0 - avoids extreme overfitting (small s means very wiggly spline)
+
+                p_best = self._cv_best_smoothing_param(x, y, p_wide, k=k)
+                if p_best is not None and np.isfinite(p_best):
+                    best_s_vals.append(p_best)
+
+            batch_best_s[b] = best_s_vals 
+
+            # derive narrowed grid for this batch
+            if len(best_s_vals) >= 5:
+                s10, s50, s90 = np.percentile(best_s_vals, [10, 50, 90])
+                # keep a safety margin (+/- ~0.5–1 decade around middle)
+                lower = max(s10 / 3.0, 1e-8)
+                upper = s90 * 3.0
+                upper = max(upper, lower * 10)  # ensure at least one decade span
+                batch_p_ranges[b] = np.logspace(np.log10(lower), np.log10(upper), 7)
+            elif len(best_s_vals) > 0:
+                # too few points to be fancy—center on median with generous bounds
+                s50 = float(np.median(best_s_vals))
+                batch_p_ranges[b] = np.logspace(np.log10(s50 / 10.0), np.log10(s50 * 10.0), 7)
+            else:
+                # fallback: wide default
+                batch_p_ranges[b] = np.logspace(-3, 3, 9)
+
+        return batch_p_ranges, batch_best_s 
+        
     def _leave_one_out_cross_validation(self, x, y, p_values):
         """
         Help fucntion to perform leave-one-out cross validation to find the best smoothing parameter.
@@ -1892,9 +2079,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 
                 # Fit a cubic spline to the training set
                 s = self._cubic_spline_smoothing(x_train, y_train, p)
-                
-                # Calculate the mean squared error on the test set
-                mse += ((s(x_test) - y_test) ** 2).sum()
+                if s is None:
+                    mse += 1e12
+                else:
+                    mse += ((s(x_test) - y_test) ** 2).sum()
             
             # Calculate the mean squared error
             mse /= len(x)
@@ -1904,56 +2092,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 best_p = p
                 min_mse = mse
         # Return the best smoothing parameter
-        return best_p
-    
-    def _cv_best_smoothing_param(self, x, y, p_values, k=3, min_points=5, minloo=5):
-        """
-        Find best spline smoothing parameter using time-aware (blocked) K-fold CV.
-        Falls back to Leave-One-Out if data is scarce.
-
-        Parameters
-        ----------
-        x : array-like
-            1D array of time points (e.g. injection order).
-        y : array-like
-            1D array of intensities (for a single feature).
-        p_values : array-like
-            Candidate smoothing parameters to evaluate.
-        k : int
-            Number of folds for K-Fold CV. Default is 3.
-        min_points : int
-            Minimum number of data points required to perform CV. Default is 5.
-        minloo : int
-            Minimum number of data points required to perform Leave-One-Out CV. Default is 5.
-        """
-
-        n = len(x)
-        if n < min_points:
-            return None
-
-        # Use Leave-One-Out if very few points
-        if n < k or k <= 1:
-            if n < minloo:
-                return None
-            splitter = LeaveOneOut()
-        else:
-            splitter = KFold(n_splits=min(k, n), shuffle=False)
-
-        best_p = None
-        min_mse = np.inf
-
-        for p in p_values:
-            fold_mse = 0.0
-            for train_idx, test_idx in splitter.split(x):
-                s = self._cubic_spline_smoothing(x[train_idx], y[train_idx], p)
-                preds = s(x[test_idx])
-                fold_mse += mean_squared_error(y[test_idx], preds)
-            fold_mse /= splitter.get_n_splits(x)
-
-            if fold_mse < min_mse:
-                min_mse = fold_mse
-                best_p = p
-
         return best_p
 
     def correcter_qc_interpolation(self, show='default', p_values='default', delog=True, use_zeros=False, cmap='viridis'):
@@ -2049,6 +2187,92 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         data = np.log2(np.maximum(data, eps))
 
         # ---------------------------
+        # Estimate batchwise s ranges
+        # ---------------------------
+        # Learn per-batch p-grids from a quick exploration pass (order-of-magnitude scan)
+
+        batch_p_ranges, batch_best_s = self._estimate_batchwise_s_ranges(
+            data_log2=data,
+            batch=batch,
+            is_qc_sample=is_qc_sample,
+            n_features=100,
+            k=5
+        )
+        os.makedirs(f"{self.main_folder}/figures", exist_ok=True)
+
+        for bname, s_vals in batch_best_s.items():
+            if not s_vals:
+                # nothing to plot for this batch
+                continue
+
+            s_vals = np.asarray(s_vals, dtype=float)
+            s_vals = s_vals[np.isfinite(s_vals)]
+            if s_vals.size == 0:
+                continue
+
+            # log10 for stable visualization
+            log_s = np.log10(s_vals)
+
+            # narrowed range we’ll use in the main loop
+            p_grid = np.asarray(batch_p_ranges[bname], dtype=float)
+            p_grid = p_grid[np.isfinite(p_grid)]
+            if p_grid.size == 0:
+                continue
+            lo, hi = np.min(p_grid), np.max(p_grid)
+            log_lo, log_hi = np.log10(lo), np.log10(hi)
+
+            # edge diagnostics: how many best_s hit the wide search edges during exploration?
+            # (we used 1e-3..1e3 * var(y) * n; detect if s is near min or max observed in that ‘wide’ scan)
+            # crude proxy: 5% quantile near min OR 95% near max of observed best_s
+            q5, q50, q95 = np.percentile(s_vals, [5, 50, 95])
+            edge_low_hits  = (s_vals <= np.min(s_vals) * 1.0000001).sum()  # practically none; left for completeness
+            edge_high_hits = (s_vals >= np.max(s_vals) / 1.0000001).sum()  # same note
+
+            # build figure
+            plt.figure(figsize=(8, 4.5))
+            # histogram in log10 space
+            bins = max(10, int(np.sqrt(log_s.size)))
+            plt.hist(log_s, bins=bins, alpha=0.7, edgecolor='k')
+
+            # overlay vertical lines for 10/50/90% and narrowed range
+            s10, s50, s90 = np.percentile(s_vals, [10, 50, 90])
+            for v, ls, lw in [(np.log10(s10), '--', 1.0),
+                            (np.log10(s50), '-', 2.0),
+                            (np.log10(s90), '--', 1.0)]:
+                plt.axvline(v, ls=ls, lw=lw, color='C1')
+
+            # shade the narrowed range to be used
+            plt.axvspan(log_lo, log_hi, color='C2', alpha=0.15, label='Narrowed range')
+
+            # labels and title
+            plt.xlabel('log10(smoothing parameter s)')
+            plt.ylabel('Count (features in exploration subset)')
+            plt.title(f'Exploration of best s — batch: {bname}')
+
+            # legend: include quantiles
+            plt.legend(
+                [f'10/50/90%: {s10:.2g} / {s50:.2g} / {s90:.2g}', 'Narrowed range'],
+                frameon=False,
+                loc='best'
+            )
+
+            # annotate simple edge signal if distribution is butting up against range
+            # If median is within ~0.1 decade of either bound, warn in the title.
+            warn = ''
+            if (np.log10(s50) - log_lo) < 0.1:
+                warn = ' (median near LOWER bound)'
+            if (log_hi - np.log10(s50)) < 0.1:
+                warn = ' (median near UPPER bound)'
+            if warn:
+                plt.title(f'Exploration of best s — batch: {bname}{warn}')
+
+            out_path = f"{self.main_folder}/figures/s_exploration_{bname}.png"
+            plt.tight_layout()
+            plt.savefig(out_path, dpi=200)
+            plt.close()
+            print(f"[s-explore] Saved: {out_path} (n={s_vals.size})")
+
+        # ---------------------------
         # Correction
         # ---------------------------
         start_time = time.time()
@@ -2080,17 +2304,23 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 x = np.arange(len(data))[qc_batched]
                 y = qc_y.values
 
-                if p_values == 'default':
-                    m = len(qc_y)
-                    p_vals = np.clip(
-                        np.linspace(m - math.sqrt(2 * m), m + math.sqrt(2 * m), 10),
-                        a_min=0, a_max=None
-                    )
+                # Choose candidate p-values
+                if isinstance(p_values, str) and p_values == 'default':
+                    # narrowed, batch-specific range learned in the exploration stage
+                    p_vals = batch_p_ranges[bname]
                 else:
+                    # user-provided grid (array-like)
                     p_vals = p_values
 
-                p = self._cv_best_smoothing_param(x, y, p_vals, k=5)  # no z-scores anymore
-                chosen_p_values.append(p)
+                # Guard: if too few QC points in this batch, skip
+                if len(y) < 5 or not np.isfinite(y).all() or np.nanstd(y) == 0:
+                    p = None
+                else:
+                    p = self._cv_best_smoothing_param(x, y, p_vals, k=5)
+
+                # Only record valid p's
+                if p is not None and np.isfinite(p):
+                    chosen_p_values.append(p)
 
                 if p is None:
                     s = None
@@ -2179,9 +2409,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     colLabels=col_labels,
                     cellLoc='center', fontsize=10, loc='center'
                 )
-                cells_to_change_color = [(2, i) for i, ok in enumerate(is_correctable_batch) if not ok]
+                cells_to_change_color = [(0, i) for i, ok in enumerate(is_correctable_batch) if not ok]
                 for cell in cells_to_change_color:
-                    table.get_celld()[cell].set_text_props(fontweight='bold', color='red')
+                    if cell in table.get_celld():
+                        table.get_celld()[cell].set_text_props(fontweight='bold', color='red')
                 plt.text(x=-0.005, y=0.65, s='Zero Counts', fontsize=15,
                         transform=plt.gca().transAxes, ha='right', va='center')
 
@@ -2237,7 +2468,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 plt.axhline(anchor_log, color='0.5', linestyle='--', linewidth=1, alpha=0.8, label='QC anchor')
 
                 plt.xlabel('Injection Order')
-                plt.ylabel('log2 Peak Area (corrected)' if not delog else 'Peak Area (corrected)')
+                plt.ylabel('log2 Peak Area (corrected)')
                 plt.title(feature_names[feature] if len(feature_names) > 0 else f'Feature: {feature}')
 
                 # y-limits include corrected data, splines, and baseline
@@ -2310,15 +2541,13 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         if delog:
             data = np.power(2.0, data)
 
-        # ---------------------------
-        # Wrap up
-        # ---------------------------
         # Back to features x samples with cpdID in col 0
         data = data.T
         data.insert(0, 'cpdID', feature_names)
 
         # chosen p-values (summary)
-        chosen_p_values = pd.Series(chosen_p_values).value_counts().to_dict()
+        _valid_p = [pv for pv in chosen_p_values if pv is not None and np.isfinite(pv)]
+        chosen_p_values = pd.Series(_valid_p).value_counts().to_dict() if _valid_p else {}
         chosen_p_values = {k: v for k, v in sorted(chosen_p_values.items(), key=lambda kv: kv[1], reverse=True)}
 
         # number of corrected batches per feature
@@ -2333,10 +2562,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         text0 = 'QC-based drift correction (log2 space) was performed.'
         texts = []
         texts.append(('text', f'Output returned in {"raw" if delog else "log2"} space.', 'italic'))
-        if p_values == 'default':
-            texts.append(('text',
-                        'Spline smoothness was optimized by k-fold CV over a batch-wise range m ± √(2m), '
-                        'where m is the number of QC points available in that batch.'))
+        if isinstance(p_values, str) and p_values == 'default':
+            texts.append(('text','Spline smoothness was selected by time-aware cross-validation over a batch-specific range - estimated from a small exploratory subset of features.' ))
         together = [('text', text0, 'bold')]
         together.extend(texts)
         report.add_together(together)
@@ -2699,7 +2926,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Get p-values
         p_values = ttest_ind(group1_data, group2_data, axis=1)[1]
 
-        if p_value_correction_method  != '' or p_value_correction_method is not None or p_value_correction_method != 'None' or p_value_correction_method != False:
+        if p_value_correction_method not in (None, "", "None", False):
             # Use correction for p-values 
             p_values = multipletests(p_values, method=p_value_correction_method)[1]
         
