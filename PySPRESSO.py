@@ -487,22 +487,71 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report.add_together([('text', text),
                                 'line'])
         return self.data
+    
+    def add_cpdID_from_column(self, cpdID_col):
+        """
+        Add a column 'cpdID' to the data from an existing column.
 
-    def extracter_variable_metadata(self, column_index_ranges = [(10, 15), (18, 23)]):
+        Parameters
+        ----------
+        cpdID_col : str
+            Name of the column with cpdID values (or any other column to be used as cpdID for example: Compound Name, Formula, etc.).
+        """
+        data = self.data
+        report = self.report
+
+        #add cpdID column to the data_df from an existing column
+        data['cpdID'] = data[cpdID_col]
+
+        # Check if there are ';' in the cpdID and replace them with '_'
+        data['cpdID'] = data['cpdID'].str.replace(';', ',,')
+           
+        print("Compound ID was added to the data from the column: " + cpdID_col)
+        
+        #---------------------------------------------
+        # REPORTING
+        text = 'cpdID column was added to the data from an existing column: ' + cpdID_col + '.'
+        report.add_together([('text', text),
+                                'line'])
+        return self.data
+
+    def extracter_variable_metadata(self, columns_by_name = ['cpdID', 'Name', 'Formula'], column_index_ranges = [(10, 15), (18, 23)]):
         """
         Extract variable metadata from the data. Based on the column index ranges. 
 
         Parameters
         ----------
-        column_index_ranges : list
-            List of tuples with the column index ranges to keep. Default is [(10, 15), (18, 23)].
+        columns_by_name : list
+            List of column names to keep. Default is ['cpdID', 'Name', 'Formula']. 'cpdID' is recommended to keep, else might be differently named in your data.
+        column_index_ranges : list (of tuples or ints)
+            List of tuples with the column index ranges to keep. Default is [(10, 15), (18, 23)] (Usuall for Compound Discoverer data structure.)
         """
         data = self.data
         report = self.report
 
-        self.variable_metadata = data[['cpdID', 'Name', 'Formula']]
+        self.variable_metadata = data[columns_by_name]
         for column_index_range in column_index_ranges:
-            self.variable_metadata = self.variable_metadata.join(data.iloc[:, column_index_range[0]:column_index_range[1]])
+            # if not tuple, just a single int, take only that one column
+            if not isinstance(column_index_range, tuple):
+                column_index_range
+                # Check if the column index is valid (within the bounds of the DataFrame) AND if the column is not already included
+                if column_index_range < 0 or column_index_range >= data.shape[1]:
+                    raise ValueError("Column index " + str(column_index_range) + " is out of bounds.")
+                if data.columns[column_index_range] in self.variable_metadata.columns:
+                    print("Column " + str(column_index_range) + " is already included (from including the columns_by_name) in the variable metadata. Skipping this column.")
+                else:
+                    self.variable_metadata = self.variable_metadata.join(data.iloc[:, column_index_range])
+            else:
+                # Check if the column index range is valid (within the bounds of the DataFrame) AND if the column/s are not already included
+                if column_index_range[0] < 0 or column_index_range[1] > data.shape[1]:
+                    raise ValueError("Column index range " + str(column_index_range) + " is out of bounds.")
+                if any(col in self.variable_metadata.columns for col in data.columns[column_index_range[0]:column_index_range[1]]):
+                    # Include only the columns that are not already included
+                    print("Some columns in the range " + str(column_index_range) + " are already included (from including the columns_by_name) in the variable metadata. Including only the new columns.")
+                    cols_to_add = [col for col in data.columns[column_index_range[0]:column_index_range[1]] if col not in self.variable_metadata.columns]
+                    self.variable_metadata = self.variable_metadata.join(data[cols_to_add])
+                else:
+                    self.variable_metadata = self.variable_metadata.join(data.iloc[:, column_index_range[0]:column_index_range[1]])
 
         print("Variable metadata was extracted from the data.")
         #---------------------------------------------
@@ -542,6 +591,41 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.data = data
         return self.data
     
+    def extracter_MultiQuant_data(self, sample_col= 'Sample Name', feature_col = 'Component Name' , area_col = 'Corrected Area', datetime_col= 'Acquisition Date & Time'):
+        """
+        Extract data matrix from MultiQuant data format.
+
+        Parameters
+        ----------
+        sample_col : str
+            Name of the column with sample names. Default is 'Sample Name'.
+        feature_col : str
+            Name of the column with feature names. Default is 'Component Name'.
+        area_col : str
+            Name of the column with area values. Default is 'Corrected Area'.
+        datetime_col : str
+            Name of the column with acquisition date/time. Default is 'Acquisition Date & Time'.
+        """
+        data = self.data
+        report = self.report
+
+        # Pivot the data to have samples as columns and cpdID as rows
+        data_pivot = data.pivot_table(index=feature_col, columns=sample_col, values=area_col, aggfunc='first')
+        data_pivot.reset_index(inplace=True)
+        data_pivot.rename(columns={feature_col: 'cpdID'}, inplace=True)
+
+
+        self.data = data_pivot
+
+        print("Data matrix extracted from MultiQuant format.")
+
+        #---------------------------------------------
+        # REPORTING
+        text = 'data matrix was created from MultiQuant format.'
+        report.add_together([('text', text),
+                                'line'])
+        return self.data
+    
     def loader_batch_info(self, input_batch_info_file, separator = ';', encoding = 'ISO-8859-1'):
         """
         Load batch_info matrix from a csv file.
@@ -568,16 +652,24 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                                 'line'])
         return self.batch_info
 
-    def batch_by_name_reorder(self, distinguisher = 'Batch', format='%d.%m.%Y %H:%M'):
+    def batch_by_name_reorder(self, distinguisher = 'Batch', distinguisher_col = 'File Name', datetime_col = 'Creation Date', format='%d.%m.%Y %H:%M', sample_id_col = 'Study File ID', sample_type_col = 'Sample Type'):
         """
         Reorder data based on the creation date and add a column 'Batch' to the batch_info based on the distinguisher.
         
         Parameters
         ----------
         distinguisher : str
-            Distinguisher used in the file names. Default is 'Batch'. Batches are distinguished in the File Name *_distinguisher_XXX. If you have all in one batch and no such distinguisher, then use None.
+            Distinguisher used in the file names. Default is 'Batch'. Batches are distinguished in the File Name *_distinguisher_XXX. If you have all in one batch and no such distinguisher, then use None. If the batch names are directly in the column (distinguisher_col), use '' (empty string).
+        distinguisher_col : str
+            Name of the column with file names in batch_info. Default is 'File Name'. If all your data is in one batch, use None.
+        datetime_col : str
+            Name of the column with creation date/time. Default is 'Creation Date'. If there is no such column AND they are in the correct order already, then use None.
         format : str
-            Format of the date. Default is '%d.%m.%Y %H:%M'.
+            Format of the date. Default is '%d.%m.%Y %H:%M'. Is ignored if datetime_col is None.
+        sample_id_col : str
+            Name of the column with sample names/IDs in batch_info. Default is 'Study File ID'.
+        sample_type_col : str
+            Name of the column with sample types in batch_info. Default is 'Sample Type'.
         """
         data = self.data
         report = self.report
@@ -587,14 +679,18 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         batches_column = []
 
         names = data.columns[1:].to_list()
-        batch_names = batch_info['File Name'].tolist()
+        if distinguisher_col is not None:
+            batch_names = batch_info['File Name'].tolist()
 
-        # Convert the 'Creation Date' column to datetime format
-        batch_info['Creation Date'] = pd.to_datetime(batch_info['Creation Date'], format = format) #, dayfirst=True
-    
-        # Sort the DataFrame based on the 'Creation Date' column
-        batch_info = batch_info.sort_values('Creation Date')
-        batch_info = batch_info.reset_index(drop=True)
+        if datetime_col is None:
+            print("Assuming batch_info has Samples in the correct order already, since no datetime_col is provided.")
+        else:
+            # Convert the datetime_col column to datetime format
+            batch_info[datetime_col] = pd.to_datetime(batch_info[datetime_col], format = format) #, dayfirst=True
+
+            # Sort the DataFrame based on the datetime_col column
+            batch_info = batch_info.sort_values(datetime_col)
+            batch_info = batch_info.reset_index(drop=True)
 
         if distinguisher is None:
             # If all in one batch, use None
@@ -606,12 +702,18 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             report.add_together([('text', text),
                                 'line'])
         else:
-            for name in batch_names:
-                split_name = re.split(r'[_|\\]', name) #split by _ or \
-                for i, part in enumerate(split_name):
-                    if part == distinguisher:
-                        batches_column.append(split_name[i+1])
-                        break
+            if distinguisher == '':
+                # If the batch names are directly in the distinguisher_col column
+                batch_info['Batch'] = batch_info[distinguisher_col]
+                print("Batch names taken directly from the column: " + distinguisher_col)
+            else:
+                # Extract batch names from the file names based on the distinguisher (split by _ or \)
+                for name in batch_names:
+                    split_name = re.split(r'[_|\\]', name) #split by _ or \
+                    for i, part in enumerate(split_name):
+                        if part == distinguisher:
+                            batches_column.append(split_name[i+1])
+                            break
 
             if len(batches_column) == 0:
                 raise ValueError("No matches found in 'names' for the distinguisher: " + distinguisher + " in the file names. If you have all in one batch, use None")
@@ -622,7 +724,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         not_found = []
         not_found_indexes = []
         new_data_order = []
-        for i, id in enumerate(batch_info['Study File ID'].tolist()):
+        for i, id in enumerate(batch_info[sample_id_col].tolist()):
             found = False
             for name in names:
                 # Check if the name contains the ID within brackets
@@ -631,9 +733,16 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     new_data_order.append(name)
                     names.pop(names.index(name))
                     break
+                else:
+                    # Also check if the name is exactly the same as the ID
+                    if name == id:
+                        found = True
+                        new_data_order.append(name)
+                        names.pop(names.index(name))
+                        break
             if not found:
                 not_found_indexes.append(i)
-                not_found.append([id, batch_info['Sample Type'].tolist()[i]])
+                not_found.append([id, batch_info[sample_type_col].tolist()[i]])
 
         print("New data order based on batch info:")
         print(new_data_order)
@@ -669,27 +778,29 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         return self.data, self.batch_info
 
-    def extracter_metadata(self, group_columns_to_keep, prefix = 'Area:'):
+    def extracter_metadata(self, group_columns_to_keep, always_keep_colunms = ['Study File ID','File Name', 'Creation Date','Sample Type', 'Polarity', 'Batch']):
         """
         Extract metadata from batch_info by choosing columns to keep. Keep your grouping columns such as AgeGroup, Sex, Diagnosis, etc. 
 
         Parameters
         ----------
         group_columns_to_keep : list
-            List of group columns to keep.
-        prefix : str
-            Prefix used in the column names to keep. Default is 'Area:'.
+            List of group columns to keep. If 'all' is given, all columns are kept, no matter other parameters.
+        always_keep_colunms : list
+            List of columns to always keep. Default is ['Study File ID','File Name', 'Creation Date','Sample Type', 'Polarity', 'Batch']. Keep Batch (was added in batch_by_name_reorder) to have batch information in the metadata. The other columns can have different names (based on your batch_info structure).
         """
         data = self.data
         report = self.report
         batch_info = self.batch_info
 
-        # Define columns to keep in the metadata matrix
-        always_keep_colunms = ['Study File ID','File Name', 'Creation Date','Sample Type', 'Polarity', 'Batch']
-        columns_to_keep = always_keep_colunms + group_columns_to_keep
+        if group_columns_to_keep == 'all':
+            columns_to_keep = batch_info.columns.tolist()
+        else:
+            columns_to_keep = always_keep_colunms + group_columns_to_keep
         # Extract metadata from batch_info
-        regex_pattern = re.compile(r'^'+ prefix)
-        area_columns = data.filter(regex = regex_pattern, axis=1)
+        
+        area_columns = data.drop(columns=['cpdID'])
+
         metadata = batch_info[columns_to_keep].copy()
         metadata['Sample File'] = area_columns.columns
         self.metadata = metadata
@@ -946,61 +1057,93 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
     def filter_missing_values(self, qc_threshold = 0.8, sample_threshold = 0.5):
         """
-        Filter out features with high number of missing values (nan or 0): A) within QC samples  B) all samples 
+        Filter out features with high number of missing values (nan or 0): A) within QC samples  B) all samples. IN THIS ORDER. (default thresholds: 80% and 50% meaning if feature doesn't meet the presence in at least 80% of QC samples or 50% of all samples, it is removed).
 
         Parameters
         ----------
         qc_threshold : float
-            Threshold for the QC samples. Default is 0.8.
+            Threshold for the QC samples. Default is 0.8. (Meaning 80% presence required within QC samples.)
         sample_threshold : float
-            Threshold for all samples. Default is 0.5.
+            Threshold for all samples. Default is 0.5. (Meaning 50% presence required within all samples.)
         """ 
         data = self.data
         report = self.report
         QC_samples = self.QC_samples
 
         is_qc_sample = [True if col in QC_samples else False for col in data.columns[1:]]
+
         #A) WITHIN QC SAMPLES ---------------------------------------------
-        #if value is missing (nan or 0) in more than threshold% of QC samples, then it is removed
-        QC_number_threshold = int(sum(is_qc_sample)*qc_threshold)
+        qc_cols = data.columns[1:][is_qc_sample]
+        qc_count = len(qc_cols)
+        qc_block = data[qc_cols]
 
-        # Identify rows with missing (either missing or 0) values
-        QC_missing_values = (data[data.columns[1:][is_qc_sample]].isnull() | (data[data.columns[1:][is_qc_sample]] == 0)).sum(axis=1)
-        #print(missing_values[missing_values > 0])
-
-        #Filter out rows with too much (over the threshold) missing values (either missing or 0)
-        data = data.loc[QC_missing_values < QC_number_threshold, :]
-        data
-
-        #report how many features were removed
-        print("Number of features removed for QC threshold (" + str(qc_threshold) + "%): within QC samples: "+ str(len(QC_missing_values[QC_missing_values > QC_number_threshold])) + " ;being: " + str(QC_missing_values[QC_missing_values > QC_number_threshold].index.tolist()))
-
-        #B) ACROSS ALL SAMPLES ---------------------------------------------
-        #if value is missing (nan or 0) in more than threshold% of samples, then it is removed
-        number_threshold = int(len(data.columns[1:])*sample_threshold)
-
-        # Identify rows with missing (either missing or 0) values
-        missing_values = (data.isnull() | (data == 0)).sum(axis=1)
-        #print(missing_values[missing_values > 0])
-
-        #Filter out rows with too much (over the threshold) missing values (either missing or 0)
-        data = data.loc[missing_values < number_threshold, :]
+       # presence = not NaN and not zero
+        qc_present = (~qc_block.isna()) & (qc_block != 0)
+        presence_frac_QC = qc_present.sum(axis=1) / qc_count
         
-        #reset index
-        data = data.reset_index(drop=True)
-        #update data and variable_metadata
-        self.data = data
-        self.variable_metadata = self._filter_match_variable_metadata(data, self.variable_metadata)
 
-        #report how many features were removed
-        print("Number of features removed for sample threshold (" + str(sample_threshold) + "%): within all samples: "+ str(len(missing_values[missing_values > number_threshold])) + " ;being: " + str(missing_values[missing_values > number_threshold].index.tolist()))
+        ## Compute removals BEFORE filtering `data`
+        removed_mask = presence_frac_QC < qc_threshold
+        removed_idx = data.index[removed_mask]
+        removed_count = int(removed_mask.sum())
+
+        # Try to list IDs if you have a 'cpdID' column; otherwise list row indices
+        removed_features = (
+            data.loc[removed_idx, 'cpdID'].tolist()
+            if 'cpdID' in data.columns
+            else removed_idx.tolist()
+        )
+
+        # Build the optional details part only when there is something to show
+        details = f" ; being: {removed_features}" if removed_features else ""
+
+        print(
+            f"Number of features removed for QC threshold ({qc_threshold*100:.0f}%): "
+            f"within QC samples: {removed_count}{details}"
+        )
+
+        # Now filter data
+        data = data.loc[~removed_mask, :].reset_index(drop=True)
+
+        # B) ACROSS ALL SAMPLES ---------------------------------------------
+        all_cols = data.columns[1:]
+        all_count = len(all_cols)
+        all_block = data[all_cols]
+
+        # presence = not NaN and not zero
+        all_present = (~all_block.isna()) & (all_block != 0)
+        presence_frac_ALL = all_present.sum(axis=1) / all_count
+
+        # Compute removals BEFORE filtering `data`
+        removed_mask_all = presence_frac_ALL < sample_threshold
+        removed_idx_all = data.index[removed_mask_all]
+        removed_count_all = int(removed_mask_all.sum())
+
+        # Try to list IDs if you have a 'cpdID' column; otherwise list row indices
+        removed_features_all = (
+            data.loc[removed_idx_all, 'cpdID'].tolist()
+            if 'cpdID' in data.columns
+            else removed_idx_all.tolist()
+        )
+
+        # Optional details only when there is something to show
+        details_all = f" ; being: {removed_features_all}" if removed_features_all else ""
+
+        print(
+            f"Number of features removed for sample threshold ({sample_threshold*100:.0f}%): "
+            f"within all samples: {removed_count_all}{details_all}"
+        )
+
+        # Now filter data
+        data = data.loc[~removed_mask_all, :].reset_index(drop=True)
 
         #---------------------------------------------
         #REPORTING
         text0 = 'Features with missing values over the threshold (' + str(qc_threshold*100) + '%) within QC samples were removed.'
-        text1 = 'Number of features removed: ' + str(len(QC_missing_values[QC_missing_values > QC_number_threshold])) + ' ;being: '+ str(QC_missing_values[QC_missing_values > QC_number_threshold].index.tolist()[:10])[:-1] + ', ...'
-        text2 = 'Features with missing values over the threshold (' + str(sample_threshold*100) + '%) within all samples were removed.'
-        text3 = 'Number of features removed: ' + str(len(missing_values[missing_values > number_threshold])) + ' ;being: '+ str(missing_values[missing_values > number_threshold].index.tolist()[:10])[:-1] + ', ...'
+        text1 = 'Number of features removed: ' + str(removed_count) + ' ;being: '+ str(removed_features[:10])[:-1] + ', ...'
+        text2 = 'Features with missing values over the threshold (' + str(sample_threshold*100) + '%) across all samples were removed.'
+        text3 = 'Number of features removed: ' + str(removed_count_all) + ' ;being: '+ str(removed_features_all[:10])[:-1] + ', ...'
+
         report.add_together([('text', text0),
                             ('text', text1, 'italic'),
                             'line',
@@ -1008,7 +1151,12 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                             ('text', text3, 'italic')])
         report.add_pagebreak()
 
-        return self.data
+        self.data = data
+        self.data.reset_index(drop=True)
+        self.variable_metadata = self._filter_match_variable_metadata(data, self.variable_metadata)
+        self.variable_metadata.reset_index(drop=True)
+
+        return self.data, self.variable_metadata
 
     def filter_blank_intensity_ratio(self, ratio = 20, setting = 'first'):
         """
@@ -1773,6 +1921,68 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report.add_together([('text', text), 'line'])
 
         return self.data
+    
+    #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    # ALL AGGREGATION METHODS (keyword: aggregate_...)
+    #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+    def aggregate_multiplicates(self, method='mean', metadata_column='Sample_ID'):
+        """
+        Aggregate multiplicate samples by calculating either the mean or median.
+
+        Parameters
+        ----------
+        method : str, optional
+            The aggregation method to use:
+            - 'mean'   : calculate the mean (default)
+            - 'median' : calculate the median
+        metadata_column : str, optional
+            The metadata column that contains the sample identifiers. Default is 'Sample_ID'.
+        """
+        data = self.data
+        metadata = self.metadata
+        report = self.report
+
+        if 'cpdID' not in data.columns:
+            raise ValueError("Expected a 'cpdID' column in self.data as the first column.")
+        if metadata_column not in metadata.columns:
+            raise ValueError(f"'{metadata_column}' not found in self.metadata.")
+
+        # Identify unique sample identifiers (excluding multiplicate suffixes)
+        sample_ids = metadata[metadata_column].unique()
+
+        aggregated_data = []
+        for sample_id in sample_ids:
+            # Find all columns corresponding to the current sample_id
+            cols = metadata.index[metadata[metadata_column] == sample_id].tolist()
+            cols = [col + 1 for col in cols]  # Adjust for cpdID column
+
+            if method == 'mean':
+                aggregated_row = data.iloc[:, cols].mean(axis=1)
+            elif method == 'median':
+                aggregated_row = data.iloc[:, cols].median(axis=1)
+            else:
+                raise ValueError("Invalid method. Use 'mean' or 'median'.")
+
+            aggregated_data.append(aggregated_row)
+
+        # Create new DataFrame with aggregated data
+        aggregated_df = pd.DataFrame(aggregated_data).T
+        aggregated_df.insert(0, 'cpdID', data['cpdID'])
+
+        self.data = aggregated_df
+
+        # Update metadata to reflect aggregated samples
+        new_metadata = metadata.drop_duplicates(subset=[metadata_column]).reset_index(drop=True)
+        self.metadata = new_metadata
+
+        #---------------------------------------------
+        # REPORTING
+        text = f'Multiplicate samples were aggregated using {method}.'
+        report.add_together([('text', text), 'line'])
+
+        return self.data
+
     
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL NORMALIZING METHODS (keyword: normalizer_...)
@@ -2973,67 +3183,81 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         rgb = mcolors.hex2color(color)  # Convert hexadecimal to RGB
         return rgb + (alpha,)  # Concatenate RGB with alpha
     
-    def visualizer_boxplot(self, plt_name_suffix = 'boxplot_first_view'):
+    def visualizer_boxplot(self, names = False, plt_name_suffix = 'boxplot_first_view'):
         """
         Create a boxplot of all samples.  Can depict if there is a problem with the data (retention time shift too big -> re-run alignment; batch effect, etc.)
 
         Parameters
         ----------
+        names : bool
+            If True, use sample names from metadata. Default is False (don't use sample names to avoid cluttering the x-axis).
         plt_name_suffix : str
             Suffix for the plot name. Default is 'boxplot_first_view'. (Useful when using multiple times - to avoid overwriting the previous plot)
     
         """
-        data = self.data
+        raw_data = self.data.iloc[:, 1:]
+        num_data = raw_data.apply(pd.to_numeric, errors='coerce').replace([np.inf, -np.inf], np.nan)
+
         report = self.report
-        QC_samples = self.QC_samples
-        blank_samples = self.blank_samples
-        dilution_series_samples = self.dilution_series_samples
-        standard_samples = self.standard_samples
+        
+        QC_set       = set(self.QC_samples) if self.QC_samples not in (False, None) else set()
+        blank_set    = set(self.blank_samples) if self.blank_samples not in (False, None) else set()
+        dilution_set = set(self.dilution_series_samples) if self.dilution_series_samples not in (False, None) else set()
+        standard_set = set(self.standard_samples) if self.standard_samples not in (False, None) else set()
+
 
         main_folder = self.main_folder
         suffixes = self.suffixes
 
-        # QC_samples mask
-        if QC_samples != False and QC_samples != None:
-            is_qc_sample = [True if col in QC_samples else False for col in data.columns[1:]]
-        else:
-            is_qc_sample = [False for col in data.columns[1:]]
-        # Blank samples mask
-        print(blank_samples)
-        if blank_samples != False and blank_samples != None:
-            is_blank_sample = [True if col in blank_samples else False for col in data.columns[1:]]
-        else:
-            is_blank_sample = [False for col in data.columns[1:]]
-        # Dilution series samples mask
-        if dilution_series_samples != False and dilution_series_samples != None:
-            is_dilution_series_sample = [True if col in dilution_series_samples else False for col in data.columns[1:]]
-        else:
-            is_dilution_series_sample = [False for col in data.columns[1:]]
-        # Standard samples mask
-        if standard_samples != False and standard_samples != None:
-            is_standard_sample = [True if col in standard_samples else False for col in data.columns[1:]]
-        else:
-            is_standard_sample = [False for col in data.columns[1:]]
+        box_input = []
+        kept_names = []
+        for col_name in num_data.columns:
+            vals = num_data[col_name].dropna().values
+            if vals.size > 0:            # keep only columns with at least one valid value
+                box_input.append(vals)
+                kept_names.append(col_name)
 
+        is_qc_sample       = [name in QC_set for name in kept_names]
+        is_blank_sample    = [name in blank_set for name in kept_names]
+        is_dilution_series_sample = [name in dilution_set for name in kept_names]
+        is_standard_sample = [name in standard_set for name in kept_names]
+
+        if len(box_input) == 0:
+            raise ValueError("No valid (non-NaN) values to plot. Check your input data.")
+            
         # Create the figure and axis objects
         fig, ax = plt.subplots(figsize=(18, 12))
 
         # Create a box plot for the specific feature
-        box = plt.boxplot(data.iloc[:,1:], showfliers=False, showmeans=True, meanline=True, medianprops={'color':'black'}, meanprops={'color':'blue'}, patch_artist=True, whiskerprops=dict(color='grey'), capprops=dict(color='yellow'))
+        box = plt.boxplot(box_input, showfliers=False, showmeans=True, meanline=True, medianprops={'color': 'black'}, meanprops={'color': 'blue'}, patch_artist=True, whiskerprops=dict(color='grey'), capprops=dict(color='yellow'))
         plt.title('Boxplot of all samples')
 
         #Color boxplots of QC samples in red and the rest in blue
-        colors = ['grey' if qc else 'darkred' if is_blank else 'blue' if is_dilution else 'darkgreen' if is_standard else 'lightblue' for qc, is_blank, is_dilution, is_standard in zip(is_qc_sample, is_blank_sample, is_dilution_series_sample, is_standard_sample)]
-        # Set the colors for the individual boxplots
+        colors = [('grey' if qc else 'darkred' if bl else 'blue' if dil else 'darkgreen' if std else 'lightblue') for qc, bl, dil, std in zip(is_qc_sample, is_blank_sample, is_dilution_series_sample, is_standard_sample)]
+        
         for patch, color in zip(box['boxes'], colors):
             patch.set_facecolor(color)
+
 
         # Customize the plot
         plt.xlabel('Sample Order')
         plt.ylabel('Peak Area')
-        xx = np.arange(0, len(data.columns[1:])+1, 100)
-        plt.xticks(xx, xx)
-
+        n = len(kept_names)
+        if names:
+            if n > 20:
+            # Rotate x-axis labels if there are many samples
+                plt.xticks(ticks=np.arange(1, n + 1), labels=kept_names, rotation=90, fontsize=8)
+            else:
+            # Don't rotate x-axis labels if there are few samples
+                plt.xticks(ticks=np.arange(1, n + 1), labels=kept_names, fontsize=10)
+        elif n > 50:
+            # If too many samples, reduce the number of x-ticks shown
+            step = max(1, n // 10)
+            tick_positions = np.arange(1, n + 1, step) 
+            plt.xticks(ticks=tick_positions, labels=[kept_names[i - 1] for i in tick_positions], rotation=90, fontsize=8)
+        else:
+            plt.xticks(ticks=np.arange(1, n + 1), labels=[''] * n)  # No labels
+            
         # Add a legend
         legend_elements = [plt.Line2D([0], [0], marker='o', color='w', label='QC samples', markerfacecolor='grey', markersize=10),
                         plt.Line2D([0], [0], marker='o', color='w', label='Blank samples', markerfacecolor='darkred', markersize=10),
@@ -3088,7 +3312,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # If show isnt list or numpy array
         if type(show) != list and type(show) != np.ndarray: 
             if show == 'default':
-                show = np.linspace(0, len(data.columns)-1, 5, dtype=int)
+                show = np.linspace(0, len(data) - 1, 5, dtype=int)
             elif show == 'all':
                 show = np.arange(len(data.columns))
             elif show == 'none':
