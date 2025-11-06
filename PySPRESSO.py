@@ -927,29 +927,56 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         hits = [0] * len(features)  # Initialize hits to 0 for all features
 
+        names = None; formulas = None; annotdeltamass = None; annotation_mw = None
         # Initialize self.candidates if it is None
         if self.candidates is None:
             self.candidates = pd.DataFrame(columns=['feature', 'method', 'specification', 'score', 'hits', 'Name', 'Formula', 'Annot. DeltaMass [ppm]', 'Annotation MW'])
         else:
             # Find features in variable_metadata - Name, Formula, ... (Matching is done by cpdID)
-            names = variable_metadata[variable_metadata['cpdID'].isin(features)]['Name'].tolist()
-            formulas = variable_metadata[variable_metadata['cpdID'].isin(features)]['Formula'].tolist()
-            annotdeltamass = variable_metadata[variable_metadata['cpdID'].isin(features)]['Annot. DeltaMass [ppm]'].tolist()
-            annotation_mw = variable_metadata[variable_metadata['cpdID'].isin(features)]['Annotation MW'].tolist()
-
-
-        # Create a DataFrame for the new candidates
-        new_candidates = pd.DataFrame({
-            'feature': features,
-            'method': method,
-            'specification': specification,
-            'score': scores,
-            'hits': hits,
-            'Name': names,
-            'Formula': formulas,
-            'Annot. DeltaMass [ppm]': annotdeltamass,
-            'Annotation MW': annotation_mw
-        })
+            # Try to find columns in variable_metadata 
+            if 'Name' in variable_metadata.columns:
+                names = variable_metadata[variable_metadata['cpdID'].isin(features)]['Name'].tolist()
+            elif 'Compound Name' in variable_metadata.columns:
+                names = variable_metadata[variable_metadata['cpdID'].isin(features)]['Compound Name'].tolist()
+            if 'Formula' in variable_metadata.columns:
+                formulas = variable_metadata[variable_metadata['cpdID'].isin(features)]['Formula'].tolist()
+            if 'Annot. DeltaMass [ppm]' in variable_metadata.columns:
+                annotdeltamass = variable_metadata[variable_metadata['cpdID'].isin(features)]['Annot. DeltaMass [ppm]'].tolist()
+            if 'Annotation MW' in variable_metadata.columns:
+                annotation_mw = variable_metadata[variable_metadata['cpdID'].isin(features)]['Annotation MW'].tolist()
+           
+        if names is not None and formulas is not None and annotdeltamass is not None and annotation_mw is not None:
+            # Create a DataFrame for the new candidates
+            new_candidates = pd.DataFrame({
+                'feature': features,
+                'method': method,
+                'specification': specification,
+                'score': scores,
+                'hits': hits,
+                'Name': names,
+                'Formula': formulas,
+                'Annot. DeltaMass [ppm]': annotdeltamass,
+                'Annotation MW': annotation_mw
+            })
+        elif names is not None:
+            # Create a DataFrame for the new candidates with atleast names
+            new_candidates = pd.DataFrame({
+                'feature': features,
+                'method': method,
+                'specification': specification,
+                'score': scores,
+                'hits': hits,
+                'Name': names
+            })
+        else:
+            # Create a DataFrame for the new candidates without any additional info
+            new_candidates = pd.DataFrame({
+                'feature': features,
+                'method': method,
+                'specification': specification,
+                'score': scores,
+                'hits': hits
+            })
 
         # Handle the case where self.candidates is empty
         if self.candidates.empty:
@@ -1247,15 +1274,29 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         is_qc_sample = [True if col in QC_samples else False for col in data.columns[1:]]
         
         #Calculate RSD for only QC samples
-        qc_rsd = data[data.columns[1:][is_qc_sample]].std(axis=1)/data[data.columns[1:][is_qc_sample]].mean(axis=1)*100
-        qc_rsd = qc_rsd.copy()
 
-        #Add RSD into the data
+        if QC_samples is None or len(QC_samples) == 0:
+            raise ValueError("No QC samples defined in wf.QC_samples.")
+        # sample columns (exclude cpdID at position 0)
+        sample_cols = list(data.columns[1:])
+        # find intersection of sample columns and QC sample names
+        qc_cols = [c for c in sample_cols if c in QC_samples]
+        if len(qc_cols) == 0:
+            raise ValueError("No QC sample columns found in data. Check names in metadata vs data columns.")
+        qc_df = data[qc_cols]
+
+        # Calculate RSD using the found QC columns
+        qc_rsd = qc_df.std(axis=1) / qc_df.mean(axis=1) * 100
+        qc_rsd = qc_rsd.copy()
+    
         variable_metadata['QC_RSD'] = qc_rsd
 
         #Filter out features (compounds) with RSD > rsd_threshold
         over_threshold = qc_rsd > rsd_threshold
+        deleted_data = data[over_threshold]
+        deleted_data.reset_index(drop=True, inplace=True)
         data = data[~over_threshold]
+        data.reset_index(drop=True, inplace=True)
 
         #Plot some of the compounds with high RSD
         if to_plot == False:
@@ -1265,8 +1306,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         elif type(to_plot) == int:
             number_plotted = int(to_plot)
         else:
-            raise ValueError("to_plot has to be either True or an integer.")
-        indexes = qc_rsd[qc_rsd > rsd_threshold].index.tolist()[:number_plotted]
+            raise ValueError("to_plot has to be either boolean or an integer.")
+        indexes = deleted_data.index.tolist()
         if len(indexes) < number_plotted:
             number_plotted = len(indexes)
         if len(indexes)  == 0:
@@ -1275,19 +1316,17 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             # plot only the QC samples
             for i in range(number_plotted):
                 plt.figure(figsize=(10, 6))
-                plt.scatter(range(len(data.iloc[indexes[i], 1:][is_qc_sample])),
-                            data.iloc[indexes[i], 1:][is_qc_sample], 
-                            label=data.iloc[indexes[i], 0], 
+                plt.scatter(range(len(deleted_data.iloc[indexes[i], 1:][is_qc_sample])),
+                            deleted_data.iloc[indexes[i], 1:][is_qc_sample], 
+                            label=deleted_data.iloc[indexes[i], 0], 
                             s=10, alpha=0.5)
                 plt.xlabel('Samples in order')
                 plt.ylabel('Peak Area')
-                plt.title("High RSD compound: cpID = " + data.iloc[indexes[i], 0])
+                plt.title("High RSD compound: cpID = " + deleted_data.iloc[indexes[i], 0])
                 for suffix in self.suffixes:
                     plt.savefig(self.main_folder + '/figures/QC_samples_scatter_' + str(indexes[i]) + '_high_RSD-deleted_by_correction' + suffix, dpi=400, bbox_inches='tight')
                 plt.show()
         
-        #reset index
-        data = data.reset_index(drop=True)
         #update data and variable_metadata
         self.data = data
         self.variable_metadata = self._filter_match_variable_metadata(data, variable_metadata)
