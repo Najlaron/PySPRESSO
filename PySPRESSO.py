@@ -30,7 +30,7 @@ import seaborn as sns
 from adjustText import adjust_text
 
 # Statistics and ML modules
-from scipy.stats import zscore, linregress, gaussian_kde, ttest_ind
+from scipy.stats import zscore, linregress, gaussian_kde, ttest_ind, mannwhitneyu, probplot, shapiro, normaltest, anderson
 from statsmodels.stats.multitest import multipletests
 from scipy.interpolate import UnivariateSpline
 from sklearn.model_selection import LeaveOneOut, KFold, cross_val_predict, StratifiedKFold
@@ -74,6 +74,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.standard_samples = None
         self.dilution_series_samples = None
         self.dil_concentrations = None
+
 
         # Statistics variables
         self.pca_count = 0 # Variable to keep track of the number of PCA runs (to avoid overwriting) 
@@ -2825,10 +2826,11 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                                 'line'])
 
         return self.data
-        
+    
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL STATISTICS METHODS (keyword: statistics_...)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
 
     def statistics_correlation_means(self, column_name, method = 'pearson', cmap = 'coolwarm', min_max = [-1, 1], plt_name_suffix = 'group_correlation_matrix_heatmap'):
         """
@@ -3134,6 +3136,20 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         ])
 
         return self.plsda_model
+    
+    def _shapiro_ok(self, x):
+        """
+        Help function to check normality using Shapiro-Wilk test.
+
+        Parameters
+        ----------
+        x : array-like
+            Data to test for normality.
+        """
+        if x.size < 3 or np.all(x == x[0]):
+            return "Not enough data for normality test"
+        stat, p = shapiro(x)
+        return p > 0.05
 
     def statistics_ttest(self, groups_column_name, group1, group2, p_value_correction_method = None, table_name_suffix = 'ttest_results'):
         """
@@ -3158,33 +3174,84 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report = self.report
         output_file_prefix = self.output_file_prefix
         
+        sample_cols = data.columns[1:]
 
-        #Create masks for the two groups
-        group1_mask = metadata[groups_column_name] == group1
-        group2_mask = metadata[groups_column_name] == group2
+        
+        # Create masks for the two groups
+        group1_mask = metadata[metadata[groups_column_name] == group1].index.tolist()
+        group2_mask = metadata[metadata[groups_column_name] == group2].index.tolist()
 
-        # Add False to the beginning of the masks to align them with the data (first column is cpdID)
-        group1_mask = np.insert(group1_mask.to_numpy(), 0, False)
-        group2_mask = np.insert(group2_mask.to_numpy(), 0, False)
+        
+        # Grab group matrices (features × samples) WITHOUT cpdID column ---
+        group1_data = data.iloc[:, 1:].iloc[:, group1_mask]
 
-        # Get the data for the two groups
-        group1_data = data.iloc[:, group1_mask]
-        group2_data = data.iloc[:, group2_mask]
+        group2_data = data.iloc[:, 1:].iloc[:, group2_mask]
 
-        fold_change = group2_data.mean(axis=1) / group1_data.mean(axis=1)
-        # Get p-values
-        p_values = ttest_ind(group1_data, group2_data, axis=1)[1]
+        # Fold change (per feature)
+        g1_mean = group1_data.mean(axis=1)
+        g2_mean = group2_data.mean(axis=1)
+        if (g1_mean == 0).any() or (g2_mean == 0).any():
+            group1_data += 1e-9            
+            group2_data += 1e-9
 
-        if p_value_correction_method not in (None, "", "None", False):
-            # Use correction for p-values 
-            p_values = multipletests(p_values, method=p_value_correction_method)[1]
+        fold_change = g2_mean / g1_mean
+        
+        # First check the data normality for each feature in both groups
+        # If both groups are normally distributed, use t-test
+        # If at least one group is not normally distributed, use Mann-Whitney U test
+
+        normality_group1 = []
+        normality_group2 = []
+
+        for i in range(len(data)):  # iterate over features/rows
+            vals1 = group1_data.iloc[i, :].dropna().to_numpy()
+            vals2 = group2_data.iloc[i, :].dropna().to_numpy()
+
+            # Check normality
+            normality_group1.append(self._shapiro_ok(vals1))
+            normality_group2.append(self._shapiro_ok(vals2))
+       
+        # Now perform the appropriate test per feature
+        p_values = []
+        tests_used = []
+        for i in range(len(data)):  # iterate over features/rows
+            vals1 = group1_data.iloc[i, :].dropna().to_numpy()
+            vals2 = group2_data.iloc[i, :].dropna().to_numpy()
+
+            ng1 = normality_group1[i]
+            ng2 = normality_group2[i]
+
+            if ng1 == True and ng2 == True:
+                # Both groups are normally distributed - use t-test
+                stat, p = ttest_ind(vals1, vals2, equal_var=False, nan_policy='omit')
+                tests_used.append('t-test')
+            else:
+                # At least one group is not normally distributed - use Mann-Whitney U test
+                try:
+                    stat, p = mannwhitneyu(vals1, vals2, alternative='two-sided')
+                    tests_used.append('Mann-Whitney U')
+                except ValueError:
+                    p = np.nan  # If all values are identical in both groups
+
+            p_values.append(p)
+        p_values = pd.Series(p_values)
+
+        both_normal = []
+        for g1, g2 in zip(normality_group1, normality_group2):
+            if g1 == "Not enough data for normality test" or g2 == "Not enough data for normality test":
+                both_normal.append("Not enough data for normality test")
+            else:
+                both_normal.append(g1 and g2)
         
         # Create a DataFrame with the results
         p_values_table = pd.DataFrame({
             'cpdID': data['cpdID'],
             'Fold Change': fold_change,
             'p-value': p_values,
+            'both groups normal': both_normal,
+            'used test': tests_used,
             'group': [f"{group1} vs {group2}"] * len(data)
+
         })
         # Sort the table by p-value
         p_values_table = p_values_table.sort_values(by='p-value', ascending=True).reset_index(drop=True)
@@ -4285,13 +4352,32 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         group1_data = data.iloc[:, group1_mask]
         group2_data = data.iloc[:, group2_mask]
 
+        # Avoid division by zero by adding a small constant to zero means (we are adding to both groups to keep the fold change similar and avoid bias)
+        if (group1_data.mean(axis=1) == 0).any() or (group2_data.mean(axis=1) == 0).any():
+            group1_data += 1e-9            
+            group2_data += 1e-9
+
         fold_change = group2_data.mean(axis=1) / group1_data.mean(axis=1)
-        # Get p-values
-        p_values = ttest_ind(group1_data, group2_data, axis=1)[1]
+
+
+        p_values = []
+        for feature in data.iloc[:, 0]:
+            group1_feature_data = group1_data[data.iloc[:, 0] == feature].to_numpy().flatten()
+            group2_feature_data = group2_data[data.iloc[:, 0] == feature].to_numpy().flatten()
+
+            is_normal1 = self._shapiro_ok(group1_feature_data)
+            is_normal2 = self._shapiro_ok(group2_feature_data)
+
+            if is_normal1 == True and is_normal2 == True:
+                # Get p-values
+                p_values.append(ttest_ind(group1_feature_data, group2_feature_data, axis=0, equal_var=False).pvalue)
+            else:
+                # Get p-values
+                p_values.append(mannwhitneyu(group1_feature_data, group2_feature_data, alternative='two-sided').pvalue)
 
         if p_value_correction_method  != '':
             # Use correction for p-values 
-            p_values = multipletests(p_values, method=p_value_correction_method)[1]
+            p_values = multipletests(p_values, method=p_value_correction_method)[1]   
 
         # Create a scatter plot
         fig, ax = plt.subplots(figsize=(10, 8))
