@@ -37,6 +37,7 @@ from sklearn.model_selection import LeaveOneOut, KFold, cross_val_predict, Strat
 from sklearn.decomposition import PCA
 from sklearn.cross_decomposition import PLSRegression
 from sklearn.metrics import mean_squared_error, r2_score
+from combat.pycombat import pycombat as _pycombat
 
 
 # My modules
@@ -1208,6 +1209,15 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # filter out features (compounds) with intensity sample/blank < ratio (default = 20/1)
         # filters features by comparing the intensity of blank samples to the median intensity of QC samples. Features where the relative intensity (fold change) is not large when compared to the blank are removed.
 
+        if blank_samples == []:
+            #Blanks are defined as an empty list (therefore no blanks)
+            print("No blank samples defined in wf.blank_samples. Skipping filter_blank_intensity_ratio step.")
+            return data, variable_metadata
+        
+        if blank_samples is None or blank_samples == False:
+            #Blanks were deleted before or not defined at all
+            raise ValueError("No blank samples defined in wf.blank_samples.")
+
         # Blank_samples mask
         is_blank_sample = [True if col in blank_samples else False for col in data.columns[1:]]
         # QC_samples mask
@@ -1275,9 +1285,13 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         is_qc_sample = [True if col in QC_samples else False for col in data.columns[1:]]
         
         #Calculate RSD for only QC samples
-
-        if QC_samples is None or len(QC_samples) == 0:
-            raise ValueError("No QC samples defined in wf.QC_samples.")
+        if QC_samples == []:
+            # QC samples defined as an empty list (therefore no QC samples)
+            print("No QC samples defined in wf.QC_samples. Skipping filter_relative_standard_deviation step.")
+            return data
+        if QC_samples is None or QC_samples == False:
+            raise ValueError("No QC samples defined (or deleted before) in wf.QC_samples.")
+        
         # sample columns (exclude cpdID at position 0)
         sample_cols = list(data.columns[1:])
         # find intersection of sample columns and QC sample names
@@ -1878,7 +1892,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
     # ALL TRANSFORMING METHODS (keyword: transformer_...)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-    def _transformer_log(self, data, invert=False):
+    def _transformer_log(self, data, base = 2, invert=False):
         """
         Help function to apply the log transformation to the data. 
 
@@ -1886,24 +1900,31 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         ----------
         data : DataFrame
             DataFrame with the data.
+        base : int or float
+            The base of the logarithm to use (e.g., 2 for log2, 10 for log10, etc.).
         invert : bool
             Invert the log transformation. Default is False.
         """
+
+        eps = 1e-10
         # Apply the log transformation to the data
         if invert:
-            data = np.exp(data) 
+            data = base**data - eps
             # return as pd.DataFrame
             return pd.DataFrame(data, index=data.index, columns=data.columns)
-        data = np.log(data + 0.0001) # Add a small number to avoid log(0) 
+        
+        data = np.log(data + eps) / np.log(base)
         # return as pd.DataFrame
         return pd.DataFrame(data, index=data.index, columns=data.columns)
 
-    def transformer_log(self, invert=False):
+    def transformer_log(self, base = 2, invert=False):
         """
         Apply the log transformation to the data.
 
         Parameters
         ----------
+        base : int or float
+            The base of the logarithm to use (e.g., 2 for log2, 10 for log10, etc.).
         invert : bool
             Invert the log transformation. Default is False.
         """
@@ -1911,14 +1932,14 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         variable_metadata = self.variable_metadata
         report = self.report
 
-        data.iloc[:, 1:] = self._transformer_log(data.iloc[:, 1:], invert)
+        data.iloc[:, 1:] = self._transformer_log(data.iloc[:, 1:], base = base, invert = invert)
         self.data = data
         #---------------------------------------------
         #REPORTING
         if invert:
-            text = 'Log transformation was inverted.'
+            text = 'Log transformation was inverted with base ' + str(base) + '.'
         else:
-            text = 'Log transformation was applied.'
+            text = 'Log transformation was applied with base ' + str(base) + '.'
         report.add_together([('text', text),
                             'line'])
         return data
@@ -2344,7 +2365,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Return the best smoothing parameter
         return best_p
 
-    def correcter_qc_interpolation(self, show='default', p_values='default', delog=True, use_zeros=False, cmap='viridis'):
+    def correcter_qc_interpolation(self, show='default', p_values='default', already_log2 = False, delog=True, use_zeros=False, cmap='viridis'):
         """
         Correct batch effects and systematic errors using QC-sample interpolation.
 
@@ -2362,6 +2383,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         p_values : 'default' | array-like
             Candidate smoothing parameters for spline fitting.
             If 'default', uses m ± sqrt(2m), where m = #QC points in that batch.
+        already_log2 : bool
+            If True, input data is assumed to be already in log2 space. If False, data is log2-transformed first. Default is False.
         delog : bool
             If True, return data back-transformed from log2 to raw intensities.
             If False, keep the output in log2 space (common in many workflows).
@@ -2381,9 +2404,19 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         suffixes = self.suffixes
         batch = self.batch
 
+        if QC_samples == []:
+            # QC samples defined as empty list, no way to proceed
+            print("There are no QC samples, cannot perform QC-based correction.")
+            return self.data
+        if QC_samples is None or QC_samples == False:
+            # QC samples not defined at all
+            raise ValueError("QC samples are not defined or were deleted before, cannot perform QC-based correction.")
+        
         feature_names = df_in.iloc[:, 0]
         # Work matrix: samples x features (no cpdID column)
         data = df_in.iloc[:, 1:].copy().T
+        data = data.apply(pd.to_numeric, errors="coerce") # Ensure all data is numeric (coerce errors to true NaN (even some strings like 'NA' can sneak in))
+    
 
         # Batch handling
         if batch is None:
@@ -2408,9 +2441,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         else:
             is_zero = None
 
-        # ---------------------------
-        # Normalize `show` (after transpose)
-        # ---------------------------
+
         nfeat = data.shape[1]
         if isinstance(show, str):
             if show == 'default':
@@ -2429,16 +2460,11 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         else:
             show_idx = set(int(x) for x in (show.tolist() if isinstance(show, np.ndarray) else show))
 
-        # ---------------------------
-        # Forward transform: LOG2 only (always)
-        # ---------------------------
-        # Use eps to avoid -inf; keep consistent across features
-        eps = 1e-9
-        data = np.log2(np.maximum(data, eps))
 
-        # ---------------------------
-        # Estimate batchwise s ranges
-        # ---------------------------
+        if not already_log2:
+            eps = 1e-9
+            data = np.log2(np.maximum(data, eps))
+     
         # Learn per-batch p-grids from a quick exploration pass (order-of-magnitude scan)
 
         batch_p_ranges, batch_best_s = self._estimate_batchwise_s_ranges(
@@ -2460,7 +2486,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             if s_vals.size == 0:
                 continue
 
-            # log10 for stable visualization
             log_s = np.log10(s_vals)
 
             # narrowed range we’ll use in the main loop
@@ -2785,9 +2810,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             eta_min = round((time.time() - start_time) / (feat_idx + 1) * (nfeat - feat_idx - 1) / 60, 2)
             print(f'Progress: {pct}%; last feature: {feature}. ETA ~ {eta_min}m       ', end='\r')
 
-        # ---------------------------
         # Optional: back-transform (de-log)
-        # ---------------------------
         if delog:
             data = np.power(2.0, data)
 
@@ -2808,7 +2831,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.data = data
         self.variable_metadata = self._filter_match_variable_metadata(data, variable_metadata)
 
-        # REPORT
+        # ---------------------------
+        # REPORTING
+
         text0 = 'QC-based drift correction (log2 space) was performed.'
         texts = []
         texts.append(('text', f'Output returned in {"raw" if delog else "log2"} space.', 'italic'))
@@ -2827,10 +2852,134 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         return self.data
     
+    def correcter_combat(self, par_prior=True, mean_only=False, ref_batch=None, already_log2 = False, delog=False, covariate_metadata_columns=None):
+        """
+        Correct batch effects using ComBat (pyComBat / combat.pycombat.pycombat).
+
+        This is intended for situations without QC samples (e.g. proteomics), where you only know which sample belongs to which batch.
+
+        Parameters
+        ----------
+        par_prior : bool, default True
+            Use parametric prior (True) or non-parametric (False). This is passed directly to pycombat(). True is default.
+        mean_only : bool, default False
+            If True, only mean differences between batches are corrected (no variance adjustment). Default is False (correct both mean and variance).
+        ref_batch : str or None, default None
+            Optional reference batch ID. If provided, other batches are adjusted towards this one. If None, pycombat chooses internally. Default is None.
+        already_log2 : bool
+            If True, input data is assumed to be already in log2 space. If False, data is log2-transformed first. Default is False.
+        delog : bool, default False
+            If True, return data back-transformed from log2 to raw intensities. Default is False (keep in log2 space, which is used to before correction).
+        covariate_metadata_columns : list of str or None, default None
+            List of column names from self.metadata to be used as covariates in ComBat adjustment. Default is None (no covariates). (Useful to preserve biological variation associated with known factors, e.g. covariate_metadata_columns = ['Sex', 'Diagnosis'])
+        """
+     
+        data = self.data
+        batch = list(self.batch)
+        metadata = self.metadata
+
+        self.visualizer_boxplot(plt_name_suffix = 'before_combat_batch_correction_boxplot')
+
+        n_samples = data.shape[1] - 1  # exclude 'cpdID'
+
+        if len(batch) != n_samples:
+            raise ValueError(
+                f"Length of self.batch ({len(batch)}) does not match "
+                f"the number of sample columns ({n_samples})."
+            )
+        
+        unique_batches = pd.Series(batch).dropna().unique()
+        if len(unique_batches) < 2:
+            raise ValueError(f"ComBat requires at least 2 different batches, but found only: {list(unique_batches)}.\n")
+
+        data_without_id = data.iloc[:, 1:]
+        if data_without_id.isnull().all().any():
+            data_without_id = data_without_id.apply(pd.to_numeric, errors="coerce") # Ensure all data is numeric (coerce errors to true NaN (even some strings like 'NA' can sneak in))
+
+        # Use eps to avoid -inf; keep consistent across features
+        if not already_log2:
+            eps = 1e-9
+            data_without_id = np.log2(np.maximum(data_without_id, eps))
+
+        data = pd.concat([data.iloc[:, [0]], data_without_id], axis=1)
+
+        if data is None:
+            raise ValueError("No data loaded (self.data is None).")
+
+        if 'cpdID' not in data.columns:
+            raise ValueError("Expected a 'cpdID' column as the first column of self.data.")
+
+        if self.batch is None:
+            raise ValueError(
+                "Batch information (self.batch) is None. "
+                "Set it with wf.set_batch(...) before calling correcter_combat()."
+            )
+        
+
+        mod = [] # list of list
+        if covariate_metadata_columns is not None and len(covariate_metadata_columns) > 0:
+            if metadata is None:
+                raise ValueError("Covariate metadata columns were provided, but self.metadata is None.")
+            for col in covariate_metadata_columns:
+                if col not in metadata.columns:
+                    raise ValueError(f"Covariate metadata column '{col}' not found in self.metadata.")
+                covariate_values = metadata[col].values
+                if len(covariate_values) != n_samples:
+                    raise ValueError(
+                        f"Length of covariate metadata column '{col}' ({len(covariate_values)}) does not match "
+                        f"the number of sample columns ({n_samples})."
+                    )
+                mod.append(list(covariate_values))
+
+
+        # ---- prepare expression matrix (features x samples, no cpdID) ----
+        expr = data.iloc[:, 1:]
+
+        # ---- run ComBat ----
+        expr_corrected = _pycombat(
+            data=expr,
+            batch=batch,
+            mod = mod,
+            par_prior=par_prior,
+            mean_only=mean_only,
+            ref_batch=ref_batch,
+        )
+
+        # ---- put corrected values back into self.data ----
+        df_out = data.copy()
+        df_out.iloc[:, 1:] = expr_corrected
+        self.data = df_out
+
+        print("ComBat batch correction (pyComBat) applied.")
+        print("")
+        if delog:
+            self.data.iloc[:, 1:] = np.power(2.0, self.data.iloc[:, 1:])
+            print("Data back-transformed from log2 to raw intensities.")
+        else:
+            print("Data kept in log2 space.")
+
+        self.visualizer_boxplot(plt_name_suffix = 'after_combat_batch_correction_boxplot')
+        
+        # ---------------------------
+        # REPORTING
+        report = self.report
+        if report is not None:
+            text0 = "Batch correction using ComBat (pyComBat) was applied."
+            details = [
+                ('text', text0, 'bold'),
+                ('text', f"Parametric prior (par_prior): {par_prior}", 'normal'),
+                ('text', f"Mean-only adjustment: {mean_only}", 'normal'),
+            ]
+            if ref_batch is not None:
+                details.append(('text', f"Reference batch: {ref_batch}", 'normal'))
+            report.add_together(details)
+            report.add_line()
+
+        return self.data
+
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL STATISTICS METHODS (keyword: statistics_...)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
 
     def statistics_correlation_means(self, column_name, method = 'pearson', cmap = 'coolwarm', min_max = [-1, 1], plt_name_suffix = 'group_correlation_matrix_heatmap'):
         """
@@ -3533,8 +3682,11 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             total_qc_samples = {batch_id: sum(1 for b, qc in zip(batch, is_qc_sample) if (b == batch_id and qc)) for batch_id in unique_batches}
 
             # Calculate the total number of QC samples
-            total_qc_samples_count = sum(qc_zero_counts.values())
-            total_qc_percentage = total_qc_samples_count / sum(is_qc_sample) * 100
+            if len(is_qc_sample) == 0 or sum(is_qc_sample) == 0:
+                total_qc_percentage = 0
+            else:
+                total_qc_samples_count = sum(qc_zero_counts.values())
+                total_qc_percentage = total_qc_samples_count / sum(is_qc_sample) * 100
 
             # Calculate the percentage of zeros for each batch
             zero_percentages = {batch: zero_counts[batch] / total_samples[batch] * 100 for batch in unique_batches}
@@ -3558,26 +3710,28 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             # Append the total to the sorted lists
             col_labels = unique_batches + ['Total']
 
-            # Append the total to the formatted zero counts
-            formatted_zero_counts.append(f"{total_missing} ({total_percentage:.2f}%)")
-            formatted_qc_zero_counts.append(f"{total_qc_samples_count} ({total_qc_percentage:.2f}%)")
+            if len(is_qc_sample) != 0 and sum(is_qc_sample) != 0:
 
-            # Convert all colors in the list to RGBA format
-            table_batch_colors_rgba = [self._convert_to_rgba(color, 0.6) for color in table_batch_colors]
+                # Append the total to the formatted zero counts
+                formatted_zero_counts.append(f"{total_missing} ({total_percentage:.2f}%)")
+                formatted_qc_zero_counts.append(f"{total_qc_samples_count} ({total_qc_percentage:.2f}%)")
 
-            # Create the table 
-            plt.table(cellText=[formatted_zero_counts, formatted_qc_zero_counts],  # Sorted values of the table
-                #cellColours=[table_batch_colors, table_batch_colors],
-                cellColours=[table_batch_colors_rgba, table_batch_colors_rgba], # Sorted colors of the table
-                rowLabels=['All Samples', 'QC Samples'],  # Row label
-                colLabels=col_labels,  # Sorted column labels
-                cellLoc='center',  # Alignment of the data in the table
-                fontsize=10,  # Font size
-                loc='center')  # Position of the table
+                # Convert all colors in the list to RGBA format
+                table_batch_colors_rgba = [self._convert_to_rgba(color, 0.6) for color in table_batch_colors]
 
-            # Add a text annotation for "Zero Counts"
-            plt.text(x=-0.005, y=0.65, s='Zero Counts', fontsize=15, transform=plt.gca().transAxes, ha='right', va='center')
-            
+                # Create the table 
+                plt.table(cellText=[formatted_zero_counts, formatted_qc_zero_counts],  # Sorted values of the table
+                    #cellColours=[table_batch_colors, table_batch_colors],
+                    cellColours=[table_batch_colors_rgba, table_batch_colors_rgba], # Sorted colors of the table
+                    rowLabels=['All Samples', 'QC Samples'],  # Row label
+                    colLabels=col_labels,  # Sorted column labels
+                    cellLoc='center',  # Alignment of the data in the table
+                    fontsize=10,  # Font size
+                    loc='center')  # Position of the table
+
+                # Add a text annotation for "Zero Counts"
+                plt.text(x=-0.005, y=0.65, s='Zero Counts', fontsize=15, transform=plt.gca().transAxes, ha='right', va='center')
+
             plt_name = main_folder + '/figures/single_compound_' + str(feature) + '_' + plt_name_suffix
             for suffix in suffixes:
                 plt.savefig(plt_name + suffix, dpi=300, bbox_inches='tight')
@@ -3839,7 +3993,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig
     
-    def visualizer_PCA_grouped(self, color_column, marker_column, cmap = 'nipy_spectral', crossout_outliers = False, plt_name_suffix = 'PCA_grouped', graph_title = 'PCA graph', annotate_samples = False, nm_to_annotate = 10):
+    def visualizer_PCA_grouped(self, color_column, marker_column, cmap = 'nipy_spectral', crossout_outliers = False, plt_name_suffix = 'PCA_grouped', graph_title = 'PCA graph', annotate_samples = False, nm_to_annotate = 10, ignore_nans_in_groups = True):
         """
         Create a PCA plot with colors based on one column and markers based on another column from the metadata.
 
@@ -3861,8 +4015,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             If True, the samples will be annotated with their names. Default is False.
         nm_to_annotate : int
             Number of samples to annotate. Default is 10. (Samples with the farthest distance from the origin will be annotated)
+        ignore_nans_in_groups : bool
+            If True, samples with NaN in grouping columns will be ignored in plotting. Default is True. This includes if there are NaNs in either of the grouping columns (color_column or marker_column).
         """
-        metadata = self.metadata
+        metadata = self.metadata.copy()
         report = self.report
         output_file_prefix = self.output_file_prefix
         main_folder = self.main_folder
@@ -3876,6 +4032,23 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         column_name = color_column
         second_column_name = marker_column
 
+        # Handle NaNs in grouping columns
+        if ignore_nans_in_groups:
+            cols = [c for c in [column_name, second_column_name] if c is not None]
+            mask = metadata[cols].notna().all(axis=1)
+
+            metadata = metadata.loc[mask]
+            pca_df = pca_df.loc[mask]
+        else:
+            # Convert NaN → "nan" so they plot
+            for col in (column_name, second_column_name):
+                if col is not None:
+                    metadata[col] = (
+                        metadata[col]
+                        .astype(object)
+                        .where(metadata[col].notna(), "nan")
+                    )
+                
         cmap = mpl.colormaps[cmap]
 
         if crossout_outliers:
@@ -4172,6 +4345,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         column.insert(0, None)
         data_transposed[column_names] = column
 
+        # Replace nan with 'None' in the grouping column so that they can be handled properly
+        data_transposed[column_names] = data_transposed[column_names].where(pd.notnull(data_transposed[column_names]), 'None')
+
         column_unique_values = data_transposed[column_names].unique()
         
         # Order them alphabetically, taking numbers into account
@@ -4203,7 +4379,6 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                         values.append(sample_values)
                     else:
                         values.append([0])  # Add a list with a single zero if data is missing or non-numeric
-                        print(unique)
 
             if values:  # Check if 'values' is not empty
                 vp = plt.violinplot(values, showmeans=False, showmedians=False, showextrema=False, bw_method=bw)
@@ -4378,6 +4553,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         if p_value_correction_method  != '':
             # Use correction for p-values 
             p_values = multipletests(p_values, method=p_value_correction_method)[1]   
+
+        p_values = np.asarray(p_values, dtype=float)
 
         # Create a scatter plot
         fig, ax = plt.subplots(figsize=(10, 8))
