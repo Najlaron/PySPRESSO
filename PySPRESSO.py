@@ -92,6 +92,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.plsda = None
         self.plsda_metadata = None
         self.plsda_response_column = None
+        self.plsda_vip_scores = None
 
         # Candidate features (contains significant features based on different methods - features that might be interesting for further analysis - e.g. biomarkers)
         self.candidates = pd.DataFrame(columns = ['feature', 'method', 'specifications', 'score', 'hits'])
@@ -3218,6 +3219,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         # VIPs (uses your existing helper)
         vips = self._vip(model)  # expects shape (n_features,)
+        self.plsda_vip_scores = pd.Series(vips, index=data.iloc[:, 0])  # index by cpdID
+
         candidate_mask = vips > np.percentile(vips, 99.5)
         candidate_vips = data.iloc[:, 0][candidate_mask]       # cpdID for selected features
         candidate_vips_scores = vips[candidate_mask]
@@ -4283,6 +4286,85 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig, ax
     
+    def visualizer_PLSDA_vips(self, topx=20, figsize=None, threshold=1.0, show=True, save=True, plt_name_suffix="vips"):
+        """
+        Visualize top VIP scores obtained from PLS-DA.
+
+        Parameters
+        ----------
+        topx : int
+            Number of top VIP features to display.
+        figsize : tuple or None
+            Figure size. If None, automatically determined by number of features.
+        threshold : float
+            Vertical line to indicate VIP importance threshold (default 1.0).
+        show : bool
+            Whether to display the plot.
+        save : bool
+            Whether to save the plot as PNG.
+        plt_name_suffix : str
+            Suffix for saving the figure.
+        """
+        vip_series = self.plsda_vip_scores.copy()
+        plsda_response_column = self.plsda_response_column
+        if isinstance(plsda_response_column, list):
+            plsda_response_column_str = '_'.join(plsda_response_column)
+        else:
+            plsda_response_column_str = str(plsda_response_column)
+
+        # Check that VIPs exist
+        if vip_series is None:
+            raise RuntimeError("VIP scores not found. Run statistics_PLSDA() first.")
+
+        if vip_series.empty:
+            raise RuntimeError("plsda_vip_scores is empty — check PLS-DA.")
+
+        # Sort features by VIP, descending
+        vip_sorted = vip_series.sort_values(ascending=False)
+
+        # Select top X
+        vip_top = vip_sorted.head(topx)
+
+        # Auto figure size
+        if figsize is None:
+            height = max(4, min(0.45 * len(vip_top) + 1, 20))
+            figsize = (8, height)
+
+        # Plotting
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        ax.barh(vip_top.index.astype(str), vip_top.values)
+        ax.invert_yaxis()  # Highest VIP on top
+
+        ax.set_xlabel("VIP score")
+        ax.set_title(f"Top {len(vip_top)} VIP features from PLS-DA ({plsda_response_column_str})")
+
+        # Add vertical threshold line
+        if threshold is not None:
+            ax.axvline(threshold, linestyle="--", linewidth=1)
+
+        plt.tight_layout()
+        
+        name = self.main_folder + '/statistics/' + self.output_file_prefix +  '_' + plsda_response_column_str + '_' + plt_name_suffix
+        for suffix in self.suffixes:
+            if save:
+                plt.savefig(name + suffix, bbox_inches='tight', dpi=300)
+        if show:
+            plt.show()
+        else:
+            plt.close(fig)
+        #---------------------------------------------
+        # REPORTING
+        report = self.report
+        text0 = 'PLS-DA VIP scores plot was created and added into: ' + name
+        report.add_together([
+            ('text', text0),
+            ('image', name),
+            'pagebreak'])
+        return fig, ax
+    
     def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, cmap = 'nipy_spectral', plt_name_suffix = 'violin_plots', bw = 0.2, jitter = True, label_rotation = 0, show_all = False):
         """
         Visualize violin plots of all features grouped by a column from the metadata. (And save them into a single PDF file)
@@ -4357,11 +4439,14 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         color_indices = np.linspace(0.05, 0.95, num_unique_values)
         colors = [cmap(i) for i in color_indices]
 
+        samples_only = data_transposed.iloc[1:, :]
+
         # Group 'data_transposed' by 'column_name'
-        grouped = data_transposed.groupby(column_names)
+        grouped = samples_only.groupby(column_names)
 
         # Create x-axis labels with the number of points
-        x_labels = [f"{val} ({len(group)})" for val, group in grouped if val is not None]
+        column_unique_values = sorted(grouped.groups.keys(), key=self._natural_sort_key)
+        x_labels = [f"{val} ({len(group)})" for val, group in grouped]
 
         # Delete this column from the data_transposed 
         data_transposed = data_transposed.drop([column_names], axis=1)
