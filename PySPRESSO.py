@@ -4758,7 +4758,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         return plt_name
     
-    def visualizer_candidates(self, cmap = 'nipy_spectral', plt_name_suffix = 'candidates'):
+    def visualizer_candidates(self, cmap = 'nipy_spectral', plt_name_suffix = 'candidates', topx = 20):
         """
         Visualize all candidates found during the analysis.
 
@@ -4769,6 +4769,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             Name of the colormap. Default is 'nipy_spectral'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
         plt_name_suffix : str
             Suffix for the plot name. Default is 'candidates'. (Useful when using multiple times - to avoid overwriting the previous plot)
+        topx : int
+            Number of max top candidates to show in each plot. Default is 20. This is useful when there are too many candidates found and the plot would be too crowded or unreadable.
         
         """
         candidates = self.candidates # DataFrame with candidates
@@ -4787,11 +4789,19 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             # Create a bar plot for each group of candidates
             fig, ax = plt.subplots(figsize=(10, 8))
 
-            # Get the score for each candidate
-            scores = group['score'].values
-            # Get the name of each candidate
-            names = group['feature'].values
+            # Sort candidates by score (descending) (They should be already sorted, but just in case)
+            group_sorted = group.sort_values('score', ascending=False)
 
+            # Select only the top X to plot
+            num_total = len(group_sorted)
+            num_plot = min(topx, num_total)
+            group_plot = group_sorted.iloc[:num_plot]
+
+            # Get the score for each candidate
+            scores = group_plot['score'].values
+            # Get the name of each candidate
+            names = group_plot['feature'].values
+            
             # Get the color for each candidate
             cmap = mpl.cm.get_cmap(cmap)
             num_candidates = len(scores)
@@ -4802,7 +4812,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             # Create a bar plot
             ax.barh(names, scores, color=[candidates_colors[name] for name in names], alpha=0.6)
             ax.set_xlabel(f'Score - {method}')
-            ax.set_title(f'Candidates - {method}')
+            if num_total > num_plot:
+                ax.set_title(f'Candidates - {method} (Top {num_plot})')
+            else:
+                ax.set_title(f'Candidates - {method}')
             ax.set_xlim(0, 1.05 * max(scores))
             ax.set_ylim(-1, num_candidates + 1)
             ax.set_yticks(np.arange(num_candidates))
