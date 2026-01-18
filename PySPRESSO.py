@@ -78,14 +78,20 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
 
         # Statistics variables
+        self.was_log_transformed = False
+        self.log_base = None
+        self.was_centered = False
+        self.was_scaled = False
+        self.was_normalized = False
+
         self.pca_count = 0 # Variable to keep track of the number of PCA runs (to avoid overwriting) 
         self.pca = None
         self.pca_data = None
         self.pca_df = None
         self.pca_per_var = None
         self.pca_loadings = None
-        self.pca_loadings_candidates = None
-        
+        self.pca_loadings_candidates_len = None
+
         self.fold_change = None
         self.fold_change_count = 0 # Variable to keep track of the number of fold_change runs (to avoid overwriting)
 
@@ -93,6 +99,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.plsda_metadata = None
         self.plsda_response_column = None
         self.plsda_vip_scores = None
+        self.plsda_vip_candidates = None
 
         # Candidate features (contains significant features based on different methods - features that might be interesting for further analysis - e.g. biomarkers)
         self.candidates = pd.DataFrame(columns = ['feature', 'method', 'specifications', 'score', 'hits'])
@@ -1910,11 +1917,18 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         eps = 1e-10
         # Apply the log transformation to the data
         if invert:
+            if base != self.log_base:
+                raise ValueError("Cannot invert log transformation with a different base than the one used for the transformation.")
             data = base**data - eps
             # return as pd.DataFrame
             return pd.DataFrame(data, index=data.index, columns=data.columns)
-        
+               
         data = np.log(data + eps) / np.log(base)
+        self.was_log_transformed = not invert
+        if not invert:
+            self.log_base = base
+        else:
+            self.log_base = None
         # return as pd.DataFrame
         return pd.DataFrame(data, index=data.index, columns=data.columns)
 
@@ -1933,7 +1947,17 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         variable_metadata = self.variable_metadata
         report = self.report
 
+        if self.was_log_transformed and not invert:
+            raise ValueError("Data has already been log transformed. Invert the previous log transformation before applying a new one. (Note: log transformation could have been applied as part of QC-correction)")
+
         data.iloc[:, 1:] = self._transformer_log(data.iloc[:, 1:], base = base, invert = invert)
+
+        self.was_log_transformed = not invert
+        if not invert:
+            self.log_base = base
+        else:
+            self.log_base = None
+
         self.data = data
         #---------------------------------------------
         #REPORTING
@@ -1975,6 +1999,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         # Apply centering
         data.iloc[:, 1:] = X - center_values
+        self.was_centered = True
         self.data = data
 
         #---------------------------------------------
@@ -2063,6 +2088,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Add the z-scores to the data
         data.iloc[:, 1:] = zscores
         self.data = data
+        self.was_normalized = 'z-scores'
+
         #---------------------------------------------
         #REPORTING
         text = 'Data was normalized using z-scores. Mean and standard deviation were calculated for each feature.'
@@ -2091,6 +2118,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         data.iloc[:, 1:] = data.iloc[:, 1:].div(median_quotients, axis=0)
 
         self.data = data
+        self.was_normalized = 'PQN'
 
         #---------------------------------------------
         # REPORTING
@@ -2111,6 +2139,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         std = np.std(data.iloc[:, 1:], axis=0, ddof=1)
         data.iloc[:, 1:] = (data.iloc[:, 1:] - mean) / np.sqrt(std)
         self.data = data
+        self.was_scaled = 'pareto'
 
         #---------------------------------------------
         # REPORTING
@@ -3051,6 +3080,15 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         data = self.data
         report = self.report
 
+        was_centered = self.was_centered
+        was_scaled = self.was_scaled
+
+        if not was_centered:
+            warnings.warn("Data was not centered. It's highly recommended to center the data before performing PCA.", UserWarning)
+        
+        if not was_scaled:
+            warnings.warn("Data was not scaled. It's suggested to scale the data before performing PCA.", UserWarning)
+
         # Perform PCA
         pca = PCA()
         pca.fit(data.iloc[:,1:].T)
@@ -3126,7 +3164,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         return vips
     
     
-    def statistics_PLSDA(self, response_column_names, ignored_groups = None):
+    def statistics_PLSDA(self, response_column_names, ignored_groups = None, candidiate_percentile = 99.5):
         """
         Perform PLSDA on the data and visualize the results.
 
@@ -3139,11 +3177,21 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             Name of the column to use as a response variable. (From metadata, e.g. 'Sample Type' or list for multiple columns ['Sample Type', 'Diagnosis'], etc.)
         ignored_groups : None or list of lists 
             List of lists - groups to ignore in format [[Column Name, Group Name]]. Default is None. (e.g. [['Sample Type', 'QC'], ['Sample Type', 'Blank']]) - to ignore 'QC' and 'Blank' groups from 'Sample Type' column. If None, then no groups are ignored.
-
+        candidiate_percentile : float
+            Percentile threshold for selecting candidate features based on VIP scores. Default is 99.5 (i.e., features with VIP scores above the 99.5th percentile are selected as candidates).
         """
         data = self.data.copy()
         metadata = self.metadata.copy()
         report = self.report
+
+        was_centered = self.was_centered
+        was_scaled = self.was_scaled
+
+        if not was_centered:
+            warnings.warn("Data was not centered. It's highly recommended to center the data before performing PLS-DA.", UserWarning)
+        
+        if not was_scaled:
+            warnings.warn("Data was not scaled. It's suggested to scale the data before performing PLS-DA.", UserWarning)
 
         # Define the number of components to be used
         n_comp = 2
@@ -3221,9 +3269,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         vips = self._vip(model)  # expects shape (n_features,)
         self.plsda_vip_scores = pd.Series(vips, index=data.iloc[:, 0])  # index by cpdID
 
-        candidate_mask = vips > np.percentile(vips, 99.5)
+        candidate_mask = vips > np.percentile(vips, candidiate_percentile) # Default: 99.5 percentile - meaning top 0.5% VIPs
         candidate_vips = data.iloc[:, 0][candidate_mask]       # cpdID for selected features
         candidate_vips_scores = vips[candidate_mask]
+        self.plsda_vip_candidates_len = len(candidate_vips)
         self.add_candidates(features=candidate_vips,
                             method='PLSDA-vips',
                             specification=str(response_column_names),
@@ -3325,7 +3374,17 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         metadata = self.metadata.copy()
         report = self.report
         output_file_prefix = self.output_file_prefix
+        was_centered = self.was_centered
+        was_scaled = self.was_scaled
+        was_log_transformed = self.was_log_transformed
+        log_base = self.log_base
         
+        if was_centered:
+            warnings.warn("Running t-test on centered data; interpretation may be affected. Consider computing fold change prior to centering or scaling.", UserWarning)
+
+        if was_scaled:
+            raise ValueError("Running t-test cannot on scaled data; Please use unscaled data. Scaling affects variance and invalidates t-test assumptions.")
+
         sample_cols = data.columns[1:]
 
         
@@ -3346,7 +3405,11 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             group1_data += 1e-9            
             group2_data += 1e-9
 
-        fold_change = g2_mean / g1_mean
+        if was_log_transformed:
+            # Calculate fold change in raw space
+            fold_change = log_base ** (g2_mean - g1_mean) 
+        else: 
+            fold_change = g2_mean / g1_mean
         
         # First check the data normality for each feature in both groups
         # If both groups are normally distributed, use t-test
@@ -3996,7 +4059,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig
     
-    def visualizer_PCA_grouped(self, color_column, marker_column, cmap = 'nipy_spectral', crossout_outliers = False, plt_name_suffix = 'PCA_grouped', graph_title = 'PCA graph', annotate_samples = False, nm_to_annotate = 10, ignore_nans_in_groups = True):
+    def visualizer_PCA_grouped(self, color_column, marker_column, cmap = 'nipy_spectral', crossout_outliers = False, zoom_in_group = None, plt_name_suffix = 'PCA_grouped', graph_title = 'PCA graph', annotate_samples = False, nm_to_annotate = 10, ignore_nans_in_groups = True):
         """
         Create a PCA plot with colors based on one column and markers based on another column from the metadata.
 
@@ -4010,6 +4073,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             Name of the colormap. Default is 'nipy_spectral'. (Other options are 'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
         crossout_outliers : bool
             If True, the outliers will be marked with an 'X'. Default is False.
+        zoom_in_group : str or None
+            If specified, the plot will be zoomed in to the group specified in this column. (E.g. if you have a 'Diagnosis' column with 'Healthy' and 'Disease', you can input 'Healthy' to zoom in to that group). Default is None.
         plt_name_suffix : str
             Suffix for the plot name. Default is 'PCA_grouped'. (Useful when using multiple times - to avoid overwriting the previous plot)  
         graph_title : str
@@ -4131,6 +4196,17 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
     
             # Plot the samples
             plt.scatter(df_samples['PC1'], df_samples['PC2'], color=color, marker=marker, label=label, alpha=0.6, s=20)
+
+            # Zoom in to specific group if specified
+            if zoom_in_group is not None:
+                if column_name is not None and zoom_in_group in metadata[column_name].values:
+                    df_zoom = pca_df.loc[metadata[column_name] == zoom_in_group]
+                    plt.xlim(df_zoom['PC1'].min() - 0.5, df_zoom['PC1'].max() + 0.5)
+                    plt.ylim(df_zoom['PC2'].min() - 0.5, df_zoom['PC2'].max() + 0.5)
+                elif second_column_name is not None and zoom_in_group in metadata[second_column_name].values:
+                    df_zoom = pca_df.loc[metadata[second_column_name] == zoom_in_group]
+                    plt.xlim(df_zoom['PC1'].min() - 0.5, df_zoom['PC1'].max() + 0.5)
+                    plt.ylim(df_zoom['PC2'].min() - 0.5, df_zoom['PC2'].max() + 0.5)
             
             # Compute the covariance matrix and find the major and minor axis only if there are enough data points
             if len(df_samples) >= 3:
@@ -4286,20 +4362,18 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig, ax
     
-    def visualizer_PLSDA_vips(self, topx=20, figsize=None, threshold=1.0, show=True, save=True, plt_name_suffix="vips"):
+    def visualizer_PLSDA_vips(self, show='candidates', figsize=None, threshold=1.0, save=True, plt_name_suffix="vips"):
         """
         Visualize top VIP scores obtained from PLS-DA.
 
         Parameters
         ----------
-        topx : int
-            Number of top VIP features to display.
+        show : 'candidates' or int
+            Number of top VIP features to display. Default is 'candidates' features identified during PLS-DA statistics as canddidates. If an integer is provided, that number of top features will be displayed.
         figsize : tuple or None
             Figure size. If None, automatically determined by number of features.
         threshold : float
             Vertical line to indicate VIP importance threshold (default 1.0).
-        show : bool
-            Whether to display the plot.
         save : bool
             Whether to save the plot as PNG.
         plt_name_suffix : str
@@ -4307,6 +4381,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         """
         vip_series = self.plsda_vip_scores.copy()
         plsda_response_column = self.plsda_response_column
+
         if isinstance(plsda_response_column, list):
             plsda_response_column_str = '_'.join(plsda_response_column)
         else:
@@ -4318,6 +4393,16 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         if vip_series.empty:
             raise RuntimeError("plsda_vip_scores is empty — check PLS-DA.")
+
+        if show == 'candidates' or show == 'candidate' or show == 'cand' or show == 'cands': #just some flexibility for user input
+            length = self.plsda_vip_candidates_len
+            if not length or length == 0:
+                raise RuntimeError("No VIP candidates found. Ensure statistics_PLSDA() was run with candidate selection or that some features were actually selected as candidates.")
+            topx = length
+        elif isinstance(show, int):
+            topx = show
+        else:
+            raise ValueError("Parameter 'show' must be either 'candidates' or an integer.")
 
         # Sort features by VIP, descending
         vip_sorted = vip_series.sort_values(ascending=False)
@@ -4394,6 +4479,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         metadata = self.metadata
         report = self.report
         suffixes = self.suffixes
+        QC_samples = self.QC_samples
 
         if indexes == 'all':
             all_indexes = True
@@ -4435,18 +4521,40 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Order them alphabetically, taking numbers into account
         column_unique_values = sorted([val for val in column_unique_values if val is not None], key=self._natural_sort_key)
 
-        num_unique_values = len(column_unique_values)
-        color_indices = np.linspace(0.05, 0.95, num_unique_values)
-        colors = [cmap(i) for i in color_indices]
-
         samples_only = data_transposed.iloc[1:, :]
 
         # Group 'data_transposed' by 'column_name'
-        grouped = samples_only.groupby(column_names)
+        grouped = samples_only.groupby(column_names, sort=False)
 
-        # Create x-axis labels with the number of points
-        column_unique_values = sorted(grouped.groups.keys(), key=self._natural_sort_key)
-        x_labels = [f"{val} ({len(group)})" for val, group in grouped]
+        # Create desired order of groups (natural sort) and move QC group to the end
+        group_order = sorted(list(grouped.groups.keys()), key=self._natural_sort_key)
+
+        qc_key = None
+        if QC_samples:
+            qc_set = set(map(str, QC_samples))
+            best_key, best_overlap = None, 0
+
+            for k in group_order:
+                grp_ids = set(map(str, grouped.get_group(k).index))
+                overlap = len(grp_ids & qc_set)
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_key = k
+
+            if best_overlap > 0:
+                qc_key = best_key
+
+        if qc_key is not None and qc_key in group_order:
+            group_order.append(group_order.pop(group_order.index(qc_key)))
+
+        print("Group order:", group_order, "| QC detected as:", qc_key)
+
+        # Labels follow the final group order
+        x_labels = [f"{k} ({len(grouped.get_group(k))})" for k in group_order]
+
+        num_unique_values = len(group_order)
+        color_indices = np.linspace(0.05, 0.95, num_unique_values)
+        colors = [cmap(i) for i in color_indices]
 
         # Delete this column from the data_transposed 
         data_transposed = data_transposed.drop([column_names], axis=1)
@@ -4457,13 +4565,15 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         example = True
         for idx, index in enumerate(indexes):
             values = []
-            for unique, group in grouped:
+            for unique in group_order:
+                group = grouped.get_group(unique)
+
                 if unique is not None:
-                    sample_values = group.iloc[:, index].dropna().to_list()  # Drop missing values
-                    if sample_values != [] and all(isinstance(x, (int, float)) for x in sample_values):  # Check if all values are numeric
+                    sample_values = group.iloc[:, index].dropna().to_list()
+                    if sample_values != [] and all(isinstance(x, (int, float)) for x in sample_values):
                         values.append(sample_values)
                     else:
-                        values.append([0])  # Add a list with a single zero if data is missing or non-numeric
+                        values.append([0]) # Add a list with a single zero if data is missing or non-numeric
 
             if values:  # Check if 'values' is not empty
                 vp = plt.violinplot(values, showmeans=False, showmedians=False, showextrema=False, bw_method=bw)
@@ -4494,7 +4604,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     for i in range(len(values)):
                         plt.scatter(np.full(len(values[i]), i + 1), values[i], color=colors[i], s=5, alpha=1)
                 
-                plt.xticks(np.arange(1, len(column_unique_values) + 1), x_labels, rotation=label_rotation)
+                plt.xticks(np.arange(1, len(group_order) + 1), x_labels, rotation=label_rotation)
                 cpd_title = data_transposed.loc['cpdID', index]
                 plt.title(cpd_title)
             
@@ -4578,7 +4688,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         color_right : str
             Color for the right box. Default is 'blue'.
         fold2_change_threshold : float
-            Threshold for the fold change. Default is 1.
+            Threshold for the fold change. Default is 1 (which means 2-fold change).
         p_value_threshold : float
             Threshold for the p-value. Default is 0.05.
         p_value_correction_method : str
@@ -4593,6 +4703,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         main_folder = self.main_folder
         suffixes = self.suffixes
         fold_change_count = self.fold_change_count
+        was_centered = self.was_centered
+        was_scaled = self.was_scaled
+        was_log_transformed = self.was_log_transformed
+        log_base = self.log_base
 
         if p_value_threshold <= 0:
             raise ValueError('P-value threshold must be greater than 0.')
@@ -4600,6 +4714,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         if fold2_change_threshold < 0:
             raise ValueError('Fold change threshold must be greater than or equal to 0.')
         
+        if was_centered or was_scaled:
+            warnings.warn("Fold change is being calculated on centered data or scaled data; interpretation may be affected. Consider computing fold change prior to centering or scaling.", UserWarning)
+
         # Create masks for the two groups
         group1_mask = metadata[groups_column_name] == group1
         group2_mask = metadata[groups_column_name] == group2
@@ -4617,7 +4734,12 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             group1_data += 1e-9            
             group2_data += 1e-9
 
-        fold_change = group2_data.mean(axis=1) / group1_data.mean(axis=1)
+        if was_log_transformed:
+            # Calculate fold change for log-transformed data
+            log2fc = (group2_data.mean(axis=1) - group1_data.mean(axis=1))
+        else:
+            # Calculate fold change for non-log-transformed data
+            log2fc= np.log2(group2_data.mean(axis=1) / group1_data.mean(axis=1))
 
 
         p_values = []
@@ -4635,9 +4757,11 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 # Get p-values
                 p_values.append(mannwhitneyu(group1_feature_data, group2_feature_data, alternative='two-sided').pvalue)
 
-        if p_value_correction_method  != '':
+        if p_value_correction_method  != ''  and p_value_correction_method  != 'none' and p_value_correction_method  != 'None' and p_value_correction_method  is not None: # Some variability in user input
             # Use correction for p-values 
             p_values = multipletests(p_values, method=p_value_correction_method)[1]   
+        else:
+            p_value_correction_method = '' # For reporting purposes
 
         p_values = np.asarray(p_values, dtype=float)
 
@@ -4645,14 +4769,14 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         fig, ax = plt.subplots(figsize=(10, 8))
 
         # Scatter plot for all points
-        plt.scatter(np.log2(fold_change), -np.log10(p_values), color='grey', alpha=0.5)
+        plt.scatter(log2fc, -np.log10(p_values), color='grey', alpha=0.5)
 
         # Highlight significant points
-        significant_fc_right = (np.log2(fold_change) > (fold2_change_threshold))
-        significant_fc_left = (np.log2(fold_change) < -(fold2_change_threshold))
+        significant_fc_right = (log2fc > (fold2_change_threshold))
+        significant_fc_left = (log2fc < -(fold2_change_threshold))
         significant_pv = (p_values < p_value_threshold)
-        significant_pv_right = (np.log2(fold_change) > 0) & (p_values < p_value_threshold)
-        significant_pv_left = (np.log2(fold_change) < 0) & (p_values < p_value_threshold)
+        significant_pv_right = (log2fc > 0) & (p_values < p_value_threshold)
+        significant_pv_left = (log2fc < 0) & (p_values < p_value_threshold)
         significant_fc_right_and_pv = significant_fc_right & significant_pv
         significant_fc_left_and_pv = significant_fc_left & significant_pv
 
@@ -4682,14 +4806,14 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             scores=scores[significant_fc_left_and_pv]
 )
         # Scatter those significant for pv
-        plt.scatter(np.log2(fold_change[significant_pv]), -np.log10(p_values[significant_pv]), color='grey', alpha=0.7, edgecolors="black")
+        plt.scatter(log2fc[significant_pv], -np.log10(p_values[significant_pv]), color='grey', alpha=0.7, edgecolors="black")
         
         # Scatter those significant for fold changes right
-        plt.scatter(np.log2(fold_change[significant_fc_right]), -np.log10(p_values[significant_fc_right]), color=color_right, alpha=0.6, edgecolors="black")
+        plt.scatter(log2fc[significant_fc_right], -np.log10(p_values[significant_fc_right]), color=color_right, alpha=0.6, edgecolors="black")
 
         # Scatter those significant for fold changes left
-        plt.scatter(np.log2(fold_change[significant_fc_left]), -np.log10(p_values[significant_fc_left]), color=color_left, alpha=0.6, edgecolors="black")
-        
+        plt.scatter(log2fc[significant_fc_left], -np.log10(p_values[significant_fc_left]), color=color_left, alpha=0.6, edgecolors="black")
+
         # Add lines for 0 for both axes
         plt.axvline(x=0, color='black', linestyle='-', alpha=0.5, linewidth=0.5)
         plt.axhline(y=0, color='black', linestyle='-', alpha=0.5, linewidth=0.5)
@@ -4701,7 +4825,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
 
         # Identify indices of significant points
-        significant_indices = [i for i in range(len(fold_change)) if significant_fc_right_and_pv[i] or significant_fc_left_and_pv[i]]
+        significant_indices = [i for i in range(len(log2fc)) if significant_fc_right_and_pv[i] or significant_fc_left_and_pv[i]]
 
         # Check if the number of significant points exceeds the threshold
         if len(significant_indices) > 25:
@@ -4710,7 +4834,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             # Annotate the significant points
             texts = [plt.annotate(
                 feature_names[i], 
-                (np.log2(fold_change[i]), -np.log10(p_values[i])), 
+                (log2fc[i], -np.log10(p_values[i])), 
                 fontsize=10, 
                 alpha=1, 
                 color="darkred",
@@ -4732,7 +4856,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Add fold_change and p-value to the DataFrame
         fold_change_df = pd.DataFrame({
             'cpdID': feature_names,
-            'fold_change': fold_change,
+            'log2_fold_change': log2fc,
             'p_value ('+ (p_value_correction_method)+ ')': p_values
         })
         # Order by lowest p-value
