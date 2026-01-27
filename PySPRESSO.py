@@ -7,6 +7,7 @@ import time
 import math
 import json
 import pickle
+from datetime import datetime
 import warnings
 # warnings.filterwarnings(
 #     "ignore",
@@ -36,7 +37,7 @@ from scipy.interpolate import UnivariateSpline
 from sklearn.model_selection import LeaveOneOut, KFold, cross_val_predict, StratifiedKFold
 from sklearn.decomposition import PCA
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.metrics import mean_squared_error, r2_score, roc_auc_score, confusion_matrix
 from combat.pycombat import pycombat as _pycombat
 
 
@@ -47,6 +48,10 @@ import pdf_reporter.pdf_reporter as pdf_rptr #since repo is a folder, now you ca
 # |  PySPRESSO - (Python Statistical Processing and REporting for Scientific Studies in Omics) |
 # |--------------------------------------------------------------------------------------------|
 
+version = '0.0.5' # Current version of PySPRESSO
+
+
+
 class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transforming, Normalizing, Statistics, etc.)
     """
     Class that contains all the methods to filter, correct and transform the peak matrix data.
@@ -55,7 +60,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
     def __init__(self):
 
         self.functions =  [] # List of functions to be applied in the order they are added
-        self.name = 'Peak Matrix Filtering Workflow'
+        self.name = 'PySPRESSO_Workflow' # Name of the workflow
+        self.pyspresso_version = version # Version of PySPRESSO
         # Data variables (names, paths, etc.)
         self.report = None
         self.report_file_name = self.name
@@ -96,6 +102,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.fold_change_count = 0 # Variable to keep track of the number of fold_change runs (to avoid overwriting)
 
         self.plsda = None
+        self.plsda_stats = None
         self.plsda_metadata = None
         self.plsda_response_column = None
         self.plsda_vip_scores = None
@@ -390,14 +397,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             s = '-'.join(map(str, s))
         return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', str(s))]
        
-    def initializer_report(self, report_type = 'processing'):
+    def initializer_report(self):
         """
         Initialize the report object.
 
-        Parameters
-        ----------
-        report_type : str
-            Settings of the report (title). Default is 'processing'. All options are 'processing', 'statistics'. (To add more options, add them to the pdf_reporter.py file)
         """
         main_folder = self.main_folder
         report_file_name = self.report_file_name
@@ -406,11 +409,25 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         title_text = main_folder
 
         report = pdf_rptr.Report(name = report_path, title = title_text)
-        report.initialize_report(report_type)
-        
-        self.report = report
+        report.initialize_report()
+
+        # LOGO ()
+        logo_path = "pyspresso_logo.png"
+        if os.path.exists(logo_path):
+            report.add_image(logo_path)
+        else:
+            print("Logo not found, skipping logo addition to the report.")
+
+        # Cover info
+        processed_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        pyspresso_version = self.pyspresso_version
+
+        report.add_text(f"Processed at: {processed_time}", style="italic", alignment="center", font_size=10)
+        if pyspresso_version is not None:
+            report.add_text(f"PySPRESSO version: {pyspresso_version}", style="italic", alignment="center", font_size=10)
 
         print("Report initialized.")
+        self.report = report
 
         return self.report
     
@@ -427,6 +444,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             os.makedirs(main_folder + '/figures')
         if not os.path.exists(main_folder + '/statistics'):
             os.makedirs(main_folder + '/statistics')
+        if not os.path.exists(main_folder + '/dropped_features'): # to save dropped features info that were removed during filtering steps (sometimes the list of dropped features is too long to be added to the report)
+            os.makedirs(main_folder + '/dropped_features')
 
         print("Folders initialized.")
 
@@ -673,9 +692,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         distinguisher_col : str
             Name of the column with file names in batch_info. Default is 'File Name'. If all your data is in one batch, use None.
         datetime_col : str
-            Name of the column with creation date/time. Default is 'Creation Date'. If there is no such column AND they are in the correct order already, then use None.
+            Name of the column with creation date/time/order. Default is 'Creation Date'. If there is no such column AND they are in the correct order already, then use None.
         format : str
-            Format of the date. Default is '%d.%m.%Y %H:%M'. Is ignored if datetime_col is None.
+            Format of the date. Default is '%d.%m.%Y %H:%M'. Is ignored if datetime_col is None. If you have some sort of order (numbers instead of date), use 'order' as format.
         sample_id_col : str
             Name of the column with sample names/IDs in batch_info. Default is 'Study File ID'.
         sample_type_col : str
@@ -696,7 +715,11 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             print("Assuming batch_info has Samples in the correct order already, since no datetime_col is provided.")
         else:
             # Convert the datetime_col column to datetime format
-            batch_info[datetime_col] = pd.to_datetime(batch_info[datetime_col], format = format) #, dayfirst=True
+            if format == 'order':
+                # If the format is 'order', we assume the column contains numeric values indicating the order
+                batch_info[datetime_col] = pd.to_numeric(batch_info[datetime_col], errors='coerce') # Convert to numeric, coercing errors to NaN
+            else:
+                batch_info[datetime_col] = pd.to_datetime(batch_info[datetime_col], format = format) #, dayfirst=True
 
             # Sort the DataFrame based on the datetime_col column
             batch_info = batch_info.sort_values(datetime_col)
@@ -1071,6 +1094,35 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     # ALL FILTERING METHODS (keyword: filter_...)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    
+    def _write_versioned_txt(self, folder, base_name, lines, digits=3):
+        """
+        Help function to write a versioned text file. This function helps filter methods to save lists of removed features, that sometimes can be too long for the report.
+
+        Parameters
+        ----------
+        folder : str
+            Folder to save the file in.
+        base_name : str
+            Base name of the file.
+        lines : list
+            List of lines to write to the file.
+        digits : int
+            Number of digits to use for the version number. Default is 3.
+        """
+        os.makedirs(folder, exist_ok=True)
+        pat = re.compile(rf"^{re.escape(base_name)}_v(\d{{{digits}}})\.txt$")
+        max_v = 0
+        for fn in os.listdir(folder):
+            m = pat.match(fn)
+            if m:
+                max_v = max(max_v, int(m.group(1)))
+        path = os.path.join(folder, f"{base_name}_v{max_v+1:0{digits}d}.txt")
+
+        with open(path, "w", encoding="utf-8") as f:
+            for line in lines:
+                f.write(str(line) + "\n")
+        return path
 
     def _filter_match_variable_metadata(self, data, variable_metadata):
         """
@@ -1125,14 +1177,14 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         removed_count = int(removed_mask.sum())
 
         # Try to list IDs if you have a 'cpdID' column; otherwise list row indices
-        removed_features = (
+        removed_ids = (
             data.loc[removed_idx, 'cpdID'].tolist()
             if 'cpdID' in data.columns
             else removed_idx.tolist()
         )
 
         # Build the optional details part only when there is something to show
-        details = f" ; being: {removed_features}" if removed_features else ""
+        details = f" ; being: {removed_ids}" if removed_ids else ""
 
         print(
             f"Number of features removed for QC threshold ({qc_threshold*100:.0f}%): "
@@ -1157,14 +1209,14 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         removed_count_all = int(removed_mask_all.sum())
 
         # Try to list IDs if you have a 'cpdID' column; otherwise list row indices
-        removed_features_all = (
+        removed_ids_all = (
             data.loc[removed_idx_all, 'cpdID'].tolist()
             if 'cpdID' in data.columns
             else removed_idx_all.tolist()
         )
 
         # Optional details only when there is something to show
-        details_all = f" ; being: {removed_features_all}" if removed_features_all else ""
+        details_all = f" ; being: {removed_ids_all}" if removed_ids_all else ""
 
         print(
             f"Number of features removed for sample threshold ({sample_threshold*100:.0f}%): "
@@ -1176,16 +1228,39 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         #---------------------------------------------
         #REPORTING
-        text0 = 'Features with missing values over the threshold (' + str(qc_threshold*100) + '%) within QC samples were removed.'
-        text1 = 'Number of features removed: ' + str(removed_count) + ' ;being: '+ str(removed_features[:10])[:-1] + ', ...'
-        text2 = 'Features with missing values over the threshold (' + str(sample_threshold*100) + '%) across all samples were removed.'
-        text3 = 'Number of features removed: ' + str(removed_count_all) + ' ;being: '+ str(removed_features_all[:10])[:-1] + ', ...'
+        dropped_features_folder = self.main_folder + '/dropped_features'
+        txt_path = self._write_versioned_txt(
+            folder=dropped_features_folder,
+            base_name='removed_features_missing_values_qc_threshold_' + str(int(qc_threshold*100)) + 'pct',
+            lines=removed_ids
+        )
+        txt_path_all = self._write_versioned_txt(
+            folder=dropped_features_folder,
+            base_name='removed_features_missing_values_sample_threshold_' + str(int(sample_threshold*100)),
+            lines=removed_ids_all
+        )
+        
 
+        text0 = 'Features with missing values over the threshold (' + str(qc_threshold*100) + '%) within QC samples were removed. Number of features removed: ' + str(removed_count)
+        if removed_count > 0 and removed_count < 25:
+            text1 = ' ;being: ' + str(removed_ids)     
+        elif removed_count >= 25:
+            text1 = 'The list of removed features is long and saved in: ' + txt_path
+        else:
+            text1 = ''
+
+        text2 = 'Features with missing values over the threshold (' + str(sample_threshold*100) + '%) across all samples were removed. Number of features removed: ' + str(removed_count_all)
+        if removed_count_all > 0 and removed_count_all < 25:
+            text3 = ' ;being: ' + str(removed_ids_all)     
+        elif removed_count_all >= 25:
+            text3 = 'The list of removed features is long and saved in: ' + txt_path_all
+        else:
+            text3 = ''
         report.add_together([('text', text0),
-                            ('text', text1, 'italic'),
-                            'line',
-                            ('text', text2),
-                            ('text', text3, 'italic')])
+                             ('text', text1),
+                             ('text', text2),
+                             ('text', text3),
+                             'line'])
         report.add_pagebreak()
 
         self.data = data
@@ -1252,27 +1327,45 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         intensity_sample_blank = data[data.columns[1:][is_qc_sample]].median(axis=1)/blank_intensities
         
-        #Filter out features (compounds) with intensity sample/blank < blank_threshold
-        data = data[intensity_sample_blank >= blank_threshold]
+        mask_removed = intensity_sample_blank < blank_threshold
         
-        #reset index
-        data = data.reset_index(drop=True)
+        removed_ids = (
+            data.loc[mask_removed, 'cpdID'].tolist()
+            if 'cpdID' in data.columns
+            else data.index[mask_removed].tolist()
+        )
+        removed_count = len(removed_ids)
+
+        print("Number of features removed for blank intensity ratio (" + str(ratio) + "): " + str(removed_count))
+
+        #Filter out features (compounds) with intensity sample/blank < blank_threshold
+        data = data.loc[~mask_removed].reset_index(drop=True)
+
         #update data and variable_metadata
         self.data = data
         self.variable_metadata = self._filter_match_variable_metadata(data, variable_metadata)
-        
-        #report how many features were removed
-        print("Number of features removed: " + str(len(intensity_sample_blank[intensity_sample_blank < blank_threshold])) + " ;being: " + str(intensity_sample_blank[intensity_sample_blank < blank_threshold].index.tolist()))
+
+        dropped_features_folder = self.main_folder + '/dropped_features'
+        txt_path = self._write_versioned_txt(
+            folder=dropped_features_folder,
+            base_name='removed_features_blank_intensity_ratio_' + str(int(ratio)),
+            lines=removed_ids
+        )
 
         #---------------------------------------------
         #REPORTING
-        text0 = 'Features with intensity sample/blank < ' + str(blank_threshold) + ' were removed.'
-        text1 = 'Number of features removed: ' + str(len(intensity_sample_blank[intensity_sample_blank < blank_threshold])) + ' ;being: '+ str(intensity_sample_blank[intensity_sample_blank < blank_threshold].index.tolist()[:10])[:-1] + ', ...'
-        report.add_together([('text', text0),
-                            ('text', text1),
-                            'line'])
-        return data, variable_metadata 
-    
+        text0 = 'Features with intensity sample/blank < ' + str(blank_threshold) + ' were removed. Number of features removed: ' + str(removed_count)
+        if removed_count > 0 and removed_count < 25:
+            text1 = ' ;being: ' + str(removed_ids)
+        elif removed_count >= 25:
+            text1 = 'The list of removed features is long and saved in: ' + txt_path
+
+        elements = [('text', text0), ('text', text1)]
+        elements.append('line')
+        report.add_together(elements)
+
+        return data, variable_metadata
+
     def filter_relative_standard_deviation(self, rsd_threshold = 20, to_plot = False):
         """
         Filter out features with QC samples with RSD% (relative standard deviation) over the threshold.
@@ -1318,6 +1411,17 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         over_threshold = qc_rsd > rsd_threshold
         deleted_data = data[over_threshold]
         deleted_data.reset_index(drop=True, inplace=True)
+
+        removed_ids = deleted_data['cpdID'].tolist() if 'cpdID' in deleted_data.columns else deleted_data.index.tolist()
+        removed_count = len(removed_ids)
+
+        dropped_features_folder = self.main_folder + '/dropped_features'
+        txt_path = self._write_versioned_txt(
+                folder=dropped_features_folder,
+                base_name='removed_features_relative_standard_deviation_' + str(int(rsd_threshold)),
+                lines=removed_ids
+            )
+
         data = data[~over_threshold]
         data.reset_index(drop=True, inplace=True)
 
@@ -1355,25 +1459,21 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.variable_metadata = self._filter_match_variable_metadata(data, variable_metadata)
 
         #report how many features were removed
-        print("Number of features removed: " + str(len(qc_rsd[qc_rsd > rsd_threshold])) + " ;being: " + str(qc_rsd[qc_rsd > rsd_threshold].index.tolist()))
+        print("Number of features removed: " + str(removed_count))
 
         #---------------------------------------------
         #REPORTING
-        text0 = 'Features with RSD% over the threshold (' + str(rsd_threshold) + ') were removed.'
-        if qc_rsd[qc_rsd > rsd_threshold].empty:
-            text1 = 'No compounds with RSD > ' + str(rsd_threshold) + ' were found.'
-            report.add_together([('text', text0),
-                            ('text', text1)])
+        text0 = 'Features with RSD% over the threshold (' + str(rsd_threshold) + ') were removed. Number of features removed: ' + str(removed_count)
+        if removed_count > 0 and removed_count < 25:
+            text1 = ' ;being: ' + str(removed_ids)
+        elif removed_count >= 25:
+            text1 = 'The list of removed features is long and saved in: ' + txt_path
         else:
-            text1 = 'Number of features removed: ' + str(len(qc_rsd[qc_rsd > rsd_threshold])) + ' ;being: '+ str(qc_rsd[qc_rsd > rsd_threshold].index.tolist()[:10])[:-1] + ', ...'
-            text2 = 'Examples of compounds with high RSD%:'
-            report.add_together([('text', text0),
+            text1 = ''
+        report.add_together([('text', text0),
                             ('text', text1),
-                            ('text', text2)])
-            images = [self.main_folder + '/figures/QC_samples_scatter_' + str(indexes[i]) + '_high_RSD-deleted_by_correction' for i in range(number_plotted)]
-            for image in images:
-                report.add_image(image)
-        report.add_line()
+                            'line'])
+        
         return self.data
     
     def filter_dilution_series_linearity(self, number_of_series, threshold=0.8, which_to_take="first", concentrations=False, to_plot=False):
@@ -1558,32 +1658,39 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
     
         # Filter out features (compounds) with R2 < threshold
         under_threshold = r2 < threshold
-        data = data[~under_threshold]
-        # Reset index
-        data = data.reset_index(drop=True)
+
+        removed_ids = data.loc[under_threshold, 'cpdID'].tolist() if 'cpdID' in data.columns else list(np.where(under_threshold)[0])
+        removed_count = len(removed_ids)
+
+        dropped_features_folder = self.main_folder + '/dropped_features'
+        txt_path = self._write_versioned_txt(
+                folder=dropped_features_folder,
+                base_name='removed_features_dilution_series_linearity_' + str(int(threshold*100)) + 'pct',
+                lines=removed_ids
+            )
+
+        data = data[~under_threshold].reset_index(drop=True)
+        
         # Update data and variable_metadata
         self.data = data
         self.variable_metadata = self._filter_match_variable_metadata(data, variable_metadata)
 
         # Report how many features were removed
-        print("Number of features removed: " + str(len(r2[r2 < threshold])) + " ;being: " + str(r2[r2 < threshold].index.tolist()))
+        print(f"Number of features removed: {removed_count}")
 
         #---------------------------------------------
         # REPORTING
-        text0 = 'Features with dilution series linearity (R2) under the threshold (' + str(threshold) + ') were removed.'
-        if r2[r2 < threshold].empty:
-            text1 = 'No compounds with R2 < ' + str(threshold) + ' were found.'
-            report.add_together([('text', text0),
-                            ('text', text1)])
+        text0 = 'Features with dilution series linearity (R2) under the threshold (' + str(threshold) + ') were removed. Number of features removed: ' + str(removed_count)
+        if removed_count > 0 and removed_count < 25:
+            text1 = ' ;being: ' + str(removed_ids)
+        elif removed_count >= 25:
+            text1 = 'The list of removed features is long and saved in: ' + txt_path
         else:
-            text1 = 'Number of features removed: ' + str(len(r2[r2 < threshold])) + ' ;being: '+ str(r2[r2 < threshold].index.tolist()[:10])[:-1] + ', ...'
-            text2 = 'Examples of compounds with low R2:'
-            report.add_together([('text', text0),
+            text1 = ''
+        report.add_together([('text', text0),
                             ('text', text1),
-                            ('text', text2)])
-            for image in images:
-                report.add_image(image)
-        report.add_line()
+                            'line'])
+        
         return self.data
        
     def filter_number_of_corrected_batches(self, threshold = 0.8):
@@ -1600,6 +1707,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report = self.report
         batch = self.batch_info
 
+        start_n = len(data)
+
         nm_of_batches = len(batch['Batch'].dropna().unique())
 
         if threshold < 1:
@@ -1614,25 +1723,40 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         corrected_batches_dict = {cpdID: corrected_batches for cpdID, corrected_batches in zip(variable_metadata['cpdID'], variable_metadata['corrected_batches'])}
         removed = data['cpdID'][data['cpdID'].map(corrected_batches_dict).fillna(0) < threshold].tolist()
         data = data[data['cpdID'].map(corrected_batches_dict).fillna(0) >= threshold]
-        
+
+               
         data.reset_index(drop=True, inplace=True)
         self.data = data
+
+        removed_count = start_n - len(data)
+
+        dropped_features_folder = self.main_folder + '/dropped_features'
+        txt_path = self._write_versioned_txt(
+                folder=dropped_features_folder,
+                base_name='removed_features_number_of_corrected_batches_' + str(int(threshold)),
+                lines=removed
+            )
+
 
         variable_metadata = variable_metadata[variable_metadata['cpdID'].isin(data['cpdID'])]
         variable_metadata.reset_index(drop=True, inplace=True)
         self.variable_metadata = self._filter_match_variable_metadata(data, variable_metadata)
 
-        print('Number of features removed: ' + str(lngth - len(data.columns)) + ' ;being: ' + str(removed[:10])[:-1] + ', ...')
+        
+        print(f"Number of features removed: {removed_count}")
         #---------------------------------------------
         #REPORTING
-        if percentage:
-            text1 = 'Features that were corrected in less than ' + str(threshold * 100) + '% of batches were removed.'
+        text0 = 'Features that were corrected in less than the threshold number of batches (' + str(threshold) + ( ' (' + str(int(threshold/nm_of_batches*100)) + '%)' if percentage else '') + ') were removed. Number of features removed: ' + str(removed_count)
+        if removed_count > 0 and removed_count < 25:
+            text1 = ' ;being: ' + str(removed)
+        elif removed_count >= 25:
+            text1 = 'The list of removed features is long and saved in: ' + txt_path
         else:
-            text1 = 'Features that were corrected in less than ' + str(threshold) + ' batches were removed.'
-        text2 = 'Number of features removed: ' + str(lngth - len(data.columns)) + ' ;being: ' + str(removed[:10])[:-1] + ', ...'
-        report.add_together([('text', text1),
-                            ('text', text2),
-                            'line'])
+            text1 = ''
+        report.add_together([('text', text0),
+                            ('text', text1),
+                            'line'])       
+
         return self.data
 
     def drop_samples(self, column_indexes_to_drop, cpdID_as_zero = True):
@@ -1681,14 +1805,15 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.batch = batch
         self.variable_metadata = variable_metadata
 
+        removed_count = len(column_indexes_to_drop)
+
         print('Specified samples: '+ str(column_indexes_to_drop) +' were removed from the data.')
         #---------------------------------------------
         #REPORTING
         text0 = 'Specified samples were removed from the data.'
-        text1 = 'Number of samples removed: ' + str(len(column_indexes_to_drop)) + ' ;being: ' + str(column_indexes_to_drop[:10])[:-1] + ', ...'
-        report.add_together([('text', text0),
-                            ('text', text1),
-                            'line'])          
+        self.report.add_together([('text', text0),
+                                'line'])    
+        
         return self.data
 
     def delete_samples(self, column_indexes_to_drop, cpdID_as_zero = True):
@@ -2083,6 +2208,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         data = self.data
         report = self.report
 
+        # Warning if data was already normalized
+        if self.was_normalized is not None:
+            print("Warning: Data has already been normalized using " + str(self.was_normalized) + ". This may lead to unexpected results.")
+
         # Calculate the z-scores for the data
         zscores, mean, std = self._normalizer_zscores(data.iloc[:, 1:])
         # Add the z-scores to the data
@@ -2104,6 +2233,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         """
         data = self.data
         report = self.report
+
+        # Warning if data was already normalized
+        if self.was_normalized is not None:
+            print("Warning: Data has already been normalized using " + str(self.was_normalized) + ". This may lead to unexpected results.")
 
         # Step 1: Calculate the reference sample (median of all samples for each feature)
         reference_sample = data.iloc[:, 1:].median(axis=0)
@@ -2134,6 +2267,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         data = self.data
         report = self.report
 
+        # Warning if data was already scaled
+        if self.was_scaled is not None:
+            print("Warning: Data has already been scaled using " + str(self.was_scaled) + ". This may lead to unexpected results.")
+        
         # Apply Pareto scaling to the data
         mean = np.mean(data.iloc[:, 1:], axis=0)
         std = np.std(data.iloc[:, 1:], axis=0, ddof=1)
@@ -3142,6 +3279,165 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report.add_text('<b>PCA (' + str(self.pca_count) + ') was performed. </b>')
         return self.pca_data
     
+    def _plsda_double_cv_predict(self, X, Y, y_strat, outer_splits=5, outer_repeats=10, inner_splits=5, ncomp_grid=None, select_metric="auroc", rng=42):
+        """
+        Help function to perform double cross-validation for PLS-DA.
+
+        Parameters
+        ----------
+        X : ndarray of shape (n_samples, n_features)
+            Feature matrix.
+        Y : ndarray of shape (n_samples, n_classes)
+            One-hot encoded class labels.
+        y_strat : ndarray of shape (n_samples,)
+            Stratification labels for splitting.
+        outer_splits : int
+            Number of outer CV splits. Default is 5.
+        outer_repeats : int
+            Number of outer CV repeats. Default is 10.
+        inner_splits : int
+            Number of inner CV splits. Default is 5.
+        ncomp_grid : list of int or None
+            Grid of number of components to evaluate. If None, defaults to 1 to min(10, n_features, n_samples-1). Default is None.
+        select_metric : str
+            Metric for selecting the best number of components. Options are "auroc" (higher is better) or "nmc" (lower is better). Default is "auroc".
+        rng : int,
+            Random seed for reproducibility. Default is 42.
+        """
+
+        n_samples, n_features = X.shape
+        n_classes = Y.shape[1]
+
+        warned_caps = set() # to avoid repeated warnings
+
+        # ncomp grid
+        if ncomp_grid is None:
+            # cannot exceed min(n_features, n_samples-1)
+            max_lv = min(10, n_features, n_samples - 1)
+            ncomp_grid = list(range(1, max_lv + 1))
+        else:
+            # ensure valid
+            max_lv = min(n_features, n_samples - 1)
+            ncomp_grid = [int(k) for k in ncomp_grid if 1 <= int(k) <= max_lv]
+            if len(ncomp_grid) == 0:
+                raise ValueError("ncomp_grid is empty after applying validity constraints.")
+
+        # Outer predictions accumulated across repeats (average later)
+        pred_sum = np.zeros((n_samples, n_classes), dtype=float)
+        pred_count = np.zeros((n_samples,), dtype=int)
+
+        chosen_lvs = []
+
+        # Helper to score inner CV
+        def _score(Y_true, Y_pred):
+            if select_metric == "auroc":
+                if Y_true.shape[1] == 2:
+                    return float(roc_auc_score(Y_true[:, 1], Y_pred[:, 1]))
+                return float(roc_auc_score(Y_true, Y_pred, multi_class="ovr", average="macro"))
+            elif select_metric == "nmc":
+                yt = Y_true.argmax(axis=1)
+                yp = Y_pred.argmax(axis=1)
+                return float((yt != yp).sum())  # lower is better
+            else:
+                raise ValueError("select_metric must be 'auroc' or 'nmc'")
+
+        for rep in range(int(outer_repeats)):
+            _, cts = np.unique(y_strat, return_counts=True)
+            outer_min_class = int(cts.min()) if cts.size else 0
+            outer_k = min(int(outer_splits), outer_min_class)
+            if outer_k < 2:
+                raise ValueError("Not enough samples per class to run outer StratifiedKFold (need >=2). You can ignore these groups by using the 'ignored_groups' parameter in statistics_PLSDA().")
+            outer = StratifiedKFold(n_splits=outer_k, shuffle=True, random_state=rng + rep)
+
+            for tr_outer, te_outer in outer.split(X, y_strat):
+                X_tr, X_te = X[tr_outer], X[te_outer]
+                
+                max_lv_outer = min(10, X_tr.shape[1], X_tr.shape[0] - 1) # cannot exceed min(n_features, n_samples-1) in outer train
+                lv_grid_outer = [lv for lv in ncomp_grid if lv <= max_lv_outer]
+                if not lv_grid_outer:
+                    lv_grid_outer = [1]
+
+                Y_tr = Y[tr_outer]
+                y_tr_strat = y_strat[tr_outer]
+
+                unique, counts = np.unique(y_tr_strat, return_counts=True)
+                inner_min_class = int(counts.min()) if counts.size else 0
+
+                if inner_min_class < 2:
+                    # not enough samples per class to run stratified CV
+                    best_lv = lv_grid_outer[0]  # safest fallback
+                else:
+                    inner_k = min(int(inner_splits), inner_min_class)
+                    inner = StratifiedKFold(n_splits=inner_k, shuffle=True, random_state=rng + 1000 + rep)
+
+                    # compute smallest inner-train size to cap LV further
+                    min_inner_train = min(len(tr_in) for tr_in, _ in inner.split(X_tr, y_tr_strat))
+                    max_lv_inner = min(10, X_tr.shape[1], min_inner_train - 1)
+                    lv_grid = [lv for lv in lv_grid_outer if lv <= max_lv_inner] or [lv_grid_outer[0]]
+
+                    cap_key = (X_tr.shape[0], min_inner_train, max(lv_grid))
+                    if max(lv_grid) < max(lv_grid_outer) and cap_key not in warned_caps:
+                        warnings.warn(
+                            f"PLS-DA: LV grid capped to {max(lv_grid)} due to fold size limits "
+                            f"(outer train n={X_tr.shape[0]}, inner train min n={min_inner_train}).",
+                            UserWarning
+                        )
+                        warned_caps.add(cap_key)
+
+                    # ----- SELECT BEST LV ON INNER CV -----
+                    best_lv = None
+                    best_score = None
+
+                    for lv in lv_grid:
+                        y_inner = np.zeros_like(Y_tr, dtype=float)
+
+                        feasible = True
+                        for tr_in, te_in in inner.split(X_tr, y_tr_strat):
+                            max_lv_this = min(10, X_tr.shape[1], len(tr_in) - 1)
+                            if lv > max_lv_this:
+                                feasible = False
+                                break
+
+                            m = PLSRegression(n_components=int(lv))
+                            m.fit(X_tr[tr_in], Y_tr[tr_in])
+                            y_inner[te_in] = m.predict(X_tr[te_in])
+
+                        if not feasible:
+                            continue
+
+                        try:
+                            s = _score(Y_tr, y_inner)
+                        except ValueError as e:
+                            warnings.warn(f"Inner-CV scoring failed for lv={lv}: {e}", UserWarning)
+                            continue
+
+                        if best_lv is None:
+                            best_lv, best_score = lv, s
+                        else:
+                            if select_metric == "auroc":
+                                if s > best_score:
+                                    best_lv, best_score = lv, s
+                            else:  # nmc, lower better
+                                if s < best_score:
+                                    best_lv, best_score = lv, s
+
+                    if best_lv is None:
+                        best_lv = lv_grid[0]
+                chosen_lvs.append(int(best_lv))
+
+                # fit best model on outer train, predict outer test
+                m_outer = PLSRegression(n_components=int(best_lv))
+                m_outer.fit(X_tr, Y_tr)
+                y_hat = m_outer.predict(X_te)
+
+                pred_sum[te_outer] += y_hat
+                pred_count[te_outer] += 1
+
+        # average predictions for samples appearing multiple times
+        y_cv_outer = pred_sum / np.maximum(pred_count[:, None], 1)
+
+        return y_cv_outer, chosen_lvs
+    
     def _vip(self, model):
         """
         Help function to calculate the VIP scores for the PLS-DA model.
@@ -3163,8 +3459,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             vips[i] = np.sqrt(p*(s.T @ weight)/total_s)
         return vips
     
-    
-    def statistics_PLSDA(self, response_column_names, ignored_groups = None, candidiate_percentile = 99.5):
+    def statistics_PLSDA(self, response_column_names, ignored_groups = None, candidate_percentile = 99.5):
         """
         Perform PLSDA on the data and visualize the results.
 
@@ -3177,7 +3472,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             Name of the column to use as a response variable. (From metadata, e.g. 'Sample Type' or list for multiple columns ['Sample Type', 'Diagnosis'], etc.)
         ignored_groups : None or list of lists 
             List of lists - groups to ignore in format [[Column Name, Group Name]]. Default is None. (e.g. [['Sample Type', 'QC'], ['Sample Type', 'Blank']]) - to ignore 'QC' and 'Blank' groups from 'Sample Type' column. If None, then no groups are ignored.
-        candidiate_percentile : float
+        candidate_percentile : float
             Percentile threshold for selecting candidate features based on VIP scores. Default is 99.5 (i.e., features with VIP scores above the 99.5th percentile are selected as candidates).
         """
         data = self.data.copy()
@@ -3208,7 +3503,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         # ----------- Filter metadata by ignored groups -----------
         for col_name, grp_name in ignored_groups:
-            metadata = metadata[metadata[col_name] != grp_name].reset_index(drop=True)
+            metadata = metadata[metadata[col_name] != grp_name]
+        metadata = metadata.reset_index(drop=True)
 
         # ----------- Align data columns with (filtered) metadata -----------
         # Keep 'cpdID' plus all sample columns listed in metadata['Sample File']
@@ -3246,21 +3542,63 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Each class must have at least n_folds samples for StratifiedKFold
         class_counts = pd.Series(y_strat).value_counts().to_dict()
         min_class = min(class_counts.values()) if len(class_counts) else 0
+        if min_class < 2:
+            raise ValueError(f"PLS-DA requires at least 2 samples in each class. Found a class with only {min_class} samples.")
         if min_class < n_folds:
             # reduce folds to the minimum class count (>=2)
             new_folds = max(2, min_class)
             if new_folds != n_folds:
                 n_folds = new_folds
 
-        # Cross-validated predictions (StratifiedKFold) 
-        skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=rng)
-        y_cv = np.zeros_like(Y_full, dtype=float)  # CV predictions placeholder
+        # ---- Double CV settings ----
+        outer_splits = 5
+        outer_repeats = 10
+        inner_splits = 5
+        select_metric = "auroc"  # or "nmc"
 
-        for train_idx, test_idx in skf.split(X_full, y_strat):
-            model_cv = PLSRegression(n_components=n_comp)
-            model_cv.fit(X_full[train_idx], Y_full[train_idx])
-            y_cv[test_idx] = model_cv.predict(X_full[test_idx])
+        # ensure outer CV is feasible
+        if min_class < outer_splits:
+            outer_splits = max(2, min_class)
 
+        # Run double CV
+        y_cv, chosen_lvs = self._plsda_double_cv_predict(
+            X_full,
+            Y_full,
+            y_strat,
+            outer_splits=outer_splits,
+            outer_repeats=outer_repeats,
+            inner_splits=inner_splits,
+            ncomp_grid=None,          # auto grid
+            select_metric=select_metric,
+            rng=rng
+        )
+
+        # Choose final LV count (mode across outer splits)
+        lv_counts = pd.Series(chosen_lvs).value_counts()
+        n_comp = int(lv_counts.index[0])
+
+        lv_counts_dict = {int(k): int(v) for k, v in lv_counts.to_dict().items()}
+        lv_mode = n_comp
+
+        # --- NMC (number of misclassifications) ---
+        y_true_int = Y_full.argmax(axis=1)
+        y_pred_int = y_cv.argmax(axis=1)
+        nmc = int((y_true_int != y_pred_int).sum())
+        cv_accuracy = float((y_true_int == y_pred_int).mean())
+
+        # --- AUROC ---
+        # Binary: ROC AUC on positive class scores
+        # Multiclass: OvR macro average
+        try:
+            if Y_full.shape[1] == 2:
+                auc = float(roc_auc_score(Y_full[:, 1], y_cv[:, 1]))
+            else:
+                auc = float(roc_auc_score(Y_full, y_cv, multi_class="ovr", average="macro"))
+        except ValueError as e:
+            warnings.warn(f"AUROC could not be computed: {e}", UserWarning)
+            auc = np.nan
+
+        # ------------------------------        
         # Final fit on all data (for VIPs & visualization) 
         model = PLSRegression(n_components=n_comp)
         model.fit(X_full, Y_full)
@@ -3269,7 +3607,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         vips = self._vip(model)  # expects shape (n_features,)
         self.plsda_vip_scores = pd.Series(vips, index=data.iloc[:, 0])  # index by cpdID
 
-        candidate_mask = vips > np.percentile(vips, candidiate_percentile) # Default: 99.5 percentile - meaning top 0.5% VIPs
+        candidate_mask = vips > np.percentile(vips, candidate_percentile) # Default: 99.5 percentile - meaning top 0.5% VIPs
         candidate_vips = data.iloc[:, 0][candidate_mask]       # cpdID for selected features
         candidate_vips_scores = vips[candidate_mask]
         self.plsda_vip_candidates_len = len(candidate_vips)
@@ -3292,44 +3630,55 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             r2_per_class[cname] = float(r2_i)
             q2_per_class[cname] = float(q2_i)
 
-        # Global metrics across all classes (flattened)
-        yt_all = Y_full.ravel()
-        yp_all = y_cv.ravel()
-        r2_global = float(r2_score(yt_all, yp_all))
-        mse_global = float(mean_squared_error(yt_all, yp_all))
-        var_global = float(np.var(yt_all))
-        q2_global = float(1.0 - (mse_global / var_global)) if var_global > 0 else np.nan
+        # --- after per-class loop ---
+        q2_macro = float(np.nanmean(list(q2_per_class.values())))
+        r2_macro = float(np.nanmean(list(r2_per_class.values())))
 
-        # Cross-validated classification accuracy (argmax over class scores)
-        y_true_int = Y_full.argmax(axis=1)
-        y_pred_int = y_cv.argmax(axis=1)
-        cv_accuracy = float((y_true_int == y_pred_int).mean())
+        # (optional) keep your flattened globals, but rename to be explicit
+        r2_global_flat = float(r2_score(Y_full.ravel(), y_cv.ravel()))
+        mse_global = float(mean_squared_error(Y_full.ravel(), y_cv.ravel()))
+        var_global = float(np.var(Y_full.ravel()))
+        q2_global_flat = float(1.0 - (mse_global / var_global)) if var_global > 0 else np.nan
 
         # Store & report 
-        self.plsda_model = model
-        self.plsda_response_column = response_column_names
         self.plsda_stats = {
-            "n_components": n_comp,
+            "validation_method": "Double CV",
             "n_folds": n_folds,
             "classes": class_names,
-            "R2_global": r2_global,
-            "Q2_global": q2_global,
+            "outer_splits": outer_splits,
+            "outer_repeats": outer_repeats,
+            "inner_splits": inner_splits,
+            "select_metric": select_metric,
+            "n_components_final": n_comp,
+            "LV_selection_counts": lv_counts_dict,
+            "LV_selection_mode": lv_mode,
+            "NMC": nmc,
+            "AUROC": auc,
             "CV_accuracy": cv_accuracy,
+            "R2_macro": r2_macro,
+            "Q2_macro": q2_macro,
             "R2_per_class": r2_per_class,
             "Q2_per_class": q2_per_class,
+            "R2_global_flat": r2_global_flat,
+            "Q2_global_flat": q2_global_flat,
         }
 
         # Console print 
-        print("R2 (global):", r2_global)
-        print("Q2 (global):", q2_global)
-        print("Per-class R2:", r2_per_class)
-        print("Per-class Q2:", q2_per_class)
-        print("CV accuracy:", cv_accuracy)
-
+        print("PLS-DA Double CV results:")
+        print(f"  NMC: {nmc}")
+        print(f"  AUROC: {auc}")
+        print(f"  CV accuracy: {cv_accuracy:.4f}")
+        print(f"  R2_macro: {r2_macro:.4f}")
+        print(f"  Q2_macro: {q2_macro:.4f}")
+        print("")
+        
+        self.plsda_response_column = response_column_names
+        self.plsda_model = model
+        
         # ------------------------------
         # REPORTING
         text0 = f"<b>PLS-DA</b> was performed with the {str(response_column_names)} column(s) as the response."
-        text1 = f"R2_global: {r2_global:.3f}, Q2_global: {q2_global:.3f}, CV accuracy: {cv_accuracy:.3f}."
+        text1 = f"Double cross-validation was used for model validation (outer splits: {outer_splits}, outer repeats: {outer_repeats}, inner splits: {inner_splits}). LV selection metric: {select_metric}. Final number of components: {n_comp}. AUROC: {auc:.4f}, NMC: {nmc}, CV accuracy: {cv_accuracy:.4f}, R2_macro: {r2_macro:.4f}, Q2_macro: {q2_macro:.4f}."
         report.add_together([
             ('text', text0),
             ('text', text1),
@@ -4275,7 +4624,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         graph_title : str
             Title for the plot. Default is 'PLS-DA graph'.
         """
-        metadata = self.plsda_metadata
+        metadata = self.plsda_metadata.copy()
         if metadata is None:
             raise ValueError('PLS-DA was not performed yet. Run PLS-DA first.') 
         report = self.report
@@ -4289,66 +4638,118 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             model = self.plsda_model
             response_column_names = self.plsda_response_column
 
+        scores = model.x_scores_
+        ncomp = scores.shape[1]
+
         if isinstance(response_column_names, list):
             missing = [col for col in response_column_names if col not in metadata.columns]
             if missing:
+                raise ValueError(f"Response columns: {missing} not found in metadata.")
+            if len(response_column_names) > 1:
                 # Combine columns to create a new one for visualization
                 combined_col_name = str(response_column_names)
                 metadata[combined_col_name] = metadata[response_column_names].apply(lambda x: '-'.join(x.map(str)), axis=1)
             else:
                 combined_col_name = response_column_names[0] if len(response_column_names) == 1 else str(response_column_names)
         else:
+            response_column_names = str(response_column_names)
             if response_column_names not in metadata.columns:
-                combined_col_name = str(response_column_names)
-                metadata[combined_col_name] = metadata[response_column_names].astype(str)
-            else:
-                combined_col_name = response_column_names
+                raise ValueError(f"Response column '{response_column_names}' not found in metadata.")
+            combined_col_name = response_column_names
+
+        response_col = combined_col_name 
 
         cmap = mpl.cm.get_cmap(cmap)
 
-        # Plot the data in the space of the first two components
+        # Use one consistent response series for masks (works for single or combined column)
+        response_values = metadata[response_col].astype(str)
+
+        # Unique values (naturally sorted)
+        response_unique_values = sorted(response_values.unique(), key=self._natural_sort_key)
+
+        # Colors MUST be defined before plotting
+        cmap_obj = mpl.cm.get_cmap(cmap)
+        num_unique_values = len(response_unique_values)
+        color_indices = np.linspace(0.05, 0.95, num_unique_values)
+        colors = [cmap_obj(i) for i in color_indices]
+        response_colors = dict(zip(response_unique_values, colors))
+
+        # Plot
         fig = plt.figure()
         ax = fig.add_subplot(111)
 
-        # Get the unique values of the response column
-        response_unique_values = metadata[str(response_column_names)].unique()
-        # Order them alphabetically, taking numbers into account
-        response_unique_values = sorted(response_unique_values, key=self._natural_sort_key)
+        scores = model.x_scores_
+        if scores.ndim != 2:
+            raise ValueError(f"Unexpected x_scores_ shape: {scores.shape}")
+        ncomp = scores.shape[1]
 
-        num_unique_values = len(response_unique_values)
-        color_indices = np.linspace(0.05, 0.95, num_unique_values)
-        colors = [cmap(i) for i in color_indices]
-        response_colors = dict(zip(response_unique_values, colors))
+        # y-axis label depends on number of components
+        y_label = "PLS-DA Component 2" if ncomp >= 2 else "(no Component 2; shown as 0)"
 
-        # Create a scatter plot of the data
         for response in response_unique_values:
-            df_samples = model.x_scores_[metadata[str(response_column_names)] == response]
-            ax.scatter(df_samples[:, 0], df_samples[:, 1], color=response_colors[response], label=response, alpha=0.6, s=20)
-        
-        # Draw ellipses around the samples
-        for response in response_unique_values:
-            df_samples = model.x_scores_[metadata[str(response_column_names)] == response]
-            if len(df_samples) < 3: 
-                print(f"Skipping ellipse for response {response} due to insufficient data points. 2 is possible, but looks weird, so 3 is the minimum.")
-                continue
-            covmat = np.cov(df_samples.T)
-            if np.isinf(covmat).any() or np.isnan(covmat).any():
-                print(f"Skipping ellipse for response {response} due to invalid covariance matrix.")
-                continue
-            lambda_, v = np.linalg.eig(covmat)
-            lambda_ = np.sqrt(lambda_)
-            ell = Ellipse(xy=(np.mean(df_samples[:, 0]), np.mean(df_samples[:, 1])),
-                        width=lambda_[0] * 2, height=lambda_[1] * 2,
-                        angle=np.rad2deg(np.arctan2(v[1, 0], v[0, 0])), edgecolor=response_colors[response], lw=1, facecolor='none', alpha=0.6)
-            ax.add_artist(ell)
-            
-        ax.set_xlabel('PLS-DA component 1')
-        ax.set_ylabel('PLS-DA component 2')
+            mask = (response_values == str(response)).to_numpy()
+
+            if mask.shape[0] != scores.shape[0]:
+                raise ValueError("metadata and model.x_scores_ are misaligned in sample order/length.")
+
+            if ncomp >= 2:
+                pts = scores[mask, :2]
+                x, y = pts[:, 0], pts[:, 1]
+            else:
+                x = scores[mask, 0]
+                y = np.zeros_like(x)
+
+            ax.scatter(x, y, color=response_colors[response], label=response, alpha=0.6, s=20)
+
+        # Ellipses only make sense in 2D
+        if ncomp >= 2:
+            for response in response_unique_values:
+                mask = (response_values == str(response)).to_numpy()
+                df_samples = scores[mask, :2]
+
+                if df_samples.shape[0] < 3:
+                    continue
+
+                df_samples = np.asarray(df_samples, dtype=float)
+                covmat = np.cov(df_samples.T)
+                if covmat.shape != (2, 2) or (not np.isfinite(covmat).all()):
+                    continue
+
+                covmat = (covmat + covmat.T) / 2.0
+                evals, evecs = np.linalg.eigh(covmat)
+                evals = np.clip(evals, 0.0, None)
+                if evals.sum() == 0:
+                    continue
+
+                order = np.argsort(evals)
+                evals = evals[order]
+                evecs = evecs[:, order]
+
+                width = 2.0 * np.sqrt(evals[1])
+                height = 2.0 * np.sqrt(evals[0])
+                vec = evecs[:, 1]
+                angle = np.degrees(np.arctan2(vec[1], vec[0]))
+
+                ell = Ellipse(
+                    xy=df_samples.mean(axis=0),
+                    width=width,
+                    height=height,
+                    angle=angle,
+                    edgecolor=response_colors[response],
+                    lw=1,
+                    facecolor="none",
+                    alpha=0.6
+                )
+                ax.add_artist(ell)
+
+        ax.set_xlabel("PLS-DA Component 1")
+        ax.set_ylabel(y_label)
         ax.set_title(graph_title)
         ax.legend(loc='upper left', bbox_to_anchor=(1, 1), frameon=False)
-        name = main_folder +'/statistics/'+output_file_prefix + '_' + plt_name_suffix
+
+        name = main_folder + '/statistics/' + output_file_prefix + '_' + plt_name_suffix
         for suffix in suffixes:
-            plt.savefig(name + suffix, bbox_inches='tight', dpi = 300)
+            plt.savefig(name + suffix, bbox_inches='tight', dpi=300)
         plt.show()
 
         #---------------------------------------------
