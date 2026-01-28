@@ -335,9 +335,7 @@ class Report:
 
     def add_text(self, text, style="normal", alignment="left", font_size=10, return_element_only=False):
         """
-        Backward compatible, with small enhancements:
-        - supports style='bold' as before
-        - also supports style='section' for nicer headings (optional)
+        Add a text paragraph with specified style and alignment.
         """
     
         alignment_dict = {"left": TA_LEFT, "center": TA_CENTER, "right": TA_RIGHT}
@@ -428,7 +426,7 @@ class Report:
 
         return table
 
-    def add_image(self, image, return_element_only=False):
+    def add_image(self, image, max_width=None, max_height=None, return_element_only=False):
         """
         Add an image (path or Image object), scaled to fit the usable page area.
         """
@@ -441,8 +439,14 @@ class Report:
             image = Image(image)
 
         # Scale to fit within the page content box, leaving some breathing room
-        max_w = self.page_width
-        max_h = self.page_height * 0.82
+        if max_width is not None:
+            max_w = min(self.page_width, float(max_width))
+        else:
+            max_w = self.page_width
+        if max_height is not None:
+            max_h = min(self.page_height, float(max_height))
+        else:
+            max_h = self.page_height * 0.82
 
         width_scale = max_w / float(image.drawWidth)
         height_scale = max_h / float(image.drawHeight)
