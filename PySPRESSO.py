@@ -414,7 +414,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # LOGO ()
         logo_path = "pyspresso_logo.png"
         if os.path.exists(logo_path):
-            report.add_image(logo_path)
+            report.add_image(logo_path, max_width=420, max_height=260)
         else:
             print("Logo not found, skipping logo addition to the report.")
 
@@ -5348,6 +5348,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             ax.invert_yaxis()
 
             name = main_folder + '/statistics/' + output_file_prefix + '_' + plt_name_suffix + '_' + str(k)
+            plot_names.append(name)
+            plots.append(name)
             # Save the plot
             for suffix in suffixes:
                 plt.savefig(name + suffix, bbox_inches='tight', dpi=300)
