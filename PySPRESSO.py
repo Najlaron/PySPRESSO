@@ -3148,7 +3148,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
     # ALL STATISTICS METHODS (keyword: statistics_...)
     #----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-    def statistics_correlation_means(self, column_name, method = 'pearson', cmap = 'coolwarm', min_max = [-1, 1], plt_name_suffix = 'group_correlation_matrix_heatmap'):
+    def statistics_correlation_means(self, column_name, method = 'pearson', cmap = 'coolwarm', min_max = [-1, 1], plt_name_suffix = ''):
         """
         Calculate the correlation matrix of the data and create a heatmap.
 
@@ -3163,7 +3163,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         min_max : list (of 2 elements)
             Minimum and maximum values for the colorbar. Default is [-1, 1].
         plt_name_suffix : str
-            Suffix for the plot name. Default is 'group_correlation_matrix_heatmap'. (Useful when using multiple times - to avoid overwriting the previous plot)
+            Suffix for the plot name. Default is ''. (Useful when using multiple times - to avoid overwriting the previous plot)
         """
         data = self.data
         metadata = self.metadata
@@ -3189,7 +3189,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Create a heatmap
         plt.figure(figsize=(10, 8))
         sns.heatmap(correlation_matrix, cmap=cmap, vmin=min_max[0], vmax=min_max[1])
-        name = main_folder +'/statistics/'+output_file_prefix + '_' + plt_name_suffix
+        name = main_folder +'/statistics/'+output_file_prefix + '_' + 'group_correlation_matrix_heatmap_' +plt_name_suffix
         for suffix in suffixes:
             plt.savefig(name + suffix, bbox_inches='tight', dpi = 300)
         plt.show()
@@ -3853,7 +3853,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         rgb = mcolors.hex2color(color)  # Convert hexadecimal to RGB
         return rgb + (alpha,)  # Concatenate RGB with alpha
     
-    def visualizer_boxplot(self, names = False, plt_name_suffix = 'boxplot_first_view'):
+    def visualizer_boxplot(self, names = False, plt_name_suffix = ''):
         """
         Create a boxplot of all samples.  Can depict if there is a problem with the data (retention time shift too big -> re-run alignment; batch effect, etc.)
 
@@ -3862,7 +3862,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         names : bool
             If True, use sample names from metadata. Default is False (don't use sample names to avoid cluttering the x-axis).
         plt_name_suffix : str
-            Suffix for the plot name. Default is 'boxplot_first_view'. (Useful when using multiple times - to avoid overwriting the previous plot)
+            Suffix for the plot name. Default is ''. (Useful when using multiple times - to avoid overwriting the previous plot)
     
         """
         raw_data = self.data.iloc[:, 1:]
@@ -3938,7 +3938,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         
 
         # Save the plot
-        plt_name = main_folder + '/figures/QC_samples_' + plt_name_suffix
+        plt_name = main_folder + '/figures/QC_samples_boxplot_' + plt_name_suffix
         for suffix in suffixes:
             plt.savefig(plt_name + suffix, bbox_inches='tight', dpi=300)
 
@@ -3956,7 +3956,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         
         return fig, ax
     
-    def visualizer_samples_by_batch(self, show = 'default', cmap = 'viridis', plt_name_suffix = 'batches_first_view'):
+    def visualizer_samples_by_batch(self, show = 'default', cmap = 'viridis', plt_name_suffix = ''):
         """
         Visualize samples by batch. Highlight QC samples.
 
@@ -3967,7 +3967,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         cmap : str
             Name of the colormap. Default is 'viridis'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
         plt_name_suffix : str
-            Suffix for the plot name. Default is 'batches_first_view'. (Useful when using multiple times - to avoid overwriting the previous plot)
+            Suffix for the plot name. Default is ''. (Useful when using multiple times - to avoid overwriting the previous plot)
         """
         data = self.data
         report = self.report
@@ -4147,7 +4147,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 # Add a text annotation for "Zero Counts"
                 plt.text(x=-0.005, y=0.65, s='Zero Counts', fontsize=15, transform=plt.gca().transAxes, ha='right', va='center')
 
-            plt_name = main_folder + '/figures/single_compound_' + str(feature) + '_' + plt_name_suffix
+            plt_name = main_folder + '/figures/single_compound_view_' + str(feature) + '_' + plt_name_suffix
             for suffix in suffixes:
                 plt.savefig(plt_name + suffix, dpi=300, bbox_inches='tight')
             plt.show()
@@ -4164,14 +4164,14 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         report.add_pagebreak()
         return fig
 
-    def visualizer_PCA_scree_plot(self, plt_name_suffix='scree_plot-percentages'):
+    def visualizer_PCA_scree_plot(self, plt_name_suffix=''):
         """
         Create a scree plot for PCA.
 
         Parameters
         ----------
         plt_name_suffix : str
-            Suffix for the plot name. Default is 'scree_plot-percentages'. (Useful when using multiple times - to avoid overwriting the previous plot)
+            Suffix for the plot name. Default is ''. (Useful when using multiple times - to avoid overwriting the previous plot)
         """
         report = self.report
         output_file_prefix = self.output_file_prefix
@@ -4200,7 +4200,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         plt.legend(loc='upper left')
         fig.tight_layout()
 
-        name = main_folder + '/statistics/' + output_file_prefix + '_' + plt_name_suffix
+        name = main_folder + '/statistics/' + output_file_prefix + '_scree_plot-percentages_' + plt_name_suffix
         for suffix in suffixes:
             plt.savefig(name + suffix, bbox_inches='tight', dpi=300)
         plt.show()
@@ -4214,7 +4214,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             ('image', name)])
         return fig
     
-    def visualizer_PCA_run_order(self, connected = True, colors_for_cmap = ['yellow', 'red'], plt_name_suffix = 'PCA_plot_colored_by_run_order', annotate_samples = False, nm_to_annotate = 10):
+    def visualizer_PCA_run_order(self, connected = True, colors_for_cmap = ['yellow', 'red'], plt_name_suffix = '', annotate_samples = False, nm_to_annotate = 10):
         """
         Create a PCA plot colored by run order. (To see if there is any batch effect)
 
@@ -4225,7 +4225,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         colors_for_cmap : list
             List of colors for the colormap. Default is ['yellow', 'red']. 
         plt_name_suffix : str
-            Suffix for the plot name. Default is 'PCA_plot_colored_by_run_order'. (Useful when using multiple times - to avoid overwriting the previous plot)       
+            Suffix for the plot name. Default is ''. (Useful when using multiple times - to avoid overwriting the previous plot)       
         annotate_samples : bool
             If True, the samples will be annotated with their names. Default is False.
         nm_to_annotate : int
@@ -4296,9 +4296,9 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 plt.plot([pca_df['PC1'].iloc[i], pca_df['PC1'].iloc[i+1]], [pca_df['PC2'].iloc[i], pca_df['PC2'].iloc[i+1]], color='black', linewidth=0.25)
 
         if connected:
-            name = main_folder +'/statistics/'+ output_file_prefix + '_' + plt_name_suffix + '_connected'
+            name = main_folder +'/statistics/'+ output_file_prefix + '_PCA_plot_colored_by_run_order_connected_' + plt_name_suffix
         else:
-            name = main_folder +'/statistics/'+ output_file_prefix + '_' + plt_name_suffix
+            name = main_folder +'/statistics/'+ output_file_prefix + '_PCA_plot_colored_by_run_order' + plt_name_suffix
         for suffix in suffixes:
             plt.savefig(name + suffix, bbox_inches='tight', dpi = 300)
         plt.show()
@@ -4313,7 +4313,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             ('image', name),])
         return fig, ax
     
-    def visualizer_PCA_loadings(self, color = 'blue', plt_name_suffix = 'PCA_loadings', components_to_show = [0, 1], annotate_candidates = True, axis_log = False):
+    def visualizer_PCA_loadings(self, color = 'blue', plt_name_suffix = '', components_to_show = [0, 1], annotate_candidates = True, axis_log = False):
         """
         Create a PCA loadings plot. (And suggest candidate features based on the 99.5th percentile of the distances from the origin)
 
@@ -4322,7 +4322,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         color : str
             Color for the plot. Default is 'blue'.
         plt_name_suffix : str
-            Suffix for the plot name. Default is 'PCA_loadings'. (Useful when using multiple times - to avoid overwriting the previous plot)
+            Suffix for the plot name. Default is ''. (Useful when using multiple times - to avoid overwriting the previous plot)
         components_to_show : list
             List of components to show. Default is [0, 1]. ([0, 1] means PC1 and PC2 - indexing from 0)
         annotate_candidates : bool
@@ -4391,7 +4391,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         ax.set_title('PCA Loadings')
         ax.set_xlabel('PC1 Loadings')
         ax.set_ylabel('PC2 Loadings')
-        name = main_folder +'/statistics/'+ output_file_prefix + '_' + plt_name_suffix
+        name = main_folder +'/statistics/'+ output_file_prefix + '_PCA_loadings_' + plt_name_suffix
         for suffix in suffixes:
             plt.savefig(name + suffix, bbox_inches='tight', dpi = 300)
 
@@ -4408,7 +4408,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig
     
-    def visualizer_PCA_grouped(self, color_column, marker_column, cmap = 'nipy_spectral', crossout_outliers = False, zoom_in_group = None, plt_name_suffix = 'PCA_grouped', graph_title = 'PCA graph', annotate_samples = False, nm_to_annotate = 10, ignore_nans_in_groups = True):
+    def visualizer_PCA_grouped(self, color_column, marker_column, cmap = 'nipy_spectral', crossout_outliers = False, zoom_in_group = None, plt_name_suffix = '', graph_title = 'PCA graph', annotate_samples = False, nm_to_annotate = 10, ignore_nans_in_groups = True):
         """
         Create a PCA plot with colors based on one column and markers based on another column from the metadata.
 
@@ -4425,7 +4425,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         zoom_in_group : str or None
             If specified, the plot will be zoomed in to the group specified in this column. (E.g. if you have a 'Diagnosis' column with 'Healthy' and 'Disease', you can input 'Healthy' to zoom in to that group). Default is None.
         plt_name_suffix : str
-            Suffix for the plot name. Default is 'PCA_grouped'. (Useful when using multiple times - to avoid overwriting the previous plot)  
+            Suffix for the plot name. Default is ''. (Useful when using multiple times - to avoid overwriting the previous plot)  
         graph_title : str
             Title of the graph. Default is 'PCA graph'.
         annotate_samples : bool
@@ -4594,7 +4594,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         plt.title(graph_title)
         plt.xlabel('PC1 - {0}%'.format(per_var[0]))
         plt.ylabel('PC2 - {0}%'.format(per_var[1]))
-        name = main_folder +'/statistics/'+ output_file_prefix + '_' + plt_name_suffix
+        name = main_folder +'/statistics/'+ output_file_prefix + '_PCA_grouped_' + plt_name_suffix
         for suffix in suffixes:
             plt.savefig(name + suffix, bbox_inches='tight', dpi = 300)
         plt.show()
@@ -4611,7 +4611,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             ('image', name),])
         return fig, ax
 
-    def visualizer_PLSDA(self, cmap = 'nipy_spectral', plt_name_suffix = 'PLS-DA', graph_title = 'PLS-DA graph'):
+    def visualizer_PLSDA(self, cmap = 'nipy_spectral', plt_name_suffix = '', graph_title = 'PLS-DA graph'):
         """
         Visualize the results of PLS-DA.
 
@@ -4620,7 +4620,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         cmap : str
             Name of the colormap. Default is 'nipy_spectral'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
         plt_name_suffix : str
-            Suffix for the plot name. Default is 'PLS-DA'. (Useful when using multiple times - to avoid overwriting the previous plot)
+            Suffix for the plot name. Default is ''. (Useful when using multiple times - to avoid overwriting the previous plot)
         graph_title : str
             Title for the plot. Default is 'PLS-DA graph'.
         """
@@ -4747,7 +4747,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         ax.set_title(graph_title)
         ax.legend(loc='upper left', bbox_to_anchor=(1, 1), frameon=False)
 
-        name = main_folder + '/statistics/' + output_file_prefix + '_' + plt_name_suffix
+        name = main_folder + '/statistics/' + output_file_prefix + '_PLS-DA_' + plt_name_suffix
         for suffix in suffixes:
             plt.savefig(name + suffix, bbox_inches='tight', dpi=300)
         plt.show()
@@ -4763,7 +4763,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig, ax
     
-    def visualizer_PLSDA_vips(self, show='candidates', figsize=None, threshold=1.0, save=True, plt_name_suffix="vips"):
+    def visualizer_PLSDA_vips(self, show='candidates', figsize=None, threshold=1.0, save=True, plt_name_suffix=''):
         """
         Visualize top VIP scores obtained from PLS-DA.
 
@@ -4778,7 +4778,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         save : bool
             Whether to save the plot as PNG.
         plt_name_suffix : str
-            Suffix for saving the figure.
+            Suffix for saving the figure. Default is ''. (Useful when using multiple times - to avoid overwriting the previous plot)
         """
         vip_series = self.plsda_vip_scores.copy()
         plsda_response_column = self.plsda_response_column
@@ -4833,7 +4833,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         plt.tight_layout()
         
-        name = self.main_folder + '/statistics/' + self.output_file_prefix +  '_' + plsda_response_column_str + '_' + plt_name_suffix
+        name = self.main_folder + '/statistics/' + self.output_file_prefix +  '_PLSDA_' + plsda_response_column_str + '_' + plt_name_suffix
         for suffix in self.suffixes:
             if save:
                 plt.savefig(name + suffix, bbox_inches='tight', dpi=300)
@@ -4851,7 +4851,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             'pagebreak'])
         return fig, ax
     
-    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, cmap = 'nipy_spectral', plt_name_suffix = 'violin_plots', bw = 0.2, jitter = True, label_rotation = 0, show_all = False):
+    def visualizer_violin_plots(self, column_names, indexes = 'all', save_into_pdf = True, cmap = 'nipy_spectral', plt_name_suffix = '', bw = 0.2, jitter = True, label_rotation = 0, show_all = False):
         """
         Visualize violin plots of all features grouped by a column from the metadata. (And save them into a single PDF file)
 
@@ -4866,7 +4866,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         cmap : str
             Name of the colormap. Default is 'nipy_spectral'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
         plt_name_suffix : str
-            Suffix for the plot name. Default is 'violin_plots'. (Useful when using multiple times - to avoid overwriting the previous plot)
+            Suffix for the plot name. Default is ''. (Useful when using multiple times - to avoid overwriting the previous plot)
         bw : float
             Bandwidth parameter for the kernel density estimation. Default is 0.2.
         jitter : bool
@@ -5011,12 +5011,12 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             
                 # Save the figure to a separate image file
                 if save_into_pdf:
-                    file_name = self.main_folder + '/statistics/' + self.report_file_name+ '-' + str(column_names) + '_' + plt_name_suffix +  f'_{index}.pdf'
+                    file_name = self.main_folder + '/statistics/' + self.report_file_name+ '-violin_plots-' + str(column_names) + '_' + plt_name_suffix +  f'_{index}.pdf'
                     plt.savefig(file_name, bbox_inches='tight')
                     pdf_files.append(file_name)
 
                 if example:
-                    example_name = self.main_folder + '/statistics/'+ str(column_names) + '-' + plt_name_suffix +'-example-' + str(index)
+                    example_name = self.main_folder + '/statistics/'+ str(column_names) + '-violin_plots-example-' + plt_name_suffix + str(index)
                     for suffix in suffixes:
                         plt.savefig(example_name + suffix, bbox_inches='tight', dpi = 300)
                     if first_plot == True or show_all == True:
@@ -5072,7 +5072,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         return returning_vp
     
     
-    def visualizer_fold_change(self, groups_column_name, group1, group2, color_left = 'green', color_right = 'blue', fold2_change_threshold=1, p_value_threshold=0.05, p_value_correction_method = '',plt_name_suffix='fold_change'):
+    def visualizer_fold_change(self, groups_column_name, group1, group2, color_left = 'green', color_right = 'blue', fold2_change_threshold=1, p_value_threshold=0.05, p_value_correction_method = '',plt_name_suffix=''):
         """
         Visualize fold change and p-value for two groups.
 
@@ -5095,7 +5095,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         p_value_correction_method : str
             Method for p-value correction. Default is '' (which means without a correction); others are: 'fdr_bh', 'bonferroni', 'holm', 'simes-hochberg', 'hommel', 'fdr_by', 'fdr_tsbh', 'fdr_tsbky'. (for more information see: https://www.statsmodels.org/stable/generated/statsmodels.stats.multitest.multipletests.html#statsmodels.stats.multitest.multipletests )
         plt_name_suffix : str
-            Suffix for the plot name. Default is 'fold_change'.
+            Suffix for the plot name. Default is ''. (Useful when using multiple times - to avoid overwriting the previous plot)
         """
         data = self.data
         metadata = self.metadata
@@ -5268,7 +5268,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         self.fold_change_count = fold_change_count
 
         # Save the plot
-        plt_name = main_folder + '/statistics/' + output_file_prefix + '_' + plt_name_suffix
+        plt_name = main_folder + '/statistics/' + output_file_prefix + '_fold_change_' + plt_name_suffix
         for suffix in suffixes:
             plt.savefig(plt_name + suffix, bbox_inches='tight', dpi=300)
         plt.show()
@@ -5283,7 +5283,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         return plt_name
     
-    def visualizer_candidates(self, cmap = 'nipy_spectral', plt_name_suffix = 'candidates', topx = 20):
+    def visualizer_candidates(self, cmap = 'nipy_spectral', plt_name_suffix = '', topx = 20):
         """
         Visualize all candidates found during the analysis.
 
@@ -5293,7 +5293,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         cmap : str
             Name of the colormap. Default is 'nipy_spectral'. (Other options are 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted', 'turbo'; ADD '_r' to get reversed colormap)
         plt_name_suffix : str
-            Suffix for the plot name. Default is 'candidates'. (Useful when using multiple times - to avoid overwriting the previous plot)
+            Suffix for the plot name. Default is ''. (Useful when using multiple times - to avoid overwriting the previous plot)
         topx : int
             Number of max top candidates to show in each plot. Default is 20. This is useful when there are too many candidates found and the plot would be too crowded or unreadable.
         
@@ -5347,7 +5347,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             ax.set_yticklabels(names, rotation=0)
             ax.invert_yaxis()
 
-            name = main_folder + '/statistics/' + output_file_prefix + '_' + plt_name_suffix + '_' + str(k)
+            name = main_folder + '/statistics/' + output_file_prefix + '_candidates_' + plt_name_suffix + '_' + str(k)
             plot_names.append(name)
             plots.append(name)
             # Save the plot
