@@ -4157,8 +4157,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         #REPORTING
         text = 'View of samples for a single compound with highlighted QC samples was created.'
         report.add_text(text)
-        #add plot to the report
-        images = [main_folder + '/figures/single_compound_' + str(feature) + '_batches_first_view' for feature in show]
+        #add one plot to the report
+        images = [main_folder + '/figures/single_compound_view_' + str(feature) + '_' + plt_name_suffix + '.png' for feature in show]
         for image in images:
             report.add_image(image)
         report.add_pagebreak()
