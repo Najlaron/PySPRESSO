@@ -1369,7 +1369,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
 
         return data, variable_metadata
 
-    def filter_relative_standard_deviation(self, rsd_threshold = 20, to_plot = False):
+    def filter_relative_standard_deviation(self, rsd_threshold=20, by_batch=False, ignore_zero_qc=False, to_plot=False, min_qc_n=3):
         """
         Filter out features with QC samples with RSD% (relative standard deviation) over the threshold.
 
@@ -1377,106 +1377,187 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         ----------
         rsd_threshold : float
             Threshold for the RSD%. Default is 20.
+        by_batch : bool
+            If True, calculate RSD for each batch separately. Default is False.
+        ignore_zero_qc : bool
+            If True, ignore zero QC values in RSD calculation. Default is False.
         to_plot : bool or int
-            If True, plot some of the compounds with high RSD. Default is False. (For True plots 4, for any other int, plots that amount (or all if there is less then inputed integer))
+            If True, plot some of the compounds with high RSD.
+        min_qc_n : int
+            Minimum number of QC samples in a batch required to evaluate RSD.
         """
+
         data = self.data
         variable_metadata = self._filter_match_variable_metadata(data, self.variable_metadata)
         report = self.report
         QC_samples = self.QC_samples
 
-        #QC_samples mask
-        is_qc_sample = [True if col in QC_samples else False for col in data.columns[1:]]
-        
-        #Calculate RSD for only QC samples
         if QC_samples == []:
-            # QC samples defined as an empty list (therefore no QC samples)
             print("No QC samples defined in wf.QC_samples. Skipping filter_relative_standard_deviation step.")
             return data
-        if QC_samples is None or QC_samples == False:
+        if QC_samples is None or QC_samples is False:
             raise ValueError("No QC samples defined (or deleted before) in wf.QC_samples.")
-        
-        # sample columns (exclude cpdID at position 0)
+
+        # Sample columns (exclude cpdID)
         sample_cols = list(data.columns[1:])
-        # find intersection of sample columns and QC sample names
         qc_cols = [c for c in sample_cols if c in QC_samples]
+
         if len(qc_cols) == 0:
             raise ValueError("No QC sample columns found in data. Check names in metadata vs data columns.")
-        qc_df = data[qc_cols]
 
-        # Calculate RSD using the found QC columns
-        qc_rsd = qc_df.std(axis=1) / qc_df.mean(axis=1) * 100
-        qc_rsd = qc_rsd.copy()
-    
+        qc_df = data[qc_cols].copy()
+
+        # GLOBAL RSD 
+        if not by_batch:
+
+            if ignore_zero_qc:
+                qc_df = qc_df.mask(qc_df <= 0, np.nan)
+
+            qc_mean = qc_df.mean(axis=1, skipna=True)
+            qc_std = qc_df.std(axis=1, skipna=True)
+
+            qc_rsd = (qc_std / qc_mean.replace(0, np.nan)) * 100
+
+        # BATCH-WISE RSD (for cases where some batches are for example zeros or incorrect)
+        else:
+
+            if not hasattr(self, 'batch') or self.batch is None:
+                raise ValueError("Batch information not set. Run set_batch() first.")
+
+            batch_labels = self.batch
+
+            if len(batch_labels) != len(sample_cols):
+                raise ValueError("Length of self.batch does not match number of sample columns.")
+
+            sample_to_batch = dict(zip(sample_cols, batch_labels))
+
+            # Group QC columns by batch
+            qc_cols_by_batch = {}
+            for c in qc_cols:
+                b = sample_to_batch.get(c, None)
+                if b is None:
+                    continue
+                qc_cols_by_batch.setdefault(b, []).append(c)
+
+            rsd_list = []
+
+            for b, cols in qc_cols_by_batch.items():
+
+                dfb = data[cols].copy()
+
+                if ignore_zero_qc:
+                    dfb = dfb.mask(dfb <= 0, np.nan)
+
+                n_nonmiss = dfb.notna().sum(axis=1)
+                valid = n_nonmiss >= min_qc_n
+
+                meanb = dfb.mean(axis=1, skipna=True)
+                stdb = dfb.std(axis=1, skipna=True)
+
+                rsd_b = (stdb / meanb.replace(0, np.nan)) * 100
+                rsd_b = rsd_b.where(valid, np.nan)
+
+                variable_metadata[f'QC_RSD_{b}'] = rsd_b
+                rsd_list.append(rsd_b.to_numpy())
+
+            if len(rsd_list) > 0:
+                rsd_matrix = np.column_stack(rsd_list)
+                qc_rsd = np.nanmedian(rsd_matrix, axis=1)
+            else:
+                qc_rsd = np.full(len(data), np.nan)
+
+        # Final filtering
         variable_metadata['QC_RSD'] = qc_rsd
+        over_threshold = np.isfinite(qc_rsd) & (qc_rsd > rsd_threshold)
 
-        #Filter out features (compounds) with RSD > rsd_threshold
-        over_threshold = qc_rsd > rsd_threshold
-        deleted_data = data[over_threshold]
+        deleted_data = data[over_threshold].copy()
         deleted_data.reset_index(drop=True, inplace=True)
 
-        removed_ids = deleted_data['cpdID'].tolist() if 'cpdID' in deleted_data.columns else deleted_data.index.tolist()
+        removed_ids = (
+            deleted_data['cpdID'].tolist()
+            if 'cpdID' in deleted_data.columns
+            else deleted_data.index.tolist()
+        )
         removed_count = len(removed_ids)
 
         dropped_features_folder = self.main_folder + '/dropped_features'
         txt_path = self._write_versioned_txt(
-                folder=dropped_features_folder,
-                base_name='removed_features_relative_standard_deviation_' + str(int(rsd_threshold)),
-                lines=removed_ids
-            )
+            folder=dropped_features_folder,
+            base_name='removed_features_relative_standard_deviation_' + str(int(rsd_threshold)),
+            lines=removed_ids
+        )
 
-        data = data[~over_threshold]
+        data = data[~over_threshold].copy()
         data.reset_index(drop=True, inplace=True)
 
-        #Plot some of the compounds with high RSD
-        if to_plot == False:
-            number_plotted = 1 #this one will be only in report, but not shown or saved separately
-        elif to_plot == True:
+        # Plotting
+        is_qc_sample = [col in QC_samples for col in sample_cols]
+
+        if to_plot is False:
+            number_plotted = 1
+        elif to_plot is True:
             number_plotted = 4
-        elif type(to_plot) == int:
+        elif isinstance(to_plot, int):
             number_plotted = int(to_plot)
         else:
             raise ValueError("to_plot has to be either boolean or an integer.")
+
         indexes = deleted_data.index.tolist()
+
         if len(indexes) < number_plotted:
             number_plotted = len(indexes)
-        if len(indexes)  == 0:
+
+        if len(indexes) == 0:
             print("No compounds with RSD > " + str(rsd_threshold) + " were found.")
-        else:   
-            # plot only the QC samples
+        else:
             for i in range(number_plotted):
                 plt.figure(figsize=(10, 6))
-                plt.scatter(range(len(deleted_data.iloc[indexes[i], 1:][is_qc_sample])),
-                            deleted_data.iloc[indexes[i], 1:][is_qc_sample], 
-                            label=deleted_data.iloc[indexes[i], 0], 
-                            s=10, alpha=0.5)
+                plt.scatter(
+                    range(len(deleted_data.iloc[i, 1:][is_qc_sample])),
+                    deleted_data.iloc[i, 1:][is_qc_sample],
+                    label=str(deleted_data.iloc[i, 0]),
+                    s=10,
+                    alpha=0.5
+                )
                 plt.xlabel('Samples in order')
                 plt.ylabel('Peak Area')
-                plt.title("High RSD compound: cpID = " + deleted_data.iloc[indexes[i], 0])
+                plt.title("High RSD compound: cpID = " + str(deleted_data.iloc[i, 0]))
+
                 for suffix in self.suffixes:
-                    plt.savefig(self.main_folder + '/figures/QC_samples_scatter_' + str(indexes[i]) + '_high_RSD-deleted_by_correction' + suffix, dpi=400, bbox_inches='tight')
+                    plt.savefig(
+                        self.main_folder + '/figures/QC_samples_scatter_' +
+                        str(i) + '_high_RSD-deleted_by_correction' + suffix,
+                        dpi=400,
+                        bbox_inches='tight'
+                    )
                 plt.show()
-        
-        #update data and variable_metadata
+
+        # Update state
         self.data = data
         self.variable_metadata = self._filter_match_variable_metadata(data, variable_metadata)
 
-        #report how many features were removed
         print("Number of features removed: " + str(removed_count))
 
-        #---------------------------------------------
-        #REPORTING
-        text0 = 'Features with RSD% over the threshold (' + str(rsd_threshold) + ') were removed. Number of features removed: ' + str(removed_count)
+        text0 = (
+            'Features with RSD% over the threshold (' +
+            str(rsd_threshold) +
+            ') were removed. Number of features removed: ' +
+            str(removed_count)
+        )
+
         if removed_count > 0 and removed_count < 25:
             text1 = ' ;being: ' + str(removed_ids)
         elif removed_count >= 25:
             text1 = 'The list of removed features is long and saved in: ' + txt_path
         else:
             text1 = ''
-        report.add_together([('text', text0),
-                            ('text', text1),
-                            'line'])
-        
+
+        report.add_together([
+            ('text', text0),
+            ('text', text1),
+            'line'
+        ])
+
         return self.data
     
     def filter_dilution_series_linearity(self, number_of_series, threshold=0.8, which_to_take="first", concentrations=False, to_plot=False):
