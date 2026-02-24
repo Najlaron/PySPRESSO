@@ -79,6 +79,53 @@ def _escape_html(s: str) -> str:
          .replace(">", "&gt;")
     )
 
+def _escape_html_allow_tags(s: str, allowed_tags=None) -> str:
+        """
+        Escape text for ReportLab Paragraph, but keep a small set of tags (e.g. <b>, <i>, <br/>)
+        so formatting works while still avoiding XML/parser breaks.
+        """
+        if allowed_tags is None:
+            allowed_tags = [
+                "b", "/b",
+                "i", "/i",
+                "u", "/u",
+                "br", "br/",
+                "sup", "/sup",
+                "sub", "/sub",
+            ]
+
+        if s is None:
+            return ""
+
+        s = str(s)
+
+        # Normalize common HTML -> ReportLab-ish
+        s = s.replace("<strong>", "<b>").replace("</strong>", "</b>")
+        s = s.replace("<em>", "<i>").replace("</em>", "</i>")
+        s = s.replace("<br>", "<br/>").replace("<br />", "<br/>")
+
+        # Protect allowed tags with placeholders
+        placeholders = {}
+        for idx, tag in enumerate(allowed_tags):
+            token = f"<{tag}>"
+            ph = f"__RL_TAG_{idx}__"
+            if token in s:
+                s = s.replace(token, ph)
+                placeholders[ph] = token
+
+        # Escape remaining special chars
+        s = (
+            s.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+        # Restore allowed tags
+        for ph, token in placeholders.items():
+            s = s.replace(ph, token)
+
+        return s
+
 def _ellipsize(s: str, max_chars: int) -> str:
     if max_chars <= 0:
         return ""
@@ -333,6 +380,7 @@ class Report:
             return line
         self.elements.append(line)
 
+
     def add_text(self, text, style="normal", alignment="left", font_size=10, return_element_only=False):
         """
         Add a text paragraph with specified style and alignment.
@@ -346,8 +394,7 @@ class Report:
 
         raw = str(text)
         # preserve existing <br/> tags
-        raw = raw.replace("<br/>", "__BR__")
-        raw = _escape_html(raw).replace("__BR__", "<br/>")
+        raw = _escape_html_allow_tags(raw)
         if not raw.lstrip().startswith("<br/>"):
             raw = "<br/>" + raw
         text = raw
