@@ -736,21 +736,24 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                                 'line'])
         else:
             if distinguisher == '':
-                # If the batch names are directly in the distinguisher_col column
+                # Batch names are directly in the distinguisher_col column
                 batch_info['Batch'] = batch_info[distinguisher_col]
                 print("Batch names taken directly from the column: " + distinguisher_col)
             else:
                 # Extract batch names from the file names based on the distinguisher (split by _ or \)
                 for name in batch_names:
-                    split_name = re.split(r'[_|\\]', name) #split by _ or \
+                    split_name = re.split(r'[_|\\]', name)  # split by _ or \
                     for i, part in enumerate(split_name):
                         if part == distinguisher:
                             batches_column.append(split_name[i+1])
                             break
 
-            if len(batches_column) == 0:
-                raise ValueError("No matches found in 'names' for the distinguisher: " + distinguisher + " in the file names. If you have all in one batch, use None")
-            else:
+                if len(batches_column) == 0:
+                    raise ValueError(
+                        "No matches found in 'names' for the distinguisher: "
+                        + str(distinguisher)
+                        + " in the file names. If you have all in one batch, use None"
+                    )
                 batch_info['Batch'] = batches_column
 
         # Omit not found samples from batch_info
@@ -761,7 +764,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             found = False
             for name in names:
                 # Check if the name contains the ID within brackets
-                if re.search(f'\({id}\)', name):
+                if re.search(rf"\({re.escape(str(id))}\)", name):
                     found = True
                     new_data_order.append(name)
                     names.pop(names.index(name))
@@ -2728,9 +2731,8 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             is_correctable_batch = []
             num_corr_batches = 0
 
-            # Global QC anchor in log space (across all batches)
-            anchor_log = np.nanmedian(data.loc[is_qc_sample, feature]) if is_qc_sample.any() else 0.0
-
+            # Collect QC values that were ACTUALLY used to fit splines (per feature)
+            qc_anchor_vals = []
             # Fit per-batch QC splines
             for b_idx, bname in enumerate(unique_batches):
                 is_batch = np.array([bb == bname for bb in batch], dtype=bool)
@@ -2772,7 +2774,22 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     is_correctable_batch.append(True)
                     num_corr_batches += 1
 
+                    # add QC points used for this batch's spline to anchor pool
+                    # (these already respect use_zeros masking via qc_mask/qc_batched)
+                    qc_anchor_vals.append(y[np.isfinite(y)])
+
                 splines.append(s)
+
+            # Global QC anchor computed ONLY from QC values actually used in interpolation
+            if len(qc_anchor_vals) > 0:
+                anchor_log = np.nanmedian(np.concatenate(qc_anchor_vals))
+            else:
+                # fallback: QC median excluding zeros (if requested)
+                qc_mask_anchor = is_qc_sample.copy()
+                if not use_zeros:
+                    qc_mask_anchor = np.logical_and(qc_mask_anchor, ~is_zero[feature].values)
+                anchor_log = np.nanmedian(data.loc[qc_mask_anchor, feature]) if qc_mask_anchor.any() else 0.0
+
 
             numbers_of_correctable_batches.append(num_corr_batches)
 
