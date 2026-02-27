@@ -949,6 +949,28 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         if not isinstance(scores, (list, pd.Series, np.ndarray)):
             scores = [scores]
 
+        #  Normalize features to cpdID (consistency)
+        data = self.data
+        if data is None:
+            raise ValueError("self.data is None; cannot map candidate indices to cpdIDs.")
+
+        # determine ID column
+        if 'cpdID' in data.columns:
+            id_series = data['cpdID'].astype(str).reset_index(drop=True)
+        else:
+            id_series = data.iloc[:, 0].astype(str).reset_index(drop=True)
+
+        normalized_features = []
+        for f in features:
+            if isinstance(f, (int, np.integer)):
+                idx = int(f)
+                if idx < 0 or idx >= len(id_series):
+                    raise ValueError(f"Candidate index {idx} out of range (0..{len(id_series)-1}).")
+                normalized_features.append(id_series.iloc[idx])
+            else:
+                normalized_features.append(str(f))
+
+        features = normalized_features
 
         # Repeat method and specification to match the length of features
         if isinstance(method, list) and len(method) != len(features):
@@ -967,20 +989,21 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         # Initialize self.candidates if it is None
         if self.candidates is None:
             self.candidates = pd.DataFrame(columns=['feature', 'method', 'specification', 'score', 'hits', 'Name', 'Formula', 'Annot. DeltaMass [ppm]', 'Annotation MW'])
-        else:
             # Find features in variable_metadata - Name, Formula, ... (Matching is done by cpdID)
+        if variable_metadata is not None and 'cpdID' in variable_metadata.columns:
+            vm_cpd = variable_metadata['cpdID'].astype(str)
             # Try to find columns in variable_metadata 
             if 'Name' in variable_metadata.columns:
-                names = variable_metadata[variable_metadata['cpdID'].isin(features)]['Name'].tolist()
+                names = variable_metadata[vm_cpd.isin(features)]['Name'].tolist()
             elif 'Compound Name' in variable_metadata.columns:
-                names = variable_metadata[variable_metadata['cpdID'].isin(features)]['Compound Name'].tolist()
+                names = variable_metadata[vm_cpd.isin(features)]['Compound Name'].tolist()
             if 'Formula' in variable_metadata.columns:
-                formulas = variable_metadata[variable_metadata['cpdID'].isin(features)]['Formula'].tolist()
+                formulas = variable_metadata[vm_cpd.isin(features)]['Formula'].tolist()
             if 'Annot. DeltaMass [ppm]' in variable_metadata.columns:
-                annotdeltamass = variable_metadata[variable_metadata['cpdID'].isin(features)]['Annot. DeltaMass [ppm]'].tolist()
+                annotdeltamass = variable_metadata[vm_cpd.isin(features)]['Annot. DeltaMass [ppm]'].tolist()
             if 'Annotation MW' in variable_metadata.columns:
-                annotation_mw = variable_metadata[variable_metadata['cpdID'].isin(features)]['Annotation MW'].tolist()
-           
+                annotation_mw = variable_metadata[vm_cpd.isin(features)]['Annotation MW'].tolist()
+            
         if names is not None and formulas is not None and annotdeltamass is not None and annotation_mw is not None:
             # Create a DataFrame for the new candidates
             new_candidates = pd.DataFrame({
@@ -4261,6 +4284,242 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             report.add_image(image)
         report.add_pagebreak()
         return fig
+    
+    def visualizer_cluster_heatmap(self, show = 'candidates', cmap = 'bwr', cluster='both', metric='euclidean', method='average', z_score = True, plt_name_suffix = ''):
+       
+        """
+        Create a clustered (dendrogram) heatmap of the features x samples.
+
+        Parameters
+        ----------
+        show : str or list or int
+            Which features to show. Default is 'candidates'. Other options are 'all' or list of indexes (or cpdIDs) (or a single index) of features to show.
+        cmap : str
+            Name of the colormap. Default is 'bwr'. (Try also: 'viridis', 'plasma', ...; add '_r' to reverse)
+        cluster : str
+            Whether to cluster rows, columns, both or none. Default is 'both'.
+            Options: 'row', 'column', 'both', 'none'
+        metric : str
+            Distance metric used for clustering. Default is 'euclidean'.
+            (Common alternative: 'correlation')
+        method : str
+            Linkage method. Default is 'average'. (Common alternatives: 'ward' (with euclidean), 'complete')
+        z_score : bool
+            Whether to z-score the data before plotting. Default is True (row z-score).
+        plt_name_suffix : str
+            Suffix for the plot name. Default ''.
+        """
+        data = self.data
+        report = self.report
+        main_folder = self.main_folder
+        suffixes = self.suffixes
+        output_file_prefix = self.output_file_prefix
+        candidates = self.candidates
+
+        if data is None:
+            raise ValueError("No data loaded (self.data is None).")
+
+        # Build numeric matrix: rows=features, cols=samples
+        df = data.copy()
+        # set feature id column as index (must be cpdID or first column)
+        if 'cpdID' in df.columns:
+            df = df.set_index('cpdID')
+        else:
+            # In PySPRESSO, the first column should be feature IDs
+            df = df.set_index(df.columns[0])
+
+        # ensure string IDs
+        df.index = df.index.astype(str)
+
+        # ensure numeric (non-numeric -> NaN)
+        df = df.apply(pd.to_numeric, errors='coerce').replace([np.inf, -np.inf], np.nan)
+
+        # Select rows (features) 
+        if isinstance(show, str):
+            show_l = show.lower()
+            if show_l == 'all':
+                pass
+            elif show_l == 'candidates':
+                if candidates is None:
+                    raise ValueError("No candidate features identified. Run statistics methods first to identify candidates.")
+                candidate_idx = list(dict.fromkeys(self.get_candidates_indexes()))  # Handle duplicates (in this plot we dont want duplicates)
+                df = df.iloc[candidate_idx, :]
+            else:
+                raise ValueError("show must be 'candidates', 'all', an int index, or a list-like of indices/cpdIDs.")
+        elif isinstance(show, (int, np.integer)):
+            # single positional index
+            if show < 0 or show >= len(df):
+                raise ValueError(f"show index {show} is out of range (0..{len(df)-1}).")
+            df = df.iloc[[show], :]
+
+        # Treat as list-like (list, series, array)
+        else:
+            try:
+                show_list = list(show)
+            except TypeError:
+                raise ValueError("show must be a string, an integer, or a list-like of integers or cpdIDs.")
+            
+            if len(show_list) == 0:
+                raise ValueError("Empty show list provided.")
+
+            # If all ints -> treat as positional indices
+            if all(isinstance(x, (int, np.integer)) for x in show_list):
+                bad = [x for x in show_list if x < 0 or x >= len(df)]
+                if bad:
+                    raise ValueError(f"Some show indices are out of range: {bad}")
+                df = df.iloc[show_list, :]
+                # Handle duplicates (confusing to show in this plot)
+                if len(set(show_list)) != len(show_list):
+                    print("Warning: duplicate cpdIDs in show list; only the first occurrence will be shown in the heatmap.")
+                    df = df[~df.index.duplicated(keep='first')]
+            else:
+                # treat as cpdIDs
+                feats = [str(x) for x in show_list]
+                feats_in = [f for f in feats if f in df.index]
+                if len(feats_in) == 0:
+                    raise ValueError("None of the requested cpdIDs are in self.data.")
+                df = df.loc[feats_in, :]
+                # Handle duplicates (confusing to show in this plot)
+                if len(set(show_list)) != len(show_list):
+                    print("Warning: duplicate cpdIDs in show list; only the first occurrence will be shown in the heatmap.")
+                    df = df[~df.index.duplicated(keep='first')]
+
+                    
+        # z-score (row-wise) 
+        z_score_arg = 0 if z_score else None
+
+        # Cluster selection
+        cluster_l = cluster.lower() if isinstance(cluster, str) else cluster
+        if cluster_l == 'both':
+            row_cluster, col_cluster = True, True
+        elif cluster_l == 'row':
+            row_cluster, col_cluster = True, False
+        elif cluster_l == 'column':
+            row_cluster, col_cluster = False, True
+        elif cluster_l == 'none':
+            row_cluster, col_cluster = False, False
+        else:
+            raise ValueError("cluster must be one of: 'row', 'column', 'both', 'none'.")
+
+        # Auto figure sizing
+        n_rows, n_cols = df.shape
+        figsize = (max(10, min(28, 0.22 * n_cols + 8)),
+                max(6, min(18, 0.25 * n_rows + 6)))
+
+        # label thinning
+        max_labels_samples = 100
+        step = max(1, int(np.ceil(n_cols / max_labels_samples)))
+
+        max_labels_features = 100
+        step_rows = max(1, int(np.ceil(n_rows / max_labels_features)))
+
+        # --- Plot ---
+        g = sns.clustermap(
+            df,
+            cmap=cmap,
+            center=0.0 if cmap in ['bwr', 'seismic', 'coolwarm'] else None,
+            metric=metric,
+            method=method,
+            row_cluster=row_cluster,
+            col_cluster=col_cluster,
+            z_score=z_score_arg,
+            figsize=figsize,
+            xticklabels=False,
+            yticklabels=False,
+            dendrogram_ratio=(0.18, 0.12),
+            colors_ratio=0.03,
+            cbar_pos=(0.02, 0.87, 0.015, 0.08)
+        )
+
+        # X axis labels in clustered order
+        col_order = g.dendrogram_col.reordered_ind if g.dendrogram_col is not None else list(range(df.shape[1]))
+        col_labels = [df.columns[i] for i in col_order]
+
+        xticks = np.arange(len(col_labels))
+        show_xticks = xticks[::step]
+        show_xlabels = [col_labels[i] for i in show_xticks]
+
+        g.ax_heatmap.set_xticks(show_xticks + 0.5)
+        g.ax_heatmap.set_xticklabels(show_xlabels, rotation=90, ha='right', fontsize=7)
+        g.ax_heatmap.set_xlabel("Samples")
+
+        for t in g.ax_heatmap.get_xticklabels():
+            t.set_bbox(dict(facecolor='white', edgecolor='none', pad=0.25))
+
+        # Y axis labels in clustered row order 
+        row_labels = list(g.data2d.index)
+        yticks = np.arange(len(row_labels))
+        show_yticks = yticks[::step_rows]
+        show_ylabels = [row_labels[i] for i in show_yticks]
+
+        g.ax_heatmap.set_ylabel("")
+        g.ax_heatmap.yaxis.tick_left()
+        g.ax_heatmap.yaxis.set_label_position("left")
+        g.ax_heatmap.set_yticks(show_yticks + 0.5)
+        g.ax_heatmap.set_yticklabels(show_ylabels, rotation=0, ha='right', va='center')
+
+        #  Create a gap between row dendrogram and heatmap 
+        gap = 0.02
+        pos_h = g.ax_heatmap.get_position()
+        g.ax_heatmap.set_position([pos_h.x0 + gap, pos_h.y0, pos_h.width - gap, pos_h.height])
+
+        if getattr(g, "ax_col_dendrogram", None) is not None:
+            pos_cd = g.ax_col_dendrogram.get_position()
+            g.ax_col_dendrogram.set_position([pos_cd.x0 + gap, pos_cd.y0, pos_cd.width - gap, pos_cd.height])
+
+        if getattr(g, "ax_col_colors", None) is not None:
+            pos_cc = g.ax_col_colors.get_position()
+            g.ax_col_colors.set_position([pos_cc.x0 + gap, pos_cc.y0, pos_cc.width - gap, pos_cc.height])
+
+        g.ax_heatmap.tick_params(axis='y', pad=2)
+
+        # Adaptive font size + white bbox
+        y_fs = 9 if n_rows <= 25 else 8 if n_rows <= 50 else 7
+        for t in g.ax_heatmap.get_yticklabels():
+            t.set_fontsize(y_fs)
+            t.set_bbox(dict(facecolor='white', edgecolor='none', pad=0.25))
+
+        # Annotate clustering settings near the colorbar (top-left) 
+        cluster_desc = []
+        cluster_desc.append(f"metric: {metric}")
+        cluster_desc.append(f"linkage: {method}")
+        cluster_desc.append(f"z-score: {'rows' if z_score else 'none'}")
+        cluster_desc.append(f"cluster: {cluster}")
+
+        annotation_txt = "\n".join(cluster_desc)
+
+        # place text next to the colorbar axis 
+        if hasattr(g, "cax") and g.cax is not None:
+            g.cax.text(
+                3.0, 0.5, annotation_txt,   
+                transform=g.cax.transAxes,
+                ha="left", va="center",
+                fontsize=10,
+                bbox=dict(facecolor="white", edgecolor="none", pad=2.0, alpha=0.9)
+            )
+
+        # --- Save ---
+        os.makedirs(main_folder + '/statistics', exist_ok=True)
+        name = main_folder + '/statistics/' + output_file_prefix + '_cluster_heatmap_' + plt_name_suffix
+        name = name.rstrip('_')
+
+        for suffix in suffixes:
+            g.savefig(name + suffix, bbox_inches='tight', dpi=300)
+
+        plt.show()
+        plt.close(getattr(g, "figure", getattr(g, "fig", None)))
+
+        # ---------------------------------------------
+        # REPORTING
+        if report is not None:
+            all_samples = list(df.columns)
+            txt = (
+                f"Clustered heatmap created (metric={metric}, method={method}, z_score={z_score}, cluster={cluster}).\n"
+                f"Samples ({len(all_samples)}): " + ", ".join(map(str, all_samples))
+            )
+            report.add_together([('text', txt), ('image', name), 'line'])
+
+        return g
 
     def visualizer_PCA_scree_plot(self, plt_name_suffix=''):
         """
