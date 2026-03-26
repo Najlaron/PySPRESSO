@@ -261,7 +261,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             List of batches: ['Batch1', 'Batch1', 'Batch1', 'Batch2', 'Batch2', ...]
         """
         if batch is None:
-            # if cpID exists in the data 
+            # if cpdID exists in the data 
             if 'cpdID' in self.data.columns:
                 batch = ['all_one_batch' for i in range(len(self.data.columns)-1)] # Dummy batch information (for cases where its all the same batch) #-1 because of cpdID
             else: # if called before cpdID is added
@@ -1544,7 +1544,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                 )
                 plt.xlabel('Samples in order')
                 plt.ylabel('Peak Area')
-                plt.title("High RSD compound: cpID = " + str(deleted_data.iloc[i, 0]))
+                plt.title("High RSD compound: cpdID = " + str(deleted_data.iloc[i, 0]))
 
                 for suffix in self.suffixes:
                     plt.savefig(
@@ -1727,7 +1727,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                         j += 1
                     plt.xlabel('Dilution factor')
                     plt.ylabel('Peak Area')
-                    plt.title("Dilution series - LOW linearity compound: cpID = " + data.iloc[i, 0] + " ;R2 = " + str(r2[i])[:7] + '('+ which_to_take + ')')
+                    plt.title("Dilution series - LOW linearity compound: cpdID = " + data.iloc[i, 0] + " ;R2 = " + str(r2[i])[:7] + '('+ which_to_take + ')')
                     for suffix in self.suffixes:
                         plt.savefig(self.main_folder + '/figures/dilution_series_linearity_' + str(i) + '_low_R2-deleted_by_correction' + suffix, dpi=400, bbox_inches='tight')
                     images.append(self.main_folder + '/figures/dilution_series_linearity_' + str(i) + '_low_R2-deleted_by_correction.png')
@@ -1760,7 +1760,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                     plt.xlabel('Dilution factor')
                     plt.ylabel('Peak Area')
                     # add the R2 value to the title
-                    plt.title("Dilution series - HIGH linearity compound: cpID = " + data.iloc[i, 0] + " ;R2 = " + str(r2[i])[:7] + '(' + which_to_take + ')')
+                    plt.title("Dilution series - HIGH linearity compound: cpdID = " + data.iloc[i, 0] + " ;R2 = " + str(r2[i])[:7] + '(' + which_to_take + ')')
                     plt.show()      
     
         # Filter out features (compounds) with R2 < threshold
@@ -1922,6 +1922,90 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
                                 'line'])    
         
         return self.data
+    
+    def delete_features(self, row_indexes_to_drop, note=""):
+        """
+        Function for filtering out (deleting) specific features. (Rows) Such as contaminants, medication metabolites, overabundant compounds, ... and others you wanna omit from the analysis.
+
+        Parameters
+        ----------
+        row_indexes_to_drop : list
+            List of row indexes to drop. Note that indexing starts with 0 (first feature).
+        note : str
+            Note, that will be added to the report and printed out. Default is "" Use to specify reason for deletion if needed. e.g.: contaminants, ... 
+        """
+        data = self.data
+
+        if not isinstance(row_indexes_to_drop, (list, np.ndarray, pd.Series)):
+            row_indexes_to_drop = [row_indexes_to_drop]
+
+        bad = [i for i in row_indexes_to_drop if i < 0 or i >= len(data)]
+        if bad:
+            raise ValueError(f"Some row indexes are out of range: {bad}")
+        
+        # Drop features
+        data = data.drop(data.index[row_indexes_to_drop]).reset_index(drop=True)
+        variable_metadata = self._filter_match_variable_metadata(data, self.variable_metadata)
+
+        # Update the object variables
+        self.data = data
+        self.variable_metadata = variable_metadata
+        # Other should need no changes
+
+        note = str(note)
+        print('Specified features with indexes: '+ str(row_indexes_to_drop) +' were removed from the data.')
+        print("Note: " + note)
+        #---------------------------------------------
+        #REPORTING
+        text0 = 'Specified features with indexes: '+ str(row_indexes_to_drop) +' were removed from the data.'
+        text1 = note
+        self.report.add_together([('text', text0),
+                                  ('text', text1),
+                                'line']) 
+
+        return data
+
+    def delete_features_by_cpdID(self, cpdIDs_to_drop, note=""):
+        """
+        Function for filtering out (deleting) specific features based on their cpdIDs. (Rows) Such as contaminants, medication metabolites, overabundant compounds, ... and others you wanna omit from the analysis.
+
+        Parameters
+        ----------
+        cpdIDs_to_drop : list (of strings)
+            List of cpdIDs to drop.
+        note : str
+            Note, that will be added to the report and printed out. Default is "" Use to specify reason for deletion if needed. e.g.: contaminants, ... 
+        """
+        data = self.data
+
+        if 'cpdID' not in data.columns:
+            raise ValueError("No cpdID column in the data.")
+
+        if isinstance(cpdIDs_to_drop, str):
+            cpdIDs_to_drop = [cpdIDs_to_drop]
+
+        # Drop features
+        data = data[~data['cpdID'].astype(str).isin(cpdIDs_to_drop)].reset_index(drop=True)
+        variable_metadata = self._filter_match_variable_metadata(data, self.variable_metadata)
+
+        # Update the object variables
+        self.data = data
+        self.variable_metadata = variable_metadata
+        # Other should need no changes
+
+        note = str(note)
+        print('Specified features: '+ str(cpdIDs_to_drop) +' were removed from the data.')
+        print("Note: " + note)
+        #---------------------------------------------
+        #REPORTING
+        text0 = 'Specified features: '+ str(cpdIDs_to_drop) +' were removed from the data.'
+        text1 = note
+        self.report.add_together([('text', text0),
+                                  ('text', text1),
+                                'line']) 
+
+        return data
+
 
     def delete_samples(self, column_indexes_to_drop, cpdID_as_zero = True):
         """
@@ -1931,9 +2015,12 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         ----------
         column_indexes_to_drop : list
             List of column indexes to drop.
+        cpdID_as_zero : bool
+            If we want to consider cpdID as a zero in the indexing. Default is True.
         """
         return self.drop_samples(column_indexes_to_drop, cpdID_as_zero=cpdID_as_zero)
 
+    # copy of a function just with a different name, keeping for now for compatibility reasons, will delete one of them later
     def filter_out_samples(self, column_indexes_to_drop, cpdID_as_zero = True):
         """
         Function for filtering out (deleting) specific samples. (Columns) Such as standards, ... and others you wanna omit from the analysis.
@@ -1942,9 +2029,10 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
         ----------
         column_indexes_to_drop : list
             List of column indexes to drop.
-        
+        cpdID_as_zero : bool
+            If we want to consider cpdID as a zero in the indexing. Default is True.        
         """
-        return self.drop_samples(column_indexes_to_drop)
+        return self.drop_samples(column_indexes_to_drop, cpdID_as_zero=cpdID_as_zero)
     
     def filter_out_group_by_metadata_columns(self, metadata_column, value):
         """
@@ -4194,7 +4282,7 @@ class Workflow: # WORKFLOW for Peak Matrix Filtering (and Correcting, Transformi
             plt.xticks(rotation=90)
             plt.xlabel('Samples in order')
             plt.ylabel('Peak Area')
-            plt.title("cpID = " + data.iloc[feature, 0])
+            plt.title("cpdID = " + data.iloc[feature, 0])
 
             #add legend
             legend_elements = [Line2D([0], [0], marker='o', color='w', label='QC samples', markerfacecolor='black', markersize=10, alpha = 0.5),
