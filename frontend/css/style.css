@@ -1,0 +1,105 @@
+/* Body */
+body {
+  margin: 0;
+  font-family: "Inter", sans-serif;
+}
+
+/* Header */
+header ul {
+  margin: 0;
+}
+
+header hgroup h1 {
+  margin-bottom: 2rem;
+}
+
+header hgroup p {
+  margin-bottom: 4rem;
+}
+
+header {
+  background: #7F5E35;
+  background: linear-gradient(180deg, rgb(127, 94, 53) 0%, rgb(113, 49, 5) 100%);
+  padding-inline: 4rem;
+}
+
+.nav,
+.hero-section {
+  max-width: 1140px;
+  margin-inline: auto;
+}
+
+.nav {
+  display: flex;
+  justify-content: flex-end;
+  padding: 40px 0;
+}
+
+.nav-menu {
+  display: flex;
+  align-items: center;
+  padding: 0;
+  gap: 2rem;
+}
+
+nav a {
+  padding-bottom: 0.5rem;
+}
+
+nav a:hover {
+  border-bottom: 3px solid #FFF7E8;
+}
+
+.hero-section {
+  display: flex;
+  align-items: center;
+  gap: clamp(2rem, 6vw, 10rem);
+  justify-content: space-between;
+  padding-top: 4rem;
+  padding-bottom: 8rem;
+}
+
+.wf-button {
+  background-color: #FFF7E8;
+  color: #7F5E35;
+  padding: 1rem 4rem;
+  border-radius: 2rem;
+  font-size: 1.5rem;
+  border: none;
+  font-family: "Inter", sans-serif;
+  font-weight: bold;
+}
+
+/* Main */
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 4rem;
+  padding-block: 4rem;
+}
+
+.container {
+  max-width: 1140px;
+  margin-inline: auto;
+}
+
+.flex-section {
+  display: flex;
+  justify-content: space-between;
+  gap: 2rem;
+}
+
+/* Footer */
+.footer-ref-item {
+  color: #FFF7E8;
+  font-weight: 300;
+}
+
+/* Create workflow */
+.create-wf-nav {
+  display: flex;
+  justify-content: space-between;
+  padding: 1rem 0;
+  max-width: 1140px;
+  margin-inline: auto;
+}/*# sourceMappingURL=style.css.map */

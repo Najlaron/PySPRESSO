@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+@theme {
+    --color-foam: #FFF7E8;
+    --color-light-foam: #FFFBF3;
+    --color-crema: #CFAB71;
+    --color-roast: #7F5E35;
+    --color-espresso: #713105;
+    --color-grounds: #4F351C;
+    --color-noir: #341100;
+
+    --spacing-ds-xl: 4rem;
+    --spacing-ds-lg: 2rem;
+    --spacing-ds-md: 1rem;
+    --spacing-ds-sm: 0.5rem;
+}
