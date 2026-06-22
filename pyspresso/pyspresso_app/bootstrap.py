@@ -1,4 +1,4 @@
-from core.autoload import autoload_operations
+from pyspresso_app.core.autoload import autoload_operations
 
 _initialized = False
 

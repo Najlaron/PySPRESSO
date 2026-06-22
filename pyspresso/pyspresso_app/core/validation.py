@@ -1,6 +1,6 @@
 from typing import Any
-from core.workflow_models import WorkflowState, WorkflowStep, StepStatus
-from core.operation_models import OperationDefinition
+from pyspresso_app.core.workflow_models import WorkflowState, WorkflowStep, StepStatus
+from pyspresso_app.core.operation_models import OperationDefinition
 
 
 def validate_step(
@@ -20,9 +20,7 @@ def validate_step(
     if missing_params:
         step.valid = False
         step.status = StepStatus.NEEDS_PARAMETERS
-        step.messages.append(
-            "Missing parameters: " + ", ".join(missing_params)
-        )
+        step.messages.append("Missing parameters: " + ", ".join(missing_params))
         return step
 
     missing_requirements = []

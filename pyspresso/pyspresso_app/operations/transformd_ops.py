@@ -1,14 +1,15 @@
 import numpy as np
 
-from core.registry import register_operation
-from core.operation_models import OperationTag, ParameterDef
-from core.workflow_models import WorkflowState
+from pyspresso_app.core.registry import register_operation
+from pyspresso_app.core.operation_models import OperationTag, ParameterDef
+from pyspresso_app.core.workflow_models import WorkflowState
 
 
 @register_operation(
     id="transformer_log",
     label="Log Transform",
     description="Apply or invert log transformation on sample intensity columns.",
+    citation="",
     category_tags=[OperationTag.TRANSFORMATION],
     parameter_schema=[
         ParameterDef("base", "float", False, 2, "Log base"),
@@ -31,9 +32,7 @@ def transformer_log(
 
     if invert:
         if state.log_base != base:
-            raise ValueError(
-                "Cannot invert log transformation with a different base."
-            )
+            raise ValueError("Cannot invert log transformation with a different base.")
 
         data.iloc[:, 1:] = base ** data.iloc[:, 1:] - eps
         state.was_log_transformed = False

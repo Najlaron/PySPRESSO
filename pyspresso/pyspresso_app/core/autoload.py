@@ -1,7 +1,7 @@
 import importlib
 import pkgutil
-from types import ModuleType
-import operations
+import pyspresso_app.operations as operations
+
 
 def autoload_operations() -> None:
     """
@@ -12,6 +12,6 @@ def autoload_operations() -> None:
         if module_info.ispkg:
             continue
 
-        module_name = f"operations.{module_info.name}"
+        module_name = f"pyspresso_app.operations.{module_info.name}"
         print("Importing:", module_name)
         importlib.import_module(module_name)

@@ -95,6 +95,16 @@ nav a:hover {
     border: none;
     font-family: $font;
     font-weight: bold;
+    transition: transform 300ms ease, box-shadow 300ms ease;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0);
+    transform: translateY(0);
+    display: inline-block;
+}
+
+.wf-button:hover {
+    transform: translateY(-($space-sm));
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+
 }
 
 

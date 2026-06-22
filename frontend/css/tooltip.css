@@ -1,0 +1,35 @@
+.tooltip-container {
+    position: relative;
+}
+
+.tooltip-children {
+    position: relative;
+}
+
+.tooltip {
+    position: absolute;
+    bottom: 130%;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #FFFBF3;
+    padding: 8px 10px;
+    width: 400px;
+    border-radius: 5px;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.3s, visibility 0.3s;
+    border: 2px solid rgba(79, 53, 28, 0.5);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.tooltip-children:hover .tooltip {
+    visibility: visible;
+    opacity: 1;
+}
+
+.tooltip::after {
+    position: absolute;
+    top: 55%;
+    right: 40%;
+    filter: drop-shadow(0 -2px 0 rgba(79, 53, 28, 0.5));
+}

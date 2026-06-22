@@ -1,9 +1,9 @@
 from datetime import datetime
 from typing import Any
 
-from core.registry import get_operation
-from core.validation import validate_step
-from core.workflow_models import Workflow, WorkflowStep, StepStatus
+from pyspresso_app.core.registry import get_operation
+from pyspresso_app.core.validation import validate_step
+from pyspresso_app.core.workflow_models import Workflow, WorkflowStep, StepStatus
 
 
 def run_step(workflow: Workflow, step: WorkflowStep) -> WorkflowStep:
@@ -12,7 +12,7 @@ def run_step(workflow: Workflow, step: WorkflowStep) -> WorkflowStep:
     validate_step(workflow.state, step, operation)
 
     if not step.enabled:
-        step.status = StepStatus.SKIPPED
+        step.status = StepStatus.NOT_RUN
         step.messages.append("Step is disabled.")
         return step
 

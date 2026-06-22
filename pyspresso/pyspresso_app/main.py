@@ -1,5 +1,5 @@
-from bootstrap import initialize
-from core.registry import list_operations
+from pyspresso_app.bootstrap import initialize
+from pyspresso_app.core.registry import list_operations
 
 
 def main():
