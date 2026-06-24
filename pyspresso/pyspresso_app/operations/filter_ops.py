@@ -871,6 +871,7 @@ def filter_relative_standard_deviation(
             default=None,
             label="Number of dilution series",
             help="Number of dilution series used.",
+            example="e.g.: 1, 2, ...",
         ),
         ParameterDef(
             name="threshold",
@@ -1359,6 +1360,7 @@ def filter_number_of_corrected_batches(
             default=None,
             label="Column indexes to drop",
             help="List of column indexes to remove.",
+            example="e.g.: [1, 2, 3]",
         ),
         ParameterDef(
             name="cpdID_as_zero",
@@ -1468,6 +1470,7 @@ def drop_samples(
             default=None,
             label="Row indexes to drop",
             help="List of feature row indexes to remove. Indexing starts at 0.",
+            example="e.g.: [1, 2, 3]",
         ),
         ParameterDef(
             name="note",
@@ -1560,6 +1563,7 @@ def drop_features(
             default=None,
             label="cpdIDs to drop",
             help="List of cpdIDs to remove.",
+            example="e.g.: [M232.88324-T24.387, M232.89504-T24.390]",
         ),
         ParameterDef(
             name="note",
@@ -1642,6 +1646,7 @@ def drop_features_by_cpdID(
             default=None,
             label="Metadata column",
             help="Name of the metadata column used for selecting samples.",
+            example="e.g.: Diagnosis",
         ),
         ParameterDef(
             name="value",
@@ -1650,6 +1655,7 @@ def drop_features_by_cpdID(
             default=None,
             label="Value",
             help="Value in the metadata column used for selecting samples.",
+            example="e.g.: Suspected",
         ),
     ],
     requires=["data", "metadata"],

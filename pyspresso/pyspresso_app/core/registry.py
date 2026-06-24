@@ -64,6 +64,7 @@ def operation_to_dict(op: OperationDefinition) -> dict:
                 "default": param.default,
                 "label": param.label,
                 "help": param.help,
+                "example": param.example,
             }
             for param in op.parameter_schema
         ],

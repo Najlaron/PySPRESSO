@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import WorkflowSidebar from "../components/organisms/WorkflowSidebar"
-import WorkflowContent from "../components/organisms/WorkflowContent"
+import WorkflowSidebar from "../components/organisms/Layouts/WorkflowSidebar"
+import WorkflowContent from "../components/organisms/Layouts/WorkflowContent"
 
 const url = "http://127.0.0.1:5000"
 
@@ -85,6 +85,30 @@ function WorkflowLayout() {
         }
     }
 
+    async function handleExecuteStep(stepId) {
+        try {
+
+            const response = await fetch(url + `/workflow/${workflowId}/step/${stepId}/run`, {
+                method: "POST",
+            })
+
+            const dataResponse = await response.json()
+
+            if (!response.ok) {
+                console.log("Chyba: " + (dataResponse.message || "Nepodařilo se spustit krok"))
+                return
+            }
+
+            // musí se aktulizovat workflow
+            const workflowResponse = await fetch(url + `/workflow/${workflowId}`)
+            const updatedWorkflow = await workflowResponse.json()
+            setWorkflow(updatedWorkflow)
+
+        } catch (error) {
+            alert("Chyba: " + error.message)
+        }
+    }
+
     async function handleDeleteStep(stepId) {
         try {
             const response = await fetch(url + `/workflow/${workflowId}/delete_step/${stepId}`, {
@@ -102,9 +126,23 @@ function WorkflowLayout() {
             const workflowResponse = await fetch(url + `/workflow/${workflowId}`)
             const updatedWorkflow = await workflowResponse.json()
             setWorkflow(updatedWorkflow)
+            setSelectedStep(null)
 
         } catch (error) {
             alert("Chyba: " + error.message)
+        }
+    }
+
+    async function handleCloseParameters() {
+        // Zavře form a obnoví workflow data
+        setSelectedStep(null)
+
+        try {
+            const workflowResponse = await fetch(url + `/workflow/${workflowId}`)
+            const updatedWorkflow = await workflowResponse.json()
+            setWorkflow(updatedWorkflow)
+        } catch (error) {
+            console.error("Chyba při obnovení workflow:", error)
         }
     }
 
@@ -132,11 +170,14 @@ function WorkflowLayout() {
                 onDeleteStep={handleDeleteStep}
                 onSelectStep={setSelectedStep}
                 selectedStep={selectedStep}
+                onExecuteStep={handleExecuteStep}
             />
             <WorkflowContent
                 workflow={workflow}
                 selectedStep={selectedStep}
                 operations={operations}
+                workflowId={workflowId}
+                onCloseParameters={handleCloseParameters}
             />
         </div>
     )

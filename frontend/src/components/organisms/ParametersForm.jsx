@@ -1,24 +1,72 @@
-import { useState } from "react"
-import ParameterInput from "../molecules/ParameterInput"
+import { useState, useEffect } from "react"
+import ParameterInput from "../molecules/WorkflowLayout/ParameterInput"
 
+const url = "http://127.0.0.1:5000"
 
-function ParametersForm({ step, operation }) {
-    // Initialize parameter values from step or empty
+function ParametersForm({ step, operation, workflowId, onClose }) {
+
+    function initializeParams() {
+        const params = {}
+        if (operation?.parameterSchema) {
+            operation.parameterSchema.forEach(param => {
+                if (step?.params && step.params[param.name] !== undefined) {
+                    params[param.name] = step.params[param.name]
+                } else if (param.default !== undefined) {
+                    params[param.name] = param.default
+                } else {
+                    params[param.name] = ""
+                }
+            })
+        }
+        return params
+    }
+
     const [parameterValues, setParameterValues] = useState(
-        step?.parameters || {}
+        initializeParams()
     )
+
+    useEffect(() => {
+        setParameterValues(initializeParams())
+    }, [operation, step])
+
+    const [error, setError] = useState("")
 
     const handleParameterChange = (paramName, value) => {
         setParameterValues((prev) => ({
             ...prev,
             [paramName]: value,
         }))
+        setError("")
     }
 
-    const handleSubmit = (e) => {
+    async function handleSubmit(e) {
         e.preventDefault()
-        console.log("Parameters to save:", parameterValues)
+        setError("")
 
+        try {
+            const response = await fetch(
+                url + `/workflow/${workflowId}/step/${step.step_id}/parameters`,
+                {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ parameters: parameterValues }),
+                }
+            )
+
+            const data = await response.json()
+
+            if (!response.ok) {
+                setError(data.message || "Failed to save parameters")
+                return
+            }
+
+            console.log("Parameters saved:", data)
+
+
+            onClose()
+        } catch (err) {
+            setError("Error: " + err.message)
+        }
     }
 
     if (!operation) {
@@ -51,23 +99,18 @@ function ParametersForm({ step, operation }) {
                                 >
                                     <ParameterInput
                                         parameter={param}
-                                        value={parameterValues[param.name] || ""}
+                                        value={parameterValues[param.name] !== undefined ? parameterValues[param.name] : ""}
                                         onChange={(value) =>
                                             handleParameterChange(param.name, value)
                                         }
                                     />
-                                    {param.description && (
-                                        <p className="text-sm text-noir/60 mt-ds-sm">
-                                            {param.description}
-                                        </p>
-                                    )}
                                 </div>
                             ))}
                             <div className="text-base text-noir">* Required parameter</div>
 
                             <button
                                 type="submit"
-                                className="bg-espresso text-foam px-ds-lg py-ds-md rounded-lg font-semibold cursor-pointer shadow-md text-xl"
+                                className="bg-espresso hover:bg-roast disabled:bg-roast/50 text-foam px-ds-lg py-ds-md rounded-lg font-semibold cursor-pointer shadow-md text-xl"
                             >
                                 Submit
                             </button>

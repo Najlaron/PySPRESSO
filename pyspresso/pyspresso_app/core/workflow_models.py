@@ -4,15 +4,78 @@ from typing import Any
 from enum import Enum
 import uuid
 import pandas as pd
+import math
 from pyspresso_app.config import db
 
-# def save_workflow(workflow: Workflow, path: str) -> None:
-#     with open(path, "wb") as f:
-#         pickle.dump(workflow, f)
 
-# def load_workflow(path: str) -> Workflow:
-#     with open(path, "rb") as f:
-#         return pickle.load(f)
+def _safe_convert_value(x: Any) -> Any:
+    """Convert a single value to a JSON-serializable equivalent.
+
+    - NaN/Infinity -> None
+    - pd.Timestamp / objects with isoformat -> isoformat string
+    - otherwise return value as-is
+    """
+    try:
+        if pd.isna(x):
+            return None
+    except Exception:
+        pass
+
+    if isinstance(x, float):
+        if math.isnan(x) or math.isinf(x):
+            return None
+
+    if isinstance(x, pd.Timestamp):
+        return x.isoformat()
+
+    if hasattr(x, "isoformat"):
+        try:
+            return x.isoformat()
+        except Exception:
+            pass
+
+    return x
+
+
+def _convert_datetime_col(series: pd.Series) -> pd.Series:
+    return series.apply(lambda x: x.isoformat() if pd.notnull(x) else None)
+
+
+def _convert_generic_col(series: pd.Series) -> pd.Series:
+    return series.apply(_safe_convert_value)
+
+
+def _df_to_serializable(df: pd.DataFrame | None) -> Any:
+    """Convert DataFrame to JSON-serializable dict, handling NaN, Infinity, and null values.
+
+    Implemented by delegating to small helper functions for clarity and testability.
+    """
+    if df is None:
+        return None
+
+    df2 = df.copy()
+
+    for col in df2.columns:
+        try:
+            if pd.api.types.is_datetime64_any_dtype(df2[col]):
+                df2[col] = _convert_datetime_col(df2[col])
+            else:
+                df2[col] = _convert_generic_col(df2[col])
+        except Exception:
+            # Fallback: attempt safe conversion on each value
+            df2[col] = df2[col].apply(_safe_convert_value)
+
+    return df2.to_dict(orient="split")
+
+
+def _series_to_serializable(series: pd.Series | None) -> Any:
+    """Convert Series to JSON-serializable dict, handling NaN, Infinity, and null values."""
+    if series is None:
+        return None
+    s2 = series.copy()
+    # Delegate conversion to the shared helper for consistency
+    s2 = s2.apply(_safe_convert_value)
+    return s2.to_dict()
 
 
 @dataclass
@@ -20,6 +83,7 @@ class WorkflowState:
     workflow_id: str
     name: str
     pyspresso_version: str
+    files: dict[str, str] = field(default_factory=dict)
 
     data: pd.DataFrame | None = None
     variable_metadata: pd.DataFrame | None = None
@@ -78,21 +142,20 @@ class WorkflowState:
             "workflow_id": self.workflow_id,
             "name": self.name,
             "pyspresso_version": self.pyspresso_version,
-            "data": (
-                self.data.to_dict(orient="split") if self.data is not None else None
-            ),
+            "files": self.files,
+            "data": (_df_to_serializable(self.data) if self.data is not None else None),
             "variable_metadata": (
-                self.variable_metadata.to_dict(orient="split")
+                _df_to_serializable(self.variable_metadata)
                 if self.variable_metadata is not None
                 else None
             ),
             "metadata": (
-                self.metadata.to_dict(orient="split")
+                _df_to_serializable(self.metadata)
                 if self.metadata is not None
                 else None
             ),
             "batch_info": (
-                self.batch_info.to_dict(orient="split")
+                _df_to_serializable(self.batch_info)
                 if self.batch_info is not None
                 else None
             ),
@@ -102,7 +165,7 @@ class WorkflowState:
             "standard_samples": self.standard_samples,
             "dilution_series_samples": self.dilution_series_samples,
             "dil_concentrations": self.dil_concentrations,
-            "report": self.report,
+            "report": "report ted není",
             "was_log_transformed": self.was_log_transformed,
             "log_base": self.log_base,
             "was_centered": self.was_centered,
@@ -114,18 +177,18 @@ class WorkflowState:
             "pca": self.pca,
             "pca_data": self.pca_data,
             "pca_df": (
-                self.pca_df.to_dict(orient="split") if self.pca_df is not None else None
+                _df_to_serializable(self.pca_df) if self.pca_df is not None else None
             ),
             "pca_per_var": self.pca_per_var,
             "pca_loadings": (
-                self.pca_loadings.to_dict(orient="split")
+                _df_to_serializable(self.pca_loadings)
                 if self.pca_loadings is not None
                 else None
             ),
             "pca_loadings_candidates": self.pca_loadings_candidates,
             "pca_loadings_candidates_len": self.pca_loadings_candidates_len,
             "fold_change": (
-                self.fold_change.to_dict(orient="split")
+                _df_to_serializable(self.fold_change)
                 if self.fold_change is not None
                 else None
             ),
@@ -133,19 +196,19 @@ class WorkflowState:
             "plsda_model": self.plsda_model,
             "plsda_stats": self.plsda_stats,
             "plsda_metadata": (
-                self.plsda_metadata.to_dict(orient="split")
+                _df_to_serializable(self.plsda_metadata)
                 if self.plsda_metadata is not None
                 else None
             ),
             "plsda_response_column": self.plsda_response_column,
             "plsda_vip_scores": (
-                self.plsda_vip_scores.to_dict()
+                _series_to_serializable(self.plsda_vip_scores)
                 if self.plsda_vip_scores is not None
                 else None
             ),
             "plsda_vip_candidates": self.plsda_vip_candidates,
             "plsda_vip_candidates_len": self.plsda_vip_candidates_len,
-            "candidates": self.candidates.to_dict(orient="split"),
+            "candidates": _df_to_serializable(self.candidates),
             "execution_log": self.execution_log,
             "artifacts": self.artifacts,
         }
@@ -157,12 +220,36 @@ class WorkflowState:
         def _restore_dataframe(df_dict):
             if df_dict is None:
                 return None
-            # orient="split" format returns dict with 'index', 'columns', 'data'
-            return pd.DataFrame(
+            df = pd.DataFrame(
                 df_dict.get("data"),
                 index=df_dict.get("index"),
                 columns=df_dict.get("columns"),
             )
+
+            try:
+                idx = pd.Index(df.index)
+                if len(idx) > 0 and idx.map(lambda x: isinstance(x, str)).all():
+                    parsed_idx = pd.to_datetime(idx, errors="coerce")
+                    if parsed_idx.notna().sum() > 0:
+                        df.index = parsed_idx
+            except Exception:
+                pass
+
+            for col in df.columns:
+                ser = df[col]
+                non_null = ser.dropna()
+
+                if non_null.empty:
+                    continue
+
+            if non_null.map(lambda x: isinstance(x, str)).all():
+                parsed = pd.to_datetime(ser, errors="coerce")
+                parsed_success = parsed.notna().sum()
+                total_non_null = len(non_null)
+                if total_non_null > 0 and (parsed_success / total_non_null) >= 0.5:
+                    df[col] = parsed
+
+            return df
 
         def _restore_series(series_dict):
             if series_dict is None:
@@ -173,6 +260,7 @@ class WorkflowState:
             workflow_id=data["workflow_id"],
             name=data["name"],
             pyspresso_version=data["pyspresso_version"],
+            files=data.get("files", {}),
             data=_restore_dataframe(data.get("data")),
             variable_metadata=_restore_dataframe(data.get("variable_metadata")),
             metadata=_restore_dataframe(data.get("metadata")),
@@ -279,7 +367,6 @@ class WorkflowDefinition:
     name: str
     pyspresso_version: str
 
-    files: dict[str, str] = field(default_factory=dict)
     steps: list[WorkflowStep] = field(default_factory=list)
 
     valid: bool = True
@@ -290,7 +377,6 @@ class WorkflowDefinition:
             "workflow_id": self.workflow_id,
             "name": self.name,
             "pyspresso_version": self.pyspresso_version,
-            "files": self.files,
             "steps": [step.to_dict() for step in self.steps],
             "valid": self.valid,
             "messages": self.messages,
@@ -306,7 +392,6 @@ class WorkflowDefinition:
             workflow_id=data["workflow_id"],
             name=data["name"],
             pyspresso_version=data["pyspresso_version"],
-            files=data.get("files", {}),
             steps=steps,
             valid=data.get("valid", True),
             messages=data.get("messages", []),

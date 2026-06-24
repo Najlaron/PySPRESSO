@@ -1,6 +1,6 @@
 import logoLightSrc from "../../media/logo-light.png"
-import Footer from "../components/organisms/Footer"
-import CreateWfButton from "../components/molecules/CreatingWfButton"
+import Footer from "../components/organisms/Layouts/Footer"
+import CreateWfButton from "../components/molecules/WorkflowSetup/CreatingWfButton"
 import { Link } from 'react-router-dom'
 
 
@@ -17,7 +17,7 @@ function WorkflowSetup() {
                 </nav>
             </header>
 
-            <main className="container flex-1 flex flex-col items-center py-ds-xl gap-ds-lg">
+            <main className="container flex flex-col items-center py-ds-xl gap-ds-lg">
                 <div>
                     <h1 className="text-4xl text-noir font-bold text-center mb-ds-lg">Workflow Setup</h1>
                     <p className="text-xl text-grounds max-w-2xl text-center">

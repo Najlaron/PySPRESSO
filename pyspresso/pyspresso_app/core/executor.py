@@ -4,6 +4,7 @@ from typing import Any
 from pyspresso_app.core.registry import get_operation
 from pyspresso_app.core.validation import validate_step
 from pyspresso_app.core.workflow_models import Workflow, WorkflowStep, StepStatus
+from pyspresso_app.core.pdf_reporter import Report
 
 
 def run_step(workflow: Workflow, step: WorkflowStep) -> WorkflowStep:

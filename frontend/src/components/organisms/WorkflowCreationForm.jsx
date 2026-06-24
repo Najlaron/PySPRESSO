@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { use, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import StepBadge from '../molecules/StepBadge'
 
@@ -10,27 +10,33 @@ function WorkflowCreationForm() {
     const [workflowName, setWorkflowName] = useState("")
     const [folderName, setFolderName] = useState("")
     const [reportFileName, setReportFileName] = useState("")
+    const [uploadData, setUploadData] = useState()
+    const [batchInfo, setUploadBatchInfo] = useState()
     const [errorMessage, setErrorMessage] = useState("")
     const [successMessage, setSuccessMessage] = useState("")
     const [isSubmitting, setIsSubmitting] = useState(false)
+    const [dataFormat, setDataFormat] = useState()
 
     async function onSubmit(e) {
         e.preventDefault()
         setErrorMessage("")
 
-        const data = {
-            workflowName,
-            folderName,
-            reportFileName,
+        const formData = new FormData()
+        formData.append("workflowName", workflowName)
+        formData.append("folderName", folderName)
+        formData.append("reportFileName", reportFileName)
+
+        if (uploadData) {
+            formData.append("data", uploadData)
+        }
+        if (batchInfo) {
+            formData.append("batchInfo", batchInfo)
         }
 
         try {
             const response = await fetch(url + "/new_workflow", {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify(data),
+                body: formData,
             })
 
             const responseData = await response.json()
@@ -43,6 +49,8 @@ function WorkflowCreationForm() {
             setWorkflowName("")
             setFolderName("")
             setReportFileName("")
+            setUploadData(null)
+            setUploadBatchInfo(null)
 
             // přesměrování na layout
             setTimeout(() => {
@@ -81,6 +89,7 @@ function WorkflowCreationForm() {
                         value={folderName}
                         onChange={(e) => setFolderName(e.target.value)}
                         className="border border-roast/50 rounded-[10px] px-3 py-2 h-14 w-78 focus:border-noir focus:outline-none focus:border-2"
+                        required
                     />
                 </div>
                 <div className="flex flex-col">
@@ -91,6 +100,7 @@ function WorkflowCreationForm() {
                         value={reportFileName}
                         onChange={(e) => setReportFileName(e.target.value)}
                         className="border border-roast/50 rounded-[10px] px-3 py-2 h-14 w-78 focus:border-noir focus:outline-none focus:border-2"
+                        required
                     />
                 </div>
             </div>
@@ -122,6 +132,27 @@ function WorkflowCreationForm() {
                             className="border border-dashed border-roast/75 rounded-[10px] px-3 py-16"
                         />
                     </div>
+                </div>
+            </div>
+
+            <div>
+                <div className="flex justify-center items-center gap-ds-lg mb-ds-lg">
+                    <StepBadge
+                        stepNumber={3}
+                    />
+                    <h2 className="text-3xl font-bold text-noir">Data format</h2>
+                </div>
+
+                <div className="flex flex-col">
+                    <label className="mb-ds-sm font-medium text-noir text-2xl">Format</label>
+                    <select
+                        id="format"
+                        value={dataFormat}
+                        onChange={(e) => setDataFormat(e.target.value)}
+                        className="border border-roast/75 rounded-lg p-ds-sm h-18 w-80 focus:border-noir focus:outline-none focus:border-2"
+                    >
+                        <option value="cd" className="">Compound Discoverer</option>
+                    </select>
                 </div>
             </div>
 

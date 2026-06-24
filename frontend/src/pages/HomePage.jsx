@@ -1,7 +1,7 @@
-import FeatureCard from '../components/molecules/FeatureCard'
+import FeatureCard from '../components/molecules/HomePage/FeatureCard'
 import Step from '../components/molecules/Step'
-import HowToCite from '../components/molecules/HowToCite'
-import Footer from '../components/organisms/Footer'
+import HowToCite from '../components/molecules/HomePage/HowToCite'
+import Footer from '../components/organisms/Layouts/Footer'
 import dataIconSrc from "../../media/icons/data-management-icon.svg"
 import logoLightSrc from "../../media/logo-light.png"
 import { Link } from 'react-router-dom'

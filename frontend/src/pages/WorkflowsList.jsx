@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import WorkflowCard from "../components/molecules/WorkflowCard"
+import WorkflowCard from "../components/molecules/WorkflowList/WorkflowCard"
 
 
 const url = "http://127.0.0.1:5000"

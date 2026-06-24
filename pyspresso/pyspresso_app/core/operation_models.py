@@ -11,6 +11,7 @@ class ParameterDef:
     default: Any = None
     label: str = ""
     help: str = ""
+    example: str = ""
 
 
 class OperationTag(str, Enum):
