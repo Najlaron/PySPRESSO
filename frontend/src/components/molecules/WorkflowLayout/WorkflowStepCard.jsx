@@ -7,7 +7,7 @@ import { HiOutlineDotsHorizontal } from "react-icons/hi"
 import { RiDeleteBinLine } from "react-icons/ri"
 
 
-function WorkflowStepCard({ stepNumber, title, category, deleteHandle, onSelectStep, isSelected, step, operation, executeHandle }) {
+function WorkflowStepCard({ stepNumber, title, category, deleteHandle, onSelectStep, isSelected, step, operation, executeHandle, isRunning }) {
     const [menuOpen, setMenuOpen] = useState(false)
     const [isExpanded, setIsExpanded] = useState(false)
     const menuRef = useRef(null)
@@ -94,9 +94,10 @@ function WorkflowStepCard({ stepNumber, title, category, deleteHandle, onSelectS
                         <span className="text-base">Parameters</span>
                     </button>
 
-                    <button className="cursor-pointer flex items-center gap-2 px-ds-md py-1  text-espresso rounded-lg transition border-2 border-crema hover:bg-crema" onClick={executeHandle}>
+                    <button className="cursor-pointer flex items-center gap-2 px-ds-md py-1  text-espresso rounded-lg transition border-2 border-crema hover:bg-crema" onClick={executeHandle} disabled={isRunning}>
                         <MdPlayArrow size="1.5rem" />
-                        <span className="text-base">Run</span>
+
+                        <span className="text-base">{isRunning ? "Running" : "Run"}</span>
                     </button>
                 </div>
 

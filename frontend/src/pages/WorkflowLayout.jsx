@@ -14,6 +14,7 @@ function WorkflowLayout() {
     const [searchQuery, setSearchQuery] = useState("")
     const [loading, setLoading] = useState(false)
     const [selectedStep, setSelectedStep] = useState(null)
+    const [isRunning, setIsRunning] = useState(false)
 
     useEffect(() => {
         async function loadWorkflow() {
@@ -86,6 +87,8 @@ function WorkflowLayout() {
     }
 
     async function handleExecuteStep(stepId) {
+        setIsRunning(true) // krok běží
+
         try {
 
             const response = await fetch(url + `/workflow/${workflowId}/step/${stepId}/run`, {
@@ -102,10 +105,13 @@ function WorkflowLayout() {
             // musí se aktulizovat workflow
             const workflowResponse = await fetch(url + `/workflow/${workflowId}`)
             const updatedWorkflow = await workflowResponse.json()
+
             setWorkflow(updatedWorkflow)
 
         } catch (error) {
             alert("Chyba: " + error.message)
+        } finally {
+            setIsRunning(false) // krok doběhl
         }
     }
 
@@ -171,6 +177,7 @@ function WorkflowLayout() {
                 onSelectStep={setSelectedStep}
                 selectedStep={selectedStep}
                 onExecuteStep={handleExecuteStep}
+                isStepRunning={isRunning}
             />
             <WorkflowContent
                 workflow={workflow}

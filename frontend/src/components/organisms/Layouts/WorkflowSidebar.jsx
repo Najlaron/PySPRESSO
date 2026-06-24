@@ -14,7 +14,8 @@ function WorkflowSidebar({
     onDeleteStep,
     onSelectStep,
     selectedStep,
-    onExecuteStep
+    onExecuteStep,
+    isStepRunning
 }) {
     return (
         <aside className="w-[30%] bg-light-foam pt-ds-xl px-ds-lg">
@@ -64,6 +65,7 @@ function WorkflowSidebar({
                             step={step}
                             operation={op}
                             executeHandle={() => onExecuteStep(step.step_id)}
+                            isRunning={isStepRunning}
                         />
                     )
                 })}
