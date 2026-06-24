@@ -6,6 +6,7 @@ import DataFrame from "../DataFrame"
 
 function WorkflowContent({ workflow, selectedStep, operations, workflowId, onCloseParameters }) {
     const [activeTab, setActiveTab] = useState(null)
+    const [showJson, setShowJson] = useState(false)
 
     function formatWorkflowForDisplay(wf) {
         if (!wf) return wf
@@ -85,10 +86,23 @@ function WorkflowContent({ workflow, selectedStep, operations, workflowId, onClo
                     />
                 )}
 
+
                 {/* 5. Tohle je ten JSON */}
-                {/* <pre className="bg-white p-4 rounded border overflow-auto mb-ds-xl">
-                    {JSON.stringify(formatWorkflowForDisplay(workflow), null, 2)}
-                </pre> */}
+                <div className="mt-ds-lg">
+                    <button className="bg-crema p-ds-md text-noir font-semibold"
+                        onClick={() => setShowJson(!showJson)}
+                    >
+                        {showJson ? "Disable JSON" : "Show JSON"}
+                    </button>
+
+                    {showJson && (
+                        <pre className="bg-white p-4 rounded border overflow-auto mt-ds-md">
+                            {JSON.stringify(formatWorkflowForDisplay(workflow), null, 2)}
+                        </pre>
+                    )}
+
+                </div>
+
 
             </div>
 
