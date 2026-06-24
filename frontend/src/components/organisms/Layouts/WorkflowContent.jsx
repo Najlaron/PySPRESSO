@@ -71,21 +71,24 @@ function WorkflowContent({ workflow, selectedStep, operations, workflowId, onClo
 
             <div className="flex flex-col gap-ds-lg">
                 {/* 2. Tohle je ta obrazovka s napísem, že máš spustit tu vizualizaci (v ní se potom bude zobrazovat ta tabulka) */}
-                <WorkflowVisualization />
+                {(!activeTab) && (
+                    <WorkflowVisualization />
+                )}
 
-                {/* 3. Tohle jsou ty tlačítka (data, metadata,...) */}
-                <DataTabs
-                    setActiveTab={setActiveTab}
-                    activeTab={activeTab}
-                />
-
-                {/* 4. Tohle je potom tabulka, která zobrazuje ty data */}
+                {/* 3. Tohle je potom tabulka, která zobrazuje ty data */}
                 {activeTab && workflow?.state && (
                     <DataFrame
                         data={getDataFrameForTab(activeTab)}
                     />
                 )}
 
+                {/* 4. Tohle jsou ty tlačítka (data, metadata,...) */}
+                {workflow?.state.data && (
+                    <DataTabs
+                        setActiveTab={setActiveTab}
+                        activeTab={activeTab}
+                    />
+                )}
 
                 {/* 5. Tohle je ten JSON */}
                 <div className="mt-ds-lg">
