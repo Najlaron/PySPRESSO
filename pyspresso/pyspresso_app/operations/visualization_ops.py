@@ -18,9 +18,14 @@ def _load_plotting():
     """
     Import matplotlib lazily so operation registration does not fail
     if matplotlib is not installed yet.
+
+    Use the non-GUI Agg backend because Flask runs plotting code outside
+    the normal desktop GUI main thread.
     """
     try:
         import matplotlib as mpl
+        mpl.use("Agg", force=True)
+
         import matplotlib.pyplot as plt
         from matplotlib.lines import Line2D
     except ImportError as exc:
@@ -155,7 +160,7 @@ def _make_batch_colors(batch, cmap_name):
 
     unique_batches = list(dict.fromkeys(batch))
 
-    cmap = mpl.cm.get_cmap(cmap_name)
+    cmap = plt.get_cmap(cmap_name)
 
     if len(unique_batches) == 1:
         normalized_indices = {unique_batches[0]: 0.0}

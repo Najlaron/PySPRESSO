@@ -433,7 +433,7 @@ def _plot_s_exploration(batch_best_s, batch_p_ranges, figures_folder):
         "The correction is fitted in log2 space batch-by-batch and anchored to the global QC median."
     ),
     citation="",
-    category_tags=[OperationTag.CORRECTION],
+    category_tags=[OperationTag.CORRECTION, OperationTag.VISUALIZATION],
     parameter_schema=[
         ParameterDef(
             name="show",
@@ -515,6 +515,8 @@ def correct_qc_interpolation(
         4. Optionally back-transform to raw scale.
     """
     import matplotlib as mpl
+    mpl.use("Agg", force=True)
+
     import matplotlib.pyplot as plt
 
     df_in = state.data
@@ -817,9 +819,6 @@ def correct_qc_interpolation(
                 if spline is not None:
                     yb_original = spline(xb)
                     yb_corrected = yb_original - yb_original + anchor_log
-
-                    preds_min = min(preds_min, np.nanmin(yb_corrected))
-                    preds_max = max(preds_max, np.nanmax(yb_corrected))
 
                     plt.plot(
                         xb,

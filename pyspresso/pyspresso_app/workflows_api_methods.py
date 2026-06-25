@@ -2,7 +2,7 @@ import uuid
 import os
 from pathlib import Path
 
-from flask import request, jsonify
+from flask import request, jsonify, send_from_directory, abort
 from werkzeug.utils import secure_filename
 from pyspresso_app.config import app, db
 from pyspresso_app.core.workflow_models import (
@@ -25,6 +25,9 @@ ALLOWED_EXTENSIONS = {"csv", "txt", "xlsx", "xls", "tsv"}
 INITIALIZATION_OPERATION_BY_FORMAT = {
     "compound_discoverer": "initializer_compound_discoverer",
 }
+
+OUTPUT_FOLDER = Path(__file__).resolve().parents[1] / "outputs"
+OUTPUT_FOLDER.mkdir(exist_ok=True)
 
 
 def allowed_file(filename):
@@ -400,6 +403,22 @@ def execute_step(workflow_id: str, step_id: str):
         )
     except Exception as ex:
         return jsonify({"message": str(ex), "step": step.to_dict()}), 400
+
+@app.route("/outputs/<path:filename>", methods=["GET"])
+def serve_output_file(filename):
+    """Serve generated output files, especially visualization images."""
+    output_root = OUTPUT_FOLDER.resolve()
+    requested_path = (output_root / filename).resolve()
+
+    try:
+        requested_path.relative_to(output_root)
+    except ValueError:
+        abort(403)
+
+    if not requested_path.is_file():
+        return jsonify({"message": "Output file not found"}), 404
+
+    return send_from_directory(output_root, filename)
 
 
 if __name__ == "__main__":

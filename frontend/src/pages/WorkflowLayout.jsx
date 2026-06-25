@@ -185,6 +185,7 @@ function WorkflowLayout() {
                 operations={operations}
                 workflowId={workflowId}
                 onCloseParameters={handleCloseParameters}
+                apiBaseUrl={url}
             />
         </div>
     )
