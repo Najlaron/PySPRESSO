@@ -2,7 +2,7 @@ import uuid
 import os
 from pathlib import Path
 
-from flask import request, jsonify
+from flask import request, jsonify, send_from_directory, abort
 from werkzeug.utils import secure_filename
 from pyspresso_app.config import app, db
 from pyspresso_app.core.workflow_models import (
@@ -22,6 +22,12 @@ UPLOAD_FOLDER = Path(__file__).parent.parent.parent / "uploads"
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 # povolené formáty dat
 ALLOWED_EXTENSIONS = {"csv", "txt", "xlsx", "xls", "tsv"}
+INITIALIZATION_OPERATION_BY_FORMAT = {
+    "compound_discoverer": "initializer_compound_discoverer",
+}
+
+OUTPUT_FOLDER = Path(__file__).resolve().parents[1] / "outputs"
+OUTPUT_FOLDER.mkdir(exist_ok=True)
 
 
 def allowed_file(filename):
@@ -45,6 +51,16 @@ def save_uploaded_file(file, subfolder="workflows"):
     file.save(str(filepath))
     return str(filepath.relative_to(UPLOAD_FOLDER.parent))
 
+def get_default_params_for_operation(operation_id: str) -> dict:
+    """Build initial parameter dictionary from operation defaults."""
+    operation = get_operation(operation_id)
+
+    params = {}
+    for param in operation.parameter_schema:
+        if param.default is not None:
+            params[param.name] = param.default
+
+    return params
 
 # aktualizuje záznam v databázi z instance třídy workflow
 def save_workflow(workflow_id: str, workflow: Workflow):
@@ -107,6 +123,7 @@ def create_new_workflow():
     workflow_name = request.form.get("workflowName", "").strip()
     folder_name = request.form.get("folderName", "").strip()
     report_file_name = request.form.get("reportFileName", "").strip()
+    data_format = request.form.get("dataFormat", "").strip()
 
     # kontrola, jestli byly vyplněné povinné pole
     if not workflow_name:
@@ -117,6 +134,9 @@ def create_new_workflow():
 
     if not report_file_name:
         return jsonify({"message": "reportFileName is required."}), 400
+    
+    if not data_format:
+        return jsonify({"message": "dataFormat is required."}), 400
 
     # uloží data a batch info a vratí cesty k nim (možná hodit do samotné funkce, at tady toho není moc)
     files_dict = {}
@@ -137,8 +157,21 @@ def create_new_workflow():
     workflow_id = str(uuid.uuid4())
     workflow = Workflow(workflow_id=workflow_id, name=workflow_name)
 
-    # uloží cesty k souborům
+    # saves paths to folders
     workflow.state.files = files_dict
+
+    initialization_operation_id = INITIALIZATION_OPERATION_BY_FORMAT.get(data_format)
+
+    if initialization_operation_id is None:
+        return jsonify({"message": f"Unknown data format: {data_format}"}), 400
+
+    initialization_step = WorkflowStep(
+        step_id=str(uuid.uuid4()),
+        operation_id=initialization_operation_id,
+        params=get_default_params_for_operation(initialization_operation_id),
+    )
+
+    workflow.definition.steps.append(initialization_step)
 
     definition = workflow.definition.to_dict()
     state = workflow.state.to_dict()
@@ -370,6 +403,22 @@ def execute_step(workflow_id: str, step_id: str):
         )
     except Exception as ex:
         return jsonify({"message": str(ex), "step": step.to_dict()}), 400
+
+@app.route("/outputs/<path:filename>", methods=["GET"])
+def serve_output_file(filename):
+    """Serve generated output files, especially visualization images."""
+    output_root = OUTPUT_FOLDER.resolve()
+    requested_path = (output_root / filename).resolve()
+
+    try:
+        requested_path.relative_to(output_root)
+    except ValueError:
+        abort(403)
+
+    if not requested_path.is_file():
+        return jsonify({"message": "Output file not found"}), 404
+
+    return send_from_directory(output_root, filename)
 
 
 if __name__ == "__main__":

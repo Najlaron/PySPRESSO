@@ -165,7 +165,7 @@ class WorkflowState:
             "standard_samples": self.standard_samples,
             "dilution_series_samples": self.dilution_series_samples,
             "dil_concentrations": self.dil_concentrations,
-            "report": "report ted není",
+            "report": None, # temporary fix
             "was_log_transformed": self.was_log_transformed,
             "log_base": self.log_base,
             "was_centered": self.was_centered,
@@ -271,7 +271,7 @@ class WorkflowState:
             standard_samples=data.get("standard_samples"),
             dilution_series_samples=data.get("dilution_series_samples"),
             dil_concentrations=data.get("dil_concentrations"),
-            report=data.get("report"),
+            report= None, # temporary fix
             was_log_transformed=data.get("was_log_transformed", False),
             log_base=data.get("log_base"),
             was_centered=data.get("was_centered", False),

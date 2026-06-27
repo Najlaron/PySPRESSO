@@ -1,4 +1,4 @@
-import { use, useState } from "react"
+import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import StepBadge from '../molecules/StepBadge'
 
@@ -15,7 +15,7 @@ function WorkflowCreationForm() {
     const [errorMessage, setErrorMessage] = useState("")
     const [successMessage, setSuccessMessage] = useState("")
     const [isSubmitting, setIsSubmitting] = useState(false)
-    const [dataFormat, setDataFormat] = useState()
+    const [dataFormat, setDataFormat] = useState("")
 
     async function onSubmit(e) {
         e.preventDefault()
@@ -25,6 +25,7 @@ function WorkflowCreationForm() {
         formData.append("workflowName", workflowName)
         formData.append("folderName", folderName)
         formData.append("reportFileName", reportFileName)
+        formData.append("dataFormat", dataFormat)
 
         if (uploadData) {
             formData.append("data", uploadData)
@@ -150,8 +151,14 @@ function WorkflowCreationForm() {
                         value={dataFormat}
                         onChange={(e) => setDataFormat(e.target.value)}
                         className="border border-roast/75 rounded-lg p-ds-sm h-18 w-80 focus:border-noir focus:outline-none focus:border-2"
+                        required
                     >
-                        <option value="cd" className="">Compound Discoverer</option>
+                        <option value="" disabled>
+                            Choose data format
+                        </option>
+                        <option value="compound_discoverer">
+                            Compound Discoverer
+                        </option>
                     </select>
                 </div>
             </div>
@@ -160,7 +167,7 @@ function WorkflowCreationForm() {
             {errorMessage ? <p className="text-red-600">{errorMessage}</p> : null}
 
             <button type="submit" className="bg-grounds text-foam rounded-4xl py-4 w-50 text-2xl font-semibold cursor-pointer">
-                Sumbit
+                Submit
             </button>
         </form>
     )
