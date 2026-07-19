@@ -1,14 +1,34 @@
 import { AgGridProvider, AgGridReact } from 'ag-grid-react'
-import { AllCommunityModule } from 'ag-grid-community';
+import { AllCommunityModule, themeQuartz } from 'ag-grid-community'
 import { useMemo } from 'react'
 
+const tableTheme = themeQuartz
+    .withParams({
+        backgroundColor: '#ffffff',
+        foregroundColor: '#341100',
+        headerBackgroundColor: '#faf8f5',
+        spacing: 12,
+        fontSize: 16,
+        headerFontSize: 18,
+        wrapperBorder: false,
+        headerRowBorder: false,
+    })
+
+// funkce pro správné vypisování řádků
 function DataFrame({ data }) {
+    const normalizeFieldName = (name) => {
+        return name
+            .replace(/[()[\]]/g, '')
+            .replace(/\s+/g, '_')
+            .replace(/\./g, '_')
+    }
+
     const rowData = useMemo(() => {
-        return data.data.map(row =>
+        return data.data.map((row) =>
             Object.fromEntries(
                 data.columns.map((column, index) => [
-                    column,
-                    row[index]
+                    normalizeFieldName(column),
+                    row[index] !== undefined ? row[index] : null
                 ])
             )
         )
@@ -16,7 +36,8 @@ function DataFrame({ data }) {
 
     const columnDefs = useMemo(() => {
         return data.columns.map(column => ({
-            field: column,
+            field: normalizeFieldName(column),
+            headerName: column,
             sortable: true,
             resizable: true
         }))
@@ -25,15 +46,9 @@ function DataFrame({ data }) {
     const modules = [AllCommunityModule]
 
     return (
-
-
         <AgGridProvider modules={modules}>
             <div
-                className="ag-theme-quartz"
-                style={{
-                    height: '700px',
-                    width: '100%'
-                }}
+                className="h-175 w-full shadow-lg"
             >
                 <AgGridReact
                     modules={modules}
@@ -41,6 +56,7 @@ function DataFrame({ data }) {
                     columnDefs={columnDefs}
                     pagination={true}
                     paginationPageSize={100}
+                    theme={tableTheme}
                 />
             </div>
         </AgGridProvider >

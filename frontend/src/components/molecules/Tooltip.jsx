@@ -1,8 +1,6 @@
 import "../../../css/tooltip.css"
 
 function Tooltip({ children, text }) {
-
-
     return (
         <div className="tooltip-container">
             <div className="tooltip-children">

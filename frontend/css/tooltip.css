@@ -13,7 +13,10 @@
     transform: translateX(-50%);
     background-color: #FFFBF3;
     padding: 8px 10px;
-    width: 400px;
+    width: 360px;
+    color: #341100;
+    font-size: 18px;
+    line-height: 1.4;
     border-radius: 5px;
     visibility: hidden;
     opacity: 0;

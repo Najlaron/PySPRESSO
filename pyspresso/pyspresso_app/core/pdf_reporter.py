@@ -35,13 +35,14 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-
 # -----------------------------
 # Formatting helpers
 # -----------------------------
 
+
 def _is_number(x: Any) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool)
+
 
 def _custom_round(x: Any, precision: int = 3) -> str:
     """
@@ -71,60 +72,61 @@ def _custom_round(x: Any, precision: int = 3) -> str:
     except Exception:
         return str(x)
 
+
 def _escape_html(s: str) -> str:
     # ReportLab Paragraph uses a mini-HTML parser; escape the important characters.
-    return (
-        s.replace("&", "&amp;")
-         .replace("<", "&lt;")
-         .replace(">", "&gt;")
-    )
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
 
 def _escape_html_allow_tags(s: str, allowed_tags=None) -> str:
-        """
-        Escape text for ReportLab Paragraph, but keep a small set of tags (e.g. <b>, <i>, <br/>)
-        so formatting works while still avoiding XML/parser breaks.
-        """
-        if allowed_tags is None:
-            allowed_tags = [
-                "b", "/b",
-                "i", "/i",
-                "u", "/u",
-                "br", "br/",
-                "sup", "/sup",
-                "sub", "/sub",
-            ]
+    """
+    Escape text for ReportLab Paragraph, but keep a small set of tags (e.g. <b>, <i>, <br/>)
+    so formatting works while still avoiding XML/parser breaks.
+    """
+    if allowed_tags is None:
+        allowed_tags = [
+            "b",
+            "/b",
+            "i",
+            "/i",
+            "u",
+            "/u",
+            "br",
+            "br/",
+            "sup",
+            "/sup",
+            "sub",
+            "/sub",
+        ]
 
-        if s is None:
-            return ""
+    if s is None:
+        return ""
 
-        s = str(s)
+    s = str(s)
 
-        # Normalize common HTML -> ReportLab-ish
-        s = s.replace("<strong>", "<b>").replace("</strong>", "</b>")
-        s = s.replace("<em>", "<i>").replace("</em>", "</i>")
-        s = s.replace("<br>", "<br/>").replace("<br />", "<br/>")
+    # Normalize common HTML -> ReportLab-ish
+    s = s.replace("<strong>", "<b>").replace("</strong>", "</b>")
+    s = s.replace("<em>", "<i>").replace("</em>", "</i>")
+    s = s.replace("<br>", "<br/>").replace("<br />", "<br/>")
 
-        # Protect allowed tags with placeholders
-        placeholders = {}
-        for idx, tag in enumerate(allowed_tags):
-            token = f"<{tag}>"
-            ph = f"__RL_TAG_{idx}__"
-            if token in s:
-                s = s.replace(token, ph)
-                placeholders[ph] = token
+    # Protect allowed tags with placeholders
+    placeholders = {}
+    for idx, tag in enumerate(allowed_tags):
+        token = f"<{tag}>"
+        ph = f"__RL_TAG_{idx}__"
+        if token in s:
+            s = s.replace(token, ph)
+            placeholders[ph] = token
 
-        # Escape remaining special chars
-        s = (
-            s.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
+    # Escape remaining special chars
+    s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-        # Restore allowed tags
-        for ph, token in placeholders.items():
-            s = s.replace(ph, token)
+    # Restore allowed tags
+    for ph, token in placeholders.items():
+        s = s.replace(ph, token)
 
-        return s
+    return s
+
 
 def _ellipsize(s: str, max_chars: int) -> str:
     if max_chars <= 0:
@@ -137,6 +139,7 @@ def _ellipsize(s: str, max_chars: int) -> str:
     if max_chars <= 3:
         return s[:max_chars]
     return s[: max_chars - 3] + "..."
+
 
 def _fit_title_font_size(
     text: str,
@@ -162,6 +165,7 @@ def _fit_title_font_size(
 # Canvas with page numbering
 # -----------------------------
 
+
 class NumberedCanvas(Canvas):
     def showPage(self):
         self.setFont("Helvetica", 9)
@@ -175,6 +179,7 @@ class NumberedCanvas(Canvas):
 # Report class (public API)
 # -----------------------------
 
+
 class _TablePreviewConfig:
     def __init__(
         self,
@@ -184,7 +189,7 @@ class _TablePreviewConfig:
         max_cols: int = 14,
         head_cols: int = 6,
         tail_cols: int = 5,
-        ellipsis_token: str = '…',
+        ellipsis_token: str = "…",
     ):
         self.max_rows = max_rows
         self.head_rows = head_rows
@@ -193,6 +198,7 @@ class _TablePreviewConfig:
         self.head_cols = head_cols
         self.tail_cols = tail_cols
         self.ellipsis_token = ellipsis_token
+
 
 class Report:
     """
@@ -316,16 +322,22 @@ class Report:
     # Cover / finalization
     # ---------------------------------------------
 
-    def initialize_report(self):  
+    def initialize_report(self):
         """
         Initialize a nicer cover page.
 
         """
-        title_text = self.title.strip() if isinstance(self.title, str) and self.title.strip() else os.path.splitext(os.path.basename(self.name))[0]
+        title_text = (
+            self.title.strip()
+            if isinstance(self.title, str) and self.title.strip()
+            else os.path.splitext(os.path.basename(self.name))[0]
+        )
         title_text = _escape_html(title_text)
 
         # Fit the main title a bit better.
-        fitted_size = _fit_title_font_size(title_text, max_width_pt=self.page_width * 0.92, start_size=30, min_size=16)
+        fitted_size = _fit_title_font_size(
+            title_text, max_width_pt=self.page_width * 0.92, start_size=30, min_size=16
+        )
         cover_title_style = self.styles["cover_title"].clone("cover_title_fit")
         cover_title_style.fontName = "Helvetica-Bold"
         cover_title_style.fontSize = fitted_size
@@ -334,7 +346,6 @@ class Report:
         self.elements.append(Spacer(1, 18))
         self.elements.append(Paragraph(title_text, cover_title_style))
 
-    
         descriptor = "REPORT"
         self.elements.append(Paragraph(descriptor, self.styles["cover_subtitle"]))
 
@@ -380,12 +391,18 @@ class Report:
             return line
         self.elements.append(line)
 
-
-    def add_text(self, text, style="normal", alignment="left", font_size=10, return_element_only=False):
+    def add_text(
+        self,
+        text,
+        style="normal",
+        alignment="left",
+        font_size=10,
+        return_element_only=False,
+    ):
         """
         Add a text paragraph with specified style and alignment.
         """
-    
+
         alignment_dict = {"left": TA_LEFT, "center": TA_CENTER, "right": TA_RIGHT}
 
         if text is None:
@@ -469,16 +486,24 @@ class Report:
         # Subtle zebra for readability
         for r in range(len(rows)):
             if r % 2 == 1:
-                table.setStyle(TableStyle([("BACKGROUND", (0, r), (-1, r), colors.whitesmoke)]))
+                table.setStyle(
+                    TableStyle([("BACKGROUND", (0, r), (-1, r), colors.whitesmoke)])
+                )
 
         return table
 
-    def add_image(self, image, max_width=None, max_height=None, return_element_only=False):
+    def add_image(
+        self, image, max_width=None, max_height=None, return_element_only=False
+    ):
         """
         Add an image (path or Image object), scaled to fit the usable page area.
         """
         if isinstance(image, str):
-            if not (image.lower().endswith(".png") or image.lower().endswith(".jpg") or image.lower().endswith(".jpeg")):
+            if not (
+                image.lower().endswith(".png")
+                or image.lower().endswith(".jpg")
+                or image.lower().endswith(".jpeg")
+            ):
                 # keep legacy default
                 image = image + ".png"
             if not os.path.exists(image):
@@ -509,7 +534,7 @@ class Report:
         self.elements.append(Spacer(1, 8))
 
     # ---------------------------------------------
-    # Tables 
+    # Tables
     # ---------------------------------------------
 
     def _make_table_preview(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
@@ -595,7 +620,10 @@ class Report:
                 sampled = [remaining[len(remaining) // 2]]
             else:
                 # Create target indices spaced across the range
-                raw_idx = [int(round(i * (len(remaining) - 1) / (slots_for_sample - 1))) for i in range(slots_for_sample)]
+                raw_idx = [
+                    int(round(i * (len(remaining) - 1) / (slots_for_sample - 1)))
+                    for i in range(slots_for_sample)
+                ]
                 # De-duplicate while preserving order
                 seen = set()
                 idx = []
@@ -619,7 +647,9 @@ class Report:
         omitted = total_cols - len(chosen)
         if omitted > 0:
             insert_at = len(keep)
-            df_view.insert(insert_at, cfg.ellipsis_token, [cfg.ellipsis_token] * len(df_view))
+            df_view.insert(
+                insert_at, cfg.ellipsis_token, [cfg.ellipsis_token] * len(df_view)
+            )
             col_note = f"{total_cols} columns (showing {len(chosen)} + ellipsis; sampled across width, kept {len(keep)} ID/meta column(s))"
         else:
             col_note = f"{total_cols} columns (showing {len(chosen)})"
@@ -627,7 +657,9 @@ class Report:
         caption = f"Table shape: {total_rows} × {total_cols}. Preview shows {row_note} and {col_note}."
         return df_view, caption
 
-    def _compute_col_widths(self, rows: List[List[str]], max_total_width: float, font_size: float) -> List[float]:
+    def _compute_col_widths(
+        self, rows: List[List[str]], max_total_width: float, font_size: float
+    ) -> List[float]:
         """
         Estimate column widths based on max string length per column and fit to page width.
         """
@@ -712,7 +744,9 @@ class Report:
         # Convert to string and ellipsize very long cells (wrapping still occurs)
         max_cell_chars = 120
         for col in display.columns:
-            display[col] = display[col].map(lambda x: _ellipsize(_escape_html(str(x)), max_cell_chars))
+            display[col] = display[col].map(
+                lambda x: _ellipsize(_escape_html(str(x)), max_cell_chars)
+            )
 
         header = [_escape_html(str(c)) for c in display.columns.tolist()]
         body = display.values.tolist()
@@ -728,7 +762,10 @@ class Report:
                 for v in series:
                     if v is None or (isinstance(v, float) and math.isnan(v)):
                         continue
-                    if isinstance(v, str) and v.strip() in ("", self._table_preview.ellipsis_token):
+                    if isinstance(v, str) and v.strip() in (
+                        "",
+                        self._table_preview.ellipsis_token,
+                    ):
                         continue
                     if not _is_number(v):
                         ok = False
@@ -744,13 +781,21 @@ class Report:
         for r in body:
             row_cells = []
             for j, cell in enumerate(r):
-                st = self.styles["table_cell_right"] if numeric_cols[j] else self.styles["table_cell"]
+                st = (
+                    self.styles["table_cell_right"]
+                    if numeric_cols[j]
+                    else self.styles["table_cell"]
+                )
                 row_cells.append(Paragraph(cell, st))
             table_rows.append(row_cells)
 
         # Column widths fitted to page width
         width_estimation_rows = [header] + body
-        col_widths = self._compute_col_widths(width_estimation_rows, max_total_width=self.page_width, font_size=self.styles["table_cell"].fontSize)
+        col_widths = self._compute_col_widths(
+            width_estimation_rows,
+            max_total_width=self.page_width,
+            font_size=self.styles["table_cell"].fontSize,
+        )
 
         # Caption with original shape and preview details
         caption_el = Paragraph(_escape_html(caption), self.styles["caption"])
@@ -805,7 +850,7 @@ class Report:
     # Grouping / merging (compatibility)
     # ---------------------------------------------
 
-    def add_together(self, elements):  
+    def add_together(self, elements):
         keep_together_elements = []
         for element in elements:
             if isinstance(element, tuple):
@@ -826,9 +871,13 @@ class Report:
 
             elif isinstance(element, str):
                 if element == "line":
-                    keep_together_elements.append(self.add_line(return_element_only=True))
+                    keep_together_elements.append(
+                        self.add_line(return_element_only=True)
+                    )
                 elif element == "pagebreak":
-                    keep_together_elements.append(self.add_pagebreak(return_element_only=True))
+                    keep_together_elements.append(
+                        self.add_pagebreak(return_element_only=True)
+                    )
                 else:
                     raise ValueError("Invalid type: " + element)
             else:

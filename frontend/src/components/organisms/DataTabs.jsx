@@ -1,15 +1,27 @@
 import TabDataButton from "../molecules/WorkflowLayout/TabDataButton"
 
-function DataTabs({ setActiveTab, activeTab }) {
+function DataTabs({ visualizations = [], activeView, setActiveView }) {
     const tabLabels = ["Data", "Metadata", "Variables Metadata", "Batch Info", "Candidates Features"]
 
     return (
-        <div className="flex gap-ds-md items-center">
-            {tabLabels.map((temp) => {
-                return (
-                    <TabDataButton key={temp} label={temp} active={activeTab === temp} onClick={() => setActiveTab(temp)} />
-                )
-            })}
+        <div className="flex gap-ds-md items-center flex-wrap">
+
+            {tabLabels.map((tabName) => (
+                <TabDataButton
+                    key={tabName}
+                    label={tabName}
+                    active={
+                        activeView?.type === "data" &&
+                        activeView?.tabName === tabName
+                    }
+                    onClick={() =>
+                        setActiveView({
+                            type: "data",
+                            tabName,
+                        })
+                    }
+                />
+            ))}
         </div>
     )
 

@@ -5,12 +5,24 @@ import { ImLab } from "react-icons/im"
 import { PiSliders } from "react-icons/pi"
 import { HiOutlineDotsHorizontal } from "react-icons/hi"
 import { RiDeleteBinLine } from "react-icons/ri"
+import { CapitalizeFirstLetter } from "../../../utils/helpers"
+import { MdDone } from "react-icons/md"
 
 
-function WorkflowStepCard({ stepNumber, title, category, deleteHandle, onSelectStep, isSelected, step, operation, executeHandle, isRunning }) {
+function WorkflowStepCard({
+    step,
+    operation,
+    stepNumber,
+    isSelected,
+    handlers: { onDelete, onSelectStep, onExecute },
+    runningStepId,
+    isDeleting
+}) {
     const [menuOpen, setMenuOpen] = useState(false)
     const [isExpanded, setIsExpanded] = useState(false)
     const menuRef = useRef(null)
+    const alreadyRun = step.status === "done"
+    const isCurrentStepRunning = runningStepId === step.step_id
 
     // po kliknutí jinam se menu zabalí
     useEffect(() => {
@@ -25,7 +37,7 @@ function WorkflowStepCard({ stepNumber, title, category, deleteHandle, onSelectS
     }, [])
 
     return (
-        <div className={`flex w-full max-w-125 box-border overflow-hidden rounded-xl bg-foam shadow-md transition duration-200 ${isSelected ? "border-2 border-espresso" : "border-2 border-espresso/25"}`}>
+        <div className={`flex w-full box-border overflow-hidden rounded-xl bg-foam shadow-md transition duration-200 ${isSelected ? "border-2 border-espresso" : "border-2 border-espresso/25"} ${alreadyRun ? "opacity-70" : ""}`}>
 
             {/* číslo - levá strana */}
             <div className="flex w-1/10 items-center justify-center bg-espresso text-xl font-semibold text-foam">
@@ -43,9 +55,11 @@ function WorkflowStepCard({ stepNumber, title, category, deleteHandle, onSelectS
 
                         <div className="min-w-0">
                             <h2 className="text-base font-medium text-noir truncate">
-                                {title}
+                                {operation?.label}
                             </h2>
-                            <p className="mt-1 text-sm text-noir/60 truncate">{category}</p>
+                            <p className="mt-1 text-sm text-noir/60 truncate">
+                                {CapitalizeFirstLetter(operation?.categoryTags?.join(", "))}
+                            </p>
                         </div>
                     </div>
 
@@ -62,11 +76,12 @@ function WorkflowStepCard({ stepNumber, title, category, deleteHandle, onSelectS
                         {menuOpen && (
                             <div className="absolute right-0 w-42 bg-foam border border-roast/20 rounded shadow-md z-20 p-1">
                                 <button
-                                    onClick={() => {
+                                    onClick={async () => {
+                                        await onDelete()
                                         setMenuOpen(false)
-                                        deleteHandle()
                                     }}
-                                    className="w-full p-ds-sm hover:bg-crema/65 flex gap-ds-sm items-center rounded cursor-pointer"
+                                    className={`w-full p-ds-sm hover:bg-crema/65 flex gap-ds-sm items-center rounded
+                                        ${isDeleting ? "cursor-wait bg-crema/65" : "cursor-pointer"}`}
                                 >
                                     <RiDeleteBinLine size="1.25rem" color="341100" /> {/*musí se zarovnat */}
                                     <span className="text-base text-noir">Delete method</span>
@@ -77,28 +92,41 @@ function WorkflowStepCard({ stepNumber, title, category, deleteHandle, onSelectS
                 </div>
 
                 {/* tlačítka */}
-                <div className="flex items-center gap-ds-md px-ds-md mb-ds-md flex-wrap w-full">
-                    <button
-                        className="cursor-pointer"
-                        onClick={() => setIsExpanded(!isExpanded)}
-                    >
-                        {isExpanded ? (
-                            <MdExpandLess size="1.5rem" color="341100" />
-                        ) : (
-                            <MdExpandMore size="1.5rem" color="341100" />
-                        )}
-                    </button>
+                <div className="flex items-center justify-between px-ds-md mb-ds-md flex-wrap w-full">
+                    <div className="flex items-center gap-ds-md flex-wrap">
+                        <button
+                            className="cursor-pointer"
+                            onClick={() => setIsExpanded(!isExpanded)}
+                        >
+                            {isExpanded ? (
+                                <MdExpandLess size="1.5rem" color="341100" />
+                            ) : (
+                                <MdExpandMore size="1.5rem" color="341100" />
+                            )}
+                        </button>
 
-                    <button className="cursor-pointer flex items-center gap-2 px-ds-md py-1 text-espresso border-2 border-transparent hover:border-espresso hover:text-noir rounded-lg transition" onClick={onSelectStep}>
-                        <PiSliders size="1.5rem" color="713105" />
-                        <span className="text-base">Parameters</span>
-                    </button>
+                        <button className={`flex items-center gap-2 px-ds-md py-1 text-espresso border-2 border-transparent  rounded-lg transition
+                                        ${isCurrentStepRunning || alreadyRun ? "" : "cursor-pointer hover:border-espresso hover:text-noir"}`}
+                            onClick={onSelectStep}
+                            disabled={isCurrentStepRunning || alreadyRun}
+                        >
+                            <PiSliders size="1.5rem" color="713105" />
+                            <span className="text-base">Parameters</span>
+                        </button>
 
-                    <button className="cursor-pointer flex items-center gap-2 px-ds-md py-1  text-espresso rounded-lg transition border-2 border-crema hover:bg-crema" onClick={executeHandle} disabled={isRunning}>
-                        <MdPlayArrow size="1.5rem" />
+                        <button className={`flex items-center gap-2 px-ds-md py-1  text-espresso rounded-lg transition border-2 border-crema
+                    ${(!isCurrentStepRunning && alreadyRun) ? "cursor-default" : "cursor-pointer"} ${isCurrentStepRunning ? "cursor-wait" : ""} ${alreadyRun ? "" : "hover:bg-crema"} `}
+                            onClick={onExecute}
+                            disabled={isCurrentStepRunning || alreadyRun}
+                        >
+                            <MdPlayArrow size="1.5rem" />
+                            <span className="text-base">{isCurrentStepRunning ? "Running" : alreadyRun ? "Done" : "Run"}</span>
+                        </button>
+                    </div>
 
-                        <span className="text-base">{isRunning ? "Running" : "Run"}</span>
-                    </button>
+                    {/* {alreadyRun && (
+                        <MdDone size="1.75rem" title="The method was successfully completed." color="#713105" />
+                    )} */}
                 </div>
 
                 {/* expandovaná sekce s parametry */}

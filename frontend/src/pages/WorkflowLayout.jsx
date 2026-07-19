@@ -2,6 +2,8 @@ import { useState, useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import WorkflowSidebar from "../components/organisms/Layouts/WorkflowSidebar"
 import WorkflowContent from "../components/organisms/Layouts/WorkflowContent"
+import WorkflowError from "../components/organisms/WorkflowError"
+import { formatNetworkError } from "../utils/helpers"
 
 const url = "http://127.0.0.1:5000"
 
@@ -10,26 +12,37 @@ function WorkflowLayout() {
     const navigate = useNavigate()
     const [workflow, setWorkflow] = useState(null)
     const [error, setError] = useState("")
+    const [workflowLoadErrror, setWorkflowLoadError] = useState(null)
     const [operations, setOperations] = useState([])
     const [searchQuery, setSearchQuery] = useState("")
-    const [loading, setLoading] = useState(false)
     const [selectedStep, setSelectedStep] = useState(null)
     const [isRunning, setIsRunning] = useState(false)
+    const [isAllStepsRunning, setIsAllStepsRunning] = useState(false)
+    const [isWorkflowLoading, setIsWorkflowLoading] = useState(false)
+    const [runningStepId, setRunningStepId] = useState(null)
+    const [isStepDeleting, setIsStepDeleting] = useState(false)
+    const [addedOperationId, setAddedOperationId] = useState(null)
+    const [stepExecutionMessage, setStepExecutionMessage] = useState(null)
 
     useEffect(() => {
         async function loadWorkflow() {
+            setIsWorkflowLoading(true)
+
             try {
-                const response = await fetch(url + `/workflow/${workflowId}`)
+                const response = await fetch(url + `/workflow/id/${workflowId}`)
                 const data = await response.json()
 
                 if (!response.ok) {
-                    setError(data.message || "Workflow se nepodařilo načíst.") // rozhodnout se pro nějaký obecný error zobrazení
+                    setWorkflowLoadError("not-found")
                     return
                 }
 
                 setWorkflow(data)
-            } catch (error) {
-                setError("Nastala chyba při komunikaci se serverem.")
+                setWorkflowLoadError(null)
+            } catch (err) {
+                setWorkflowLoadError("network")
+            } finally {
+                setIsWorkflowLoading(false)
             }
         }
 
@@ -38,9 +51,16 @@ function WorkflowLayout() {
             try {
                 const response = await fetch(url + "/operations")
                 const data = await response.json()
+
+                if (!response.ok) {
+                    setError(data?.message ?? "Failed to load available operations from server.")
+                    return
+                }
+
                 setOperations(data)
-            } catch (error) {
-                console.error("Chyba při načítání operací:", error)
+                setError(null)
+            } catch (err) {
+                setError(err?.message ?? "Network error while fetching operations.")
             }
         }
 
@@ -56,7 +76,30 @@ function WorkflowLayout() {
 
 
 
+    // funkce pro obnovu workflow po vykonání nějakého kroku
+    async function refreshWorkflow() {
+        try {
+            const resp = await fetch(url + `/workflow/id/${workflowId}`)
+            const data = await resp.json()
+
+            if (!resp.ok) {
+                setError(data?.message ?? "Failed to refresh workflow from server.")
+                return null
+            }
+
+            setWorkflow(data)
+            setError(null)
+            return data
+        } catch (err) {
+            setError(err?.message ?? "Network error while refreshing workflow.")
+            return null
+        }
+    }
+
+
     async function handleAddStep(operation) {
+        setAddedOperationId(operation.id)
+
         const stepData = {
             operationId: operation.id
         }
@@ -71,23 +114,22 @@ function WorkflowLayout() {
             const data = await response.json()
 
             if (!response.ok) {
-                alert("Chyba: " + (data.message || "Nepodařilo se přidat krok"))
+                setError(data?.message ?? "Failed to add step to workflow.")
                 return
             }
 
-            // musí se aktulizovat workflow
-            const workflowResponse = await fetch(url + `/workflow/${workflowId}`)
-            const updatedWorkflow = await workflowResponse.json()
-            setWorkflow(updatedWorkflow)
-
+            await refreshWorkflow()
             setSearchQuery("")
-        } catch (error) {
-            alert("Chyba: " + error.message)
+        } catch (err) {
+            setError(formatNetworkError(err))
+        } finally {
+            setAddedOperationId(null)
         }
     }
 
     async function handleExecuteStep(stepId) {
-        setIsRunning(true) // krok běží
+        setIsRunning(true) // krok běží, asi se může odstranit
+        setRunningStepId(stepId)
 
         try {
 
@@ -98,24 +140,57 @@ function WorkflowLayout() {
             const dataResponse = await response.json()
 
             if (!response.ok) {
-                console.log("Chyba: " + (dataResponse.message || "Nepodařilo se spustit krok"))
+                setError(dataResponse?.message ?? "Failed to run the selected step.")
                 return
             }
 
-            // musí se aktulizovat workflow
-            const workflowResponse = await fetch(url + `/workflow/${workflowId}`)
-            const updatedWorkflow = await workflowResponse.json()
+            const stepOperation = operations.find(op => op.id === dataResponse.stepOperationId)
+            const operationLabel = stepOperation?.label ?? dataResponse.stepOperationId
+            const status = dataResponse?.stepStatus
 
-            setWorkflow(updatedWorkflow)
-
-        } catch (error) {
-            alert("Chyba: " + error.message)
+            setStepExecutionMessage({ operation: operationLabel, message: dataResponse?.stepMessage, status: dataResponse?.stepStatus })
+            await refreshWorkflow()
+        } catch (err) {
+            setError(formatNetworkError(err))
         } finally {
             setIsRunning(false) // krok doběhl
+            setRunningStepId(null)
+        }
+    }
+
+    async function handleExecuteAllSteps() {
+        setIsAllStepsRunning(true)
+
+        const steps = workflow?.definition?.steps.filter((step) => {
+            return step.status !== "done"
+        }) || []
+
+
+        try {
+            if (steps.length === 0) {
+                setError("All steps are already done.")
+                return
+            }
+
+            for (let i = 0; i < steps.length; i++) {
+                const step = steps[i]
+
+                await handleExecuteStep(step.step_id)
+
+                if (error) {
+                    break
+                }
+            }
+        } catch (err) {
+            setError(formatNetworkError(err))
+        } finally {
+            setIsAllStepsRunning(false)
         }
     }
 
     async function handleDeleteStep(stepId) {
+        setIsStepDeleting(true)
+
         try {
             const response = await fetch(url + `/workflow/${workflowId}/delete_step/${stepId}`, {
                 method: "DELETE"
@@ -124,18 +199,16 @@ function WorkflowLayout() {
             const data = await response.json()
 
             if (!response.ok) {
-                alert("Chyba: " + (data.message || "Nepodařilo se přidat krok"))
+                setError(data?.message ?? "Failed to delete the step from workflow.")
                 return
             }
 
-            // musí se aktulizovat workflow
-            const workflowResponse = await fetch(url + `/workflow/${workflowId}`)
-            const updatedWorkflow = await workflowResponse.json()
-            setWorkflow(updatedWorkflow)
+            await refreshWorkflow()
             setSelectedStep(null)
-
-        } catch (error) {
-            alert("Chyba: " + error.message)
+        } catch (err) {
+            setError(formatNetworkError(err))
+        } finally {
+            setIsStepDeleting(false)
         }
     }
 
@@ -144,25 +217,11 @@ function WorkflowLayout() {
         setSelectedStep(null)
 
         try {
-            const workflowResponse = await fetch(url + `/workflow/${workflowId}`)
-            const updatedWorkflow = await workflowResponse.json()
-            setWorkflow(updatedWorkflow)
-        } catch (error) {
-            console.error("Chyba při obnovení workflow:", error)
+            await refreshWorkflow()
+        } catch (err) {
+            setError(formatNetworkError(err))
         }
     }
-
-
-    // if (error) {
-    //     return (
-    //         <div className="p-8">
-    //             <p className="text-red-600">{error}</p>
-    //             <button onClick={() => navigate(-1)} className="mt-4 text-blue-600 underline">
-    //                 Zpět
-    //             </button>
-    //         </div>
-    //     )
-    // }
 
     return (
         <div className="min-h-screen flex">
@@ -177,7 +236,13 @@ function WorkflowLayout() {
                 onSelectStep={setSelectedStep}
                 selectedStep={selectedStep}
                 onExecuteStep={handleExecuteStep}
+                onExecuteAll={handleExecuteAllSteps}
                 isStepRunning={isRunning}
+                runningStepId={runningStepId}
+                isWorkflowLoading={isWorkflowLoading}
+                isStepDeleting={isStepDeleting}
+                addedOperationId={addedOperationId}
+                isRunningAll={isAllStepsRunning}
             />
             <WorkflowContent
                 workflow={workflow}
@@ -185,6 +250,11 @@ function WorkflowLayout() {
                 operations={operations}
                 workflowId={workflowId}
                 onCloseParameters={handleCloseParameters}
+                isLoading={isWorkflowLoading}
+                apiBaseUrl={url}
+                error={error}
+                workflowError={workflowLoadErrror}
+                stepExecutionMessage={stepExecutionMessage}
             />
         </div>
     )

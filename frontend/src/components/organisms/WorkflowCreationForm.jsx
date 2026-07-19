@@ -1,36 +1,72 @@
-import { use, useState } from "react"
+import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import StepBadge from '../molecules/StepBadge'
+import { formatNetworkError } from "../../utils/helpers"
+import { FaRegQuestionCircle } from "react-icons/fa"
+import Tooltip from "../molecules/Tooltip"
+
 
 const url = "http://127.0.0.1:5000"
 
-function WorkflowCreationForm() {
+function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadError }) {
     const navigate = useNavigate()
 
     const [workflowName, setWorkflowName] = useState("")
     const [folderName, setFolderName] = useState("")
     const [reportFileName, setReportFileName] = useState("")
-    const [uploadData, setUploadData] = useState()
-    const [batchInfo, setUploadBatchInfo] = useState()
-    const [errorMessage, setErrorMessage] = useState("")
+
     const [successMessage, setSuccessMessage] = useState("")
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [dataFormat, setDataFormat] = useState()
 
     async function onSubmit(e) {
         e.preventDefault()
-        setErrorMessage("")
+
+        const hasFileErrors = Boolean(
+            filesState?.data?.error || filesState?.batchInfo?.error || filesState?.importFile?.error
+        )
+        if (hasFileErrors) {
+            const firstErr = filesState?.data?.error || filesState?.batchInfo?.error || filesState?.importFile?.error
+            setLoadError(firstErr)
+            return
+        }
+
+        // kontrola, jestli uživatel nahrál jak data tak batch info
+        const missingFiles = []
+        if (!filesState?.data?.file) missingFiles.push('data')
+        if (!filesState?.batchInfo?.file) missingFiles.push('batchInfo')
+        if (missingFiles.length) {
+            missingFiles.forEach((k) => {
+                const err = k === 'data' ? 'Data file is required.' : 'Batch info file is required.'
+                filesDispatch({ type: 'SET_ERROR', key: k, error: err })
+            })
+
+            let erorrMsg = ""
+            if (missingFiles.length === 2) {
+                erorrMsg = "Data file and Batch info file are required."
+            } else {
+                erorrMsg = missingFiles[0] === 'data' ? "Data file is required." : "Batch info file is required."
+            }
+
+            setLoadError(erorrMsg)
+            return
+        }
 
         const formData = new FormData()
         formData.append("workflowName", workflowName)
         formData.append("folderName", folderName)
         formData.append("reportFileName", reportFileName)
 
-        if (uploadData) {
-            formData.append("data", uploadData)
+        if (filesState?.data?.file) {
+            formData.append("data", filesState.data.file)
         }
-        if (batchInfo) {
-            formData.append("batchInfo", batchInfo)
+
+        if (filesState?.batchInfo?.file) {
+            formData.append("batchInfo", filesState.batchInfo.file)
+        }
+
+        if (filesState?.importFile?.file) {
+            formData.append("importFile", filesState.importFile.file)
         }
 
         try {
@@ -42,22 +78,53 @@ function WorkflowCreationForm() {
             const responseData = await response.json()
 
             if (!response.ok) {
-                setErrorMessage(responseData.message || "Workflow se nepodařilo vytvořit.")
+                setLoadError(dataResponse?.message ?? "Failed to create new workflow.")
                 return
             }
 
             setWorkflowName("")
             setFolderName("")
             setReportFileName("")
-            setUploadData(null)
-            setUploadBatchInfo(null)
+            filesDispatch({ type: 'CLEAR' })
+            setLoadError(null)
 
             // přesměrování na layout
-            setTimeout(() => {
-                navigate(`/workflow/${responseData.workflowId}`)
-            }, 1000)
-        } catch (error) {
-            setErrorMessage("Nastala chyba při komunikaci se serverem.")
+            navigate(`/workflow/${responseData.workflowId}`)
+        } catch (err) {
+            setLoadError(formatNetworkError(err))
+        }
+    }
+
+    function handleFileInputChange(e) {
+        const file = e.target.files?.[0]
+        if (!file) return
+        if (file.name.endsWith('.json')) {
+            filesDispatch({ type: 'SET_FILE', key: 'importFile', file })
+            filesDispatch({ type: 'SET_ERROR', key: 'importFile', error: null })
+        } else {
+            filesDispatch({ type: 'SET_ERROR', key: 'importFile', error: 'Please select a JSON file' })
+        }
+    }
+
+    function handleDataFileChange(e) {
+        const file = e.target.files?.[0]
+        if (!file) return
+        if (file.name.toLowerCase().endsWith('.csv')) {
+            filesDispatch({ type: 'SET_FILE', key: 'data', file })
+            filesDispatch({ type: 'SET_ERROR', key: 'data', error: null })
+        } else {
+            filesDispatch({ type: 'SET_ERROR', key: 'data', error: 'Please select a CSV file' })
+        }
+    }
+
+    function handleBatchInfoFileChange(e) {
+        const file = e.target.files?.[0]
+        if (!file) return
+        if (file.name.toLowerCase().endsWith('.csv')) {
+            filesDispatch({ type: 'SET_FILE', key: 'batchInfo', file })
+            filesDispatch({ type: 'SET_ERROR', key: 'batchInfo', error: null })
+        } else {
+            filesDispatch({ type: 'SET_ERROR', key: 'batchInfo', error: 'Please select a CSV file' })
         }
     }
 
@@ -70,8 +137,17 @@ function WorkflowCreationForm() {
                     />
                     <h2 className="text-3xl font-bold text-noir">Project configuration</h2>
                 </div>
-                <div className="flex flex-col">
-                    <label htmlFor="workflowName" className="mb-[8px] font-medium text-noir text-2xl ">Workflow Name *</label>
+                <div className="flex flex-col gap-ds-sm">
+                    <label htmlFor="workflowName" className="font-medium text-noir text-2xl flex flex-col justify-center">
+                        <div className="flex items-center gap-ds-sm">
+                            <Tooltip
+                                text={"Name of the workflow (used for display)"}
+                            >
+                                <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
+                            </Tooltip>
+                            Workflow name *
+                        </div>
+                    </label>
                     <input
                         type="text"
                         id="workflowName"
@@ -81,8 +157,17 @@ function WorkflowCreationForm() {
                         required
                     />
                 </div>
-                <div className="flex flex-col">
-                    <label htmlFor="folderName" className="mb-[8px] font-medium text-noir text-2xl">Folder Name *</label>
+                <div className="flex flex-col gap-ds-sm">
+                    <label htmlFor="folderName" className="font-medium text-noir text-2xl flex flex-col justify-center">
+                        <div className="flex items-center gap-ds-sm">
+                            <Tooltip
+                                text={"Folder where visualizations and outputs will be saved"}
+                            >
+                                <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
+                            </Tooltip>
+                            Folder name *
+                        </div>
+                    </label>
                     <input
                         type="text"
                         id="folderName"
@@ -93,7 +178,16 @@ function WorkflowCreationForm() {
                     />
                 </div>
                 <div className="flex flex-col">
-                    <label htmlFor="reportFileName" className="mb-[8px] font-medium text-noir text-2xl">Report File Name *</label>
+                    <label htmlFor="reportFileName" className="mb-[8px] font-medium text-noir text-2xl">
+                        <div className="flex items-center gap-ds-sm">
+                            <Tooltip
+                                text={"Filename for the generated report"}
+                            >
+                                <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
+                            </Tooltip>
+                            Report file name *
+                        </div>
+                    </label>
                     <input
                         type="text"
                         id="reportFileName"
@@ -103,7 +197,7 @@ function WorkflowCreationForm() {
                         required
                     />
                 </div>
-            </div>
+            </div >
 
 
             <div>
@@ -116,21 +210,41 @@ function WorkflowCreationForm() {
 
                 <div className="flex flex-row gap-ds-xl">
                     <div className="flex flex-col">
-                        <label className="mb-[8px] font-medium text-noir text-2xl">Upload data</label>
+                        <label className="mb-[8px] font-medium text-noir text-2xl">
+                            <div className="flex items-center gap-ds-sm">
+                                <Tooltip
+                                    text={"Input data file (CSV)"}
+                                >
+                                    <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
+                                </Tooltip>
+                                Upload data *
+                            </div>
+                        </label>
                         <input
                             type="file"
-                            onChange={(e) => setUploadData(e.target.files?.[0] || null)}
+                            onChange={handleDataFileChange}
                             className="border border-dashed border-roast/75 rounded-[10px] px-3 py-16"
                         />
+                        {filesState?.data?.error ? <p className="text-red-600">{filesState.data.error}</p> : null}
                     </div>
 
                     <div className="flex flex-col">
-                        <label className="mb-[8px] font-medium text-noir text-2xl">Upload batch info</label>
+                        <label className="mb-[8px] font-medium text-noir text-2xl">
+                            <div className="flex items-center gap-ds-sm">
+                                <Tooltip
+                                    text={"Batch information file (CSV)"}
+                                >
+                                    <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
+                                </Tooltip>
+                                Upload batch info *
+                            </div>
+                        </label>
                         <input
                             type="file"
-                            onChange={(e) => setUploadBatchInfo(e.target.files?.[0] || null)}
+                            onChange={handleBatchInfoFileChange}
                             className="border border-dashed border-roast/75 rounded-[10px] px-3 py-16"
                         />
+                        {filesState?.batchInfo?.error ? <p className="text-red-600">{filesState.batchInfo.error}</p> : null}
                     </div>
                 </div>
             </div>
@@ -140,11 +254,48 @@ function WorkflowCreationForm() {
                     <StepBadge
                         stepNumber={3}
                     />
+                    <h2 className="text-3xl font-bold text-noir">Methods import</h2>
+                </div>
+                <div className="mb-ds-md">
+                    <label className="block mb-[8px] font-medium text-noir text-2xl">
+                        <div className="flex items-center gap-ds-sm">
+                            <Tooltip
+                                text={"Upload exported methods from another workflow (JSON)"}
+                            >
+                                <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
+                            </Tooltip>
+                            Upload exported methods
+                        </div>
+                    </label>
+                    <input
+                        type="file"
+                        accept=".json"
+                        onChange={handleFileInputChange}
+                        className="border border-dashed border-roast/75 rounded-[10px] px-ds-md py-ds-xl w-full"
+                    />
+                    {filesState?.importFile?.error ? <p className="text-red-600">{filesState.importFile.error}</p> : null}
+                </div>
+            </div>
+
+            <div>
+                <div className="flex justify-center items-center gap-ds-lg mb-ds-lg">
+                    <StepBadge
+                        stepNumber={4}
+                    />
                     <h2 className="text-3xl font-bold text-noir">Data format</h2>
                 </div>
 
                 <div className="flex flex-col">
-                    <label className="mb-ds-sm font-medium text-noir text-2xl">Format</label>
+                    <label className="mb-ds-sm font-medium text-noir text-2xl">
+                        <div className="flex items-center gap-ds-sm">
+                            <Tooltip
+                                text={"Format of the input data (e.g., Compound Discoverer)"}
+                            >
+                                <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
+                            </Tooltip>
+                            Data format *
+                        </div>
+                    </label>
                     <select
                         id="format"
                         value={dataFormat}
@@ -156,13 +307,22 @@ function WorkflowCreationForm() {
                 </div>
             </div>
 
+            {
+                loadError && (
+                    <div className="text-red-600 rounded-lg max-w-xl text-center text-2xl">
+                        {loadError}
+                    </div>
+                )
+            }
 
-            {errorMessage ? <p className="text-red-600">{errorMessage}</p> : null}
-
-            <button type="submit" className="bg-grounds text-foam rounded-4xl py-4 w-50 text-2xl font-semibold cursor-pointer">
-                Sumbit
+            <button
+                type="submit"
+                disabled={isSubmitting || Boolean(filesState?.data?.error || filesState?.batchInfo?.error || filesState?.importFile?.error)}
+                className={`bg-grounds text-foam rounded-4xl py-4 w-50 text-2xl font-semibold mb-ds-lg ${isSubmitting || Boolean(filesState?.data?.error || filesState?.batchInfo?.error || filesState?.importFile?.error) ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+            >
+                {isSubmitting ? 'Submitting...' : 'Submit'}
             </button>
-        </form>
+        </form >
     )
 }
 

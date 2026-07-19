@@ -31,7 +31,7 @@ def run_step(workflow: Workflow, step: WorkflowStep) -> WorkflowStep:
             step.output_summary = {"result": result}
 
         step.status = StepStatus.DONE
-        step.messages.append("Step completed.")
+        step.messages.append("Step completed successfully.")
 
         workflow.state.execution_log.append(
             {

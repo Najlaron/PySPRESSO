@@ -1,8 +1,10 @@
 import uuid
 import os
 from pathlib import Path
+import json
+from datetime import datetime
 
-from flask import request, jsonify
+from flask import request, jsonify, send_from_directory, abort
 from werkzeug.utils import secure_filename
 from pyspresso_app.config import app, db
 from pyspresso_app.core.workflow_models import (
@@ -22,6 +24,10 @@ UPLOAD_FOLDER = Path(__file__).parent.parent.parent / "uploads"
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 # povolené formáty dat
 ALLOWED_EXTENSIONS = {"csv", "txt", "xlsx", "xls", "tsv"}
+
+# místo, kde jsou obrázky
+OUTPUT_FOLDER = Path(__file__).resolve().parents[1] / "outputs"
+OUTPUT_FOLDER.mkdir(exist_ok=True)
 
 
 def allowed_file(filename):
@@ -48,7 +54,7 @@ def save_uploaded_file(file, subfolder="workflows"):
 
 # aktualizuje záznam v databázi z instance třídy workflow
 def save_workflow(workflow_id: str, workflow: Workflow):
-    workflow_row = WorkflowORM.query.get(workflow_id)
+    workflow_row = db.session.get(WorkflowORM, workflow_id)
     if not workflow_row:
         return False
 
@@ -82,7 +88,7 @@ def save_workflow(workflow_id: str, workflow: Workflow):
 
 # Vytvoří instanci workflow ze záznamu z databáze
 def load_workflow(workflow_id: str):
-    workflow_row = WorkflowORM.query.get(workflow_id)
+    workflow_row = db.session.get(WorkflowORM, workflow_id)
     if not workflow_row:
         return None
 
@@ -90,6 +96,24 @@ def load_workflow(workflow_id: str):
     workflow.definition = WorkflowDefinition.from_dict(workflow_row.definition)
     workflow.state = WorkflowState.from_dict(workflow_row.state)
     return workflow
+
+
+def add_init_step(wf):
+    operation_id = "initializer_compound_discoverer"
+
+    try:
+        get_operation(operation_id)
+    except KeyError:
+        return jsonify({"message": f"Operation '{operation_id}' not found"}), 404
+
+    step_id = str(uuid.uuid4())
+    new_step = WorkflowStep(
+        step_id=step_id,
+        operation_id=operation_id,
+    )
+
+    wf.definition.steps.append(new_step)
+    return True
 
 
 def get_operation_func(operation_id: str):
@@ -136,6 +160,18 @@ def create_new_workflow():
 
     workflow_id = str(uuid.uuid4())
     workflow = Workflow(workflow_id=workflow_id, name=workflow_name)
+
+    # přidání inicializačního kroku pro data
+    add_init_step(workflow)
+
+    # import kroků z jiného workflow
+    if "importFile" in request.files:
+        import_file = request.files["importFile"]
+        if import_file and import_file.filename:
+            try:
+                _ = import_methods_from_file(workflow, import_file)
+            except ValueError as ex:
+                return jsonify({"message": str(ex)}), 400
 
     # uloží cesty k souborům
     workflow.state.files = files_dict
@@ -190,12 +226,15 @@ def create_new_workflow():
 
 
 # Vráti workflow z databáze podle ID
-@app.route("/workflow/<workflow_id>", methods=["GET"])
+@app.route("/workflow/id/<workflow_id>", methods=["GET"])
 def get_workflow(workflow_id: str):
-    workflow_row = WorkflowORM.query.get(workflow_id)
+    workflow_row = db.session.get(WorkflowORM, workflow_id)
 
     if not workflow_row:
-        return jsonify({"message": "Workflow not found"}), 404
+        return (
+            jsonify({"message": f"Workflow with ID:'{workflow_id}' does not exist."}),
+            404,
+        )
 
     return jsonify(workflow_row.to_dict()), 200
 
@@ -206,7 +245,10 @@ def add_workflow_step(workflow_id: str):
     # vytvoří třídu workflow ze záznamu z databáze
     workflow = load_workflow(workflow_id)
     if not workflow:
-        return jsonify({"message": "Workflow not found"}), 404
+        return (
+            jsonify({"message": f"Workflow with ID:'{workflow_id}' does not exist."}),
+            404,
+        )
 
     payload = request.get_json(silent=True) or {}
     operation_id = payload.get("operationId", "").strip()
@@ -241,11 +283,37 @@ def add_workflow_step(workflow_id: str):
     )
 
 
+@app.route("/workflow/<workflow_id>/delete", methods=["DELETE"])
+def delete_workflow(workflow_id: str):
+    workflow_row = db.session.get(WorkflowORM, workflow_id)
+
+    if not workflow_row:
+        return (
+            jsonify({"message": f"Workflow with ID:'{workflow_id}' does not exist."}),
+            404,
+        )
+
+    try:
+        db.session.delete(workflow_row)
+        db.session.commit()
+    except Exception as ex:
+        db.session.rollback()
+        return jsonify({"message": str(ex)}), 400
+
+    return (
+        jsonify({"message": "Workflow was deleted."}),
+        200,
+    )
+
+
 @app.route("/workflow/<workflow_id>/delete_step/<step_id>", methods=["DELETE"])
 def delete_step(workflow_id: str, step_id: str):
     workflow = load_workflow(workflow_id)
     if not workflow:
-        return jsonify({"message": "Workflow not found"}), 404
+        return (
+            jsonify({"message": f"Workflow with ID:'{workflow_id}' does not exist."}),
+            404,
+        )
 
     step = None
     for s in workflow.definition.steps:
@@ -267,7 +335,10 @@ def update_step_parameters(workflow_id: str, step_id: str):
     """Update parameters for a workflow step."""
     workflow = load_workflow(workflow_id)
     if not workflow:
-        return jsonify({"message": "Workflow not found"}), 404
+        return (
+            jsonify({"message": f"Workflow with ID:'{workflow_id}' does not exist."}),
+            404,
+        )
 
     step = None
     for s in workflow.definition.steps:
@@ -343,7 +414,10 @@ def execute_step(workflow_id: str, step_id: str):
     """Execute a single workflow step."""
     workflow = load_workflow(workflow_id)
     if not workflow:
-        return jsonify({"message": "Workflow not found"}), 404
+        return (
+            jsonify({"message": f"Workflow with ID:'{workflow_id}' does not exist."}),
+            404,
+        )
 
     step = None
     for s in workflow.definition.steps:
@@ -362,14 +436,94 @@ def execute_step(workflow_id: str, step_id: str):
             jsonify(
                 {
                     "message": "Step executed",
-                    # "step": step.to_dict(),
-                    # "workflow_state": workflow.state.to_dict(),
+                    "stepMessage": step.messages,
+                    "stepOperationId": step.operation_id,
+                    "stepStatus": step.status,
                 }
             ),
             200,
         )
     except Exception as ex:
         return jsonify({"message": str(ex), "step": step.to_dict()}), 400
+
+
+@app.route("/outputs/<path:filename>", methods=["GET"])
+def serve_output_file(filename):
+    output_root = OUTPUT_FOLDER.resolve()
+    requested_path = (output_root / filename).resolve()
+
+    try:
+        requested_path.relative_to(output_root)
+    except ValueError:
+        abort(403)
+
+    if not requested_path.is_file():
+        return jsonify({"message": "Output file not found"}), 404
+
+    return send_from_directory(output_root, filename)
+
+
+@app.route("/workflow/<workflow_id>/export", methods=["GET"])
+def export_workflow(workflow_id: str):
+    workflow = load_workflow(workflow_id)
+
+    if not workflow:
+        return (
+            jsonify({"message": f"Workflow with ID:'{workflow_id}' does not exist."}),
+            404,
+        )
+
+    ops = []
+    for step in workflow.definition.steps:
+        if step.operation_id == "initializer_compound_discoverer":
+            continue
+        else:
+            ops.append({"operation_id": step.operation_id})
+
+    payload = {"operations": ops}
+    resp = jsonify(payload)
+    resp.headers["Content-Disposition"] = (
+        f"attachment; filename=workflow_{workflow_id}.json"
+    )
+    return resp, 200
+
+
+def import_methods_from_file(workflow: Workflow, import_file):
+    """Helper: parse uploaded JSON file and append operations as steps into workflow."""
+    if not import_file or getattr(import_file, "filename", "") == "":
+        raise ValueError("Uploaded import file is empty.")
+
+    try:
+        data = json.loads(import_file.read())
+    except Exception as ex:
+        raise ValueError(f"Invalid import JSON file: {ex}")
+
+    ops = data.get("operations") or []
+    if not isinstance(ops, list):
+        raise ValueError("Invalid format: 'operations' must be a list.")
+
+    created_steps = []
+
+    for item in ops:
+        if isinstance(item, dict):
+            op_id = item.get("operation_id")
+        else:
+            op_id = item
+
+        if not op_id:
+            continue
+
+        try:
+            get_operation(op_id)
+        except KeyError:
+            raise KeyError(f"Operation {op_id} does not exist.")
+
+        step_id = str(uuid.uuid4())
+        new_step = WorkflowStep(step_id=step_id, operation_id=op_id)
+        workflow.definition.steps.append(new_step)
+        created_steps.append({"step_id": step_id, "operation_id": op_id})
+
+    return {"created_steps": created_steps}
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -276,6 +277,23 @@ def initializer_compound_discoverer(
 
     print("všechno proběhlo")
 
+    # remove uploaded data folder after successful initialization
+    data_file = state.files.get("data")
+    print(data_file)
+    if data_file:
+        data_path = Path.cwd().parent / data_file
+        uploads_folder = data_path.parent
+        if uploads_folder.exists():
+            try:
+                shutil.rmtree(uploads_folder)
+                print(f"Removed uploaded data folder: {uploads_folder}")
+            except Exception as e:
+                print(
+                    f"Warning: Could not remove uploaded data folder {uploads_folder}: {e}"
+                )
+
+        state.files = None
+
     return {
         "initialized": True,
         "format": "compound_discoverer",
@@ -314,6 +332,7 @@ def _initializer_report(state: WorkflowState):
     Initialize the report object.
     """
     main_folder = state.main_folder
+    print("main folder u reportu=", main_folder)
 
     if main_folder is None:
         raise ValueError("state.main_folder is not set. Initialize folders first.")
@@ -371,6 +390,7 @@ def _initializer_folders(state: WorkflowState):
     Initialize output folders.
     """
     main_folder = getattr(state, "main_folder", None)
+    print("main folder u folderu=", main_folder)
 
     if main_folder is None:
         workflow_id = getattr(state, "workflow_id", "workflow")
@@ -383,6 +403,8 @@ def _initializer_folders(state: WorkflowState):
         os.path.join(main_folder, "statistics"),
         os.path.join(main_folder, "dropped_features"),
     ]
+
+    print("foldery=", folders)
 
     for folder in folders:
         os.makedirs(folder, exist_ok=True)

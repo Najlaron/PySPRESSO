@@ -1,9 +1,13 @@
 import { useState, useEffect } from "react"
 import ParameterInput from "../molecules/WorkflowLayout/ParameterInput"
+import { formatNetworkError } from "../../utils/helpers"
 
 const url = "http://127.0.0.1:5000"
 
 function ParametersForm({ step, operation, workflowId, onClose }) {
+    const [error, setError] = useState("")
+    const [isAdding, setIsAdding] = useState(false)
+
 
     function initializeParams() {
         const params = {}
@@ -29,8 +33,6 @@ function ParametersForm({ step, operation, workflowId, onClose }) {
         setParameterValues(initializeParams())
     }, [operation, step])
 
-    const [error, setError] = useState("")
-
     const handleParameterChange = (paramName, value) => {
         setParameterValues((prev) => ({
             ...prev,
@@ -42,6 +44,7 @@ function ParametersForm({ step, operation, workflowId, onClose }) {
     async function handleSubmit(e) {
         e.preventDefault()
         setError("")
+        setIsAdding(true)
 
         try {
             const response = await fetch(
@@ -56,16 +59,15 @@ function ParametersForm({ step, operation, workflowId, onClose }) {
             const data = await response.json()
 
             if (!response.ok) {
-                setError(data.message || "Failed to save parameters")
+                setError(data?.message ?? "Failed to save parameters")
                 return
             }
 
-            console.log("Parameters saved:", data)
-
-
             onClose()
         } catch (err) {
-            setError("Error: " + err.message)
+            setError(formatNetworkError(err))
+        } finally {
+            setIsAdding(false)
         }
     }
 
@@ -110,9 +112,10 @@ function ParametersForm({ step, operation, workflowId, onClose }) {
 
                             <button
                                 type="submit"
-                                className="bg-espresso hover:bg-roast disabled:bg-roast/50 text-foam px-ds-lg py-ds-md rounded-lg font-semibold cursor-pointer shadow-md text-xl"
+                                className={`bg-espresso hover:bg-roast disabled:bg-roast/50 text-foam px-ds-lg py-ds-md rounded-lg font-semibold shadow-md text-xl ${isAdding ? "" : "cursor-pointer"}`}
+                                disabled={isAdding}
                             >
-                                Submit
+                                {isAdding ? "Adding parameters" : "Submit"}
                             </button>
                         </>
                     ) : (
@@ -122,6 +125,10 @@ function ParametersForm({ step, operation, workflowId, onClose }) {
                     )}
                 </form>
             </div>
+            {error && (
+                <p className="text-red-700 text-xl text-medium">{error}</p>
+            )}
+
         </main>
     )
 }
