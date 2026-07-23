@@ -174,8 +174,12 @@ class WorkflowState:
             "saves_count": self.saves_count,
             "pca_count": self.pca_count,
             "fold_change_count": self.fold_change_count,
-            "pca": self.pca,
-            "pca_data": self.pca_data,
+            "pca": None,
+            "pca_data": (
+                self.pca_data.tolist()
+                if hasattr(self.pca_data, "tolist")
+                else self.pca_data
+            ),
             "pca_df": (
                 _df_to_serializable(self.pca_df) if self.pca_df is not None else None
             ),
@@ -192,8 +196,8 @@ class WorkflowState:
                 if self.fold_change is not None
                 else None
             ),
-            "plsda": self.plsda,
-            "plsda_model": self.plsda_model,
+            "plsda": None,
+            "plsda_model": None,
             "plsda_stats": self.plsda_stats,
             "plsda_metadata": (
                 _df_to_serializable(self.plsda_metadata)
