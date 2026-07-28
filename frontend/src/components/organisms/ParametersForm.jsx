@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react"
 import ParameterInput from "../molecules/WorkflowLayout/ParameterInput"
 import { formatNetworkError } from "../../utils/helpers"
+import { API_BASE_URL } from "../../config"
 
-const url = "http://127.0.0.1:5000"
-
-function ParametersForm({ step, operation, workflowId, onClose }) {
+function ParametersForm({ step, operation, workflowId, onClose, reorderPromiseParams }) {
     const [error, setError] = useState("")
     const [isAdding, setIsAdding] = useState(false)
 
@@ -47,8 +46,10 @@ function ParametersForm({ step, operation, workflowId, onClose }) {
         setIsAdding(true)
 
         try {
+            await reorderPromiseParams
+
             const response = await fetch(
-                url + `/workflow/${workflowId}/step/${step.step_id}/parameters`,
+                API_BASE_URL + `/workflow/${workflowId}/step/${step.step_id}/parameters`,
                 {
                     method: "PUT",
                     headers: { "Content-Type": "application/json" },

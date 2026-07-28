@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.db
+*.log
+.env
+venv/
+.env
+uploads/
+outputs/
+workflows/
+desktop.ini
+.git

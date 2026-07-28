@@ -1,11 +1,10 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import WorkflowSidebar from "../components/organisms/Layouts/WorkflowSidebar"
 import WorkflowContent from "../components/organisms/Layouts/WorkflowContent"
 import WorkflowError from "../components/organisms/WorkflowError"
 import { formatNetworkError } from "../utils/helpers"
-
-const url = "http://127.0.0.1:5000"
+import { API_BASE_URL } from "../config"
 
 function WorkflowLayout() {
     const { workflowId } = useParams()
@@ -23,13 +22,15 @@ function WorkflowLayout() {
     const [isStepDeleting, setIsStepDeleting] = useState(false)
     const [addedOperationId, setAddedOperationId] = useState(null)
     const [stepExecutionMessage, setStepExecutionMessage] = useState(null)
+    const [executeFailed, setExecuteFailed] = useState(false)
+    const reorderPromiseRef = useRef(Promise.resolve())
 
     useEffect(() => {
         async function loadWorkflow() {
             setIsWorkflowLoading(true)
 
             try {
-                const response = await fetch(url + `/workflow/id/${workflowId}`)
+                const response = await fetch(API_BASE_URL + `/workflow/id/${workflowId}`)
                 const data = await response.json()
 
                 if (!response.ok) {
@@ -49,7 +50,7 @@ function WorkflowLayout() {
         // pro vyhledávání se načtou všechny operace
         async function loadOperations() {
             try {
-                const response = await fetch(url + "/operations")
+                const response = await fetch(API_BASE_URL + "/operations")
                 const data = await response.json()
 
                 if (!response.ok) {
@@ -79,7 +80,7 @@ function WorkflowLayout() {
     // funkce pro obnovu workflow po vykonání nějakého kroku
     async function refreshWorkflow() {
         try {
-            const resp = await fetch(url + `/workflow/id/${workflowId}`)
+            const resp = await fetch(API_BASE_URL + `/workflow/id/${workflowId}`)
             const data = await resp.json()
 
             if (!resp.ok) {
@@ -99,13 +100,14 @@ function WorkflowLayout() {
 
     async function handleAddStep(operation) {
         setAddedOperationId(operation.id)
+        await reorderPromiseRef.current // čeká se na dokončení změny pořadí
 
         const stepData = {
             operationId: operation.id
         }
 
         try {
-            const response = await fetch(url + `/workflow/${workflowId}/step`, {
+            const response = await fetch(API_BASE_URL + `/workflow/${workflowId}/step`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(stepData),
@@ -131,9 +133,11 @@ function WorkflowLayout() {
         setIsRunning(true) // krok běží, asi se může odstranit
         setRunningStepId(stepId)
 
+        await reorderPromiseRef.current // čeká se na dokončení změny pořadí
+
         try {
 
-            const response = await fetch(url + `/workflow/${workflowId}/step/${stepId}/run`, {
+            const response = await fetch(API_BASE_URL + `/workflow/${workflowId}/step/${stepId}/run`, {
                 method: "POST",
             })
 
@@ -141,7 +145,7 @@ function WorkflowLayout() {
 
             if (!response.ok) {
                 setError(dataResponse?.message ?? "Failed to run the selected step.")
-                return
+                return false
             }
 
             const stepOperation = operations.find(op => op.id === dataResponse.stepOperationId)
@@ -150,8 +154,15 @@ function WorkflowLayout() {
 
             setStepExecutionMessage({ operation: operationLabel, message: dataResponse?.stepMessage, status: dataResponse?.stepStatus })
             await refreshWorkflow()
+
+            if (dataResponse.stepStatus !== "done") {
+                return false
+            }
+
+            return true
         } catch (err) {
             setError(formatNetworkError(err))
+            return false
         } finally {
             setIsRunning(false) // krok doběhl
             setRunningStepId(null)
@@ -175,9 +186,9 @@ function WorkflowLayout() {
             for (let i = 0; i < steps.length; i++) {
                 const step = steps[i]
 
-                await handleExecuteStep(step.step_id)
+                const success = await handleExecuteStep(step.step_id)
 
-                if (error) {
+                if (!success) {
                     break
                 }
             }
@@ -189,10 +200,11 @@ function WorkflowLayout() {
     }
 
     async function handleDeleteStep(stepId) {
+        await reorderPromiseRef.current // čeká se na dokončení změny pořadí
         setIsStepDeleting(true)
 
         try {
-            const response = await fetch(url + `/workflow/${workflowId}/delete_step/${stepId}`, {
+            const response = await fetch(API_BASE_URL + `/workflow/${workflowId}/delete_step/${stepId}`, {
                 method: "DELETE"
             })
 
@@ -223,6 +235,49 @@ function WorkflowLayout() {
         }
     }
 
+    async function handleReorderSteps(reorderedStepIds) {
+        const reorderPromise = (async () => {
+            setWorkflow((prevWorkflow) => {
+                if (!prevWorkflow?.definition?.steps) return prevWorkflow
+
+                const stepsById = new Map(prevWorkflow.definition.steps.map((step) => [step.step_id, step]))
+                const reorderedSteps = reorderedStepIds
+                    .map((stepId) => stepsById.get(stepId))
+                    .filter(Boolean)
+
+                return {
+                    ...prevWorkflow,
+                    definition: {
+                        ...prevWorkflow.definition,
+                        steps: reorderedSteps
+                    }
+                }
+            })
+
+            try {
+                const response = await fetch(API_BASE_URL + `/workflow/${workflowId}/reorder`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ stepIds: reorderedStepIds }),
+                })
+
+                const data = await response.json()
+
+                if (!response.ok) {
+                    setError(data?.message ?? "Failed to reorder workflow steps.")
+                    return
+                }
+
+                await refreshWorkflow()
+            } catch (err) {
+                setError(formatNetworkError(err))
+            }
+        })()
+
+        reorderPromiseRef.current = reorderPromise
+        return reorderPromise
+    }
+
     return (
         <div className="min-h-screen flex">
             <WorkflowSidebar
@@ -243,6 +298,7 @@ function WorkflowLayout() {
                 isStepDeleting={isStepDeleting}
                 addedOperationId={addedOperationId}
                 isRunningAll={isAllStepsRunning}
+                onReorderSteps={handleReorderSteps}
             />
             <WorkflowContent
                 workflow={workflow}
@@ -251,10 +307,11 @@ function WorkflowLayout() {
                 workflowId={workflowId}
                 onCloseParameters={handleCloseParameters}
                 isLoading={isWorkflowLoading}
-                apiBaseUrl={url}
+                apiBaseUrl={API_BASE_URL}
                 error={error}
                 workflowError={workflowLoadErrror}
                 stepExecutionMessage={stepExecutionMessage}
+                reorderPromise={reorderPromiseRef.current}
             />
         </div>
     )

@@ -7,9 +7,12 @@ import { HiOutlineDotsHorizontal } from "react-icons/hi"
 import { RiDeleteBinLine } from "react-icons/ri"
 import { CapitalizeFirstLetter } from "../../../utils/helpers"
 import { MdDone } from "react-icons/md"
+import { useSortable } from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities";
 
 
 function WorkflowStepCard({
+    id,
     step,
     operation,
     stepNumber,
@@ -24,6 +27,13 @@ function WorkflowStepCard({
     const alreadyRun = step.status === "done"
     const isCurrentStepRunning = runningStepId === step.step_id
 
+    // drag and drop část
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+    const style = {
+        transform: transform ? CSS.Translate.toString(transform) : undefined,
+        transition,
+    }
+
     // po kliknutí jinam se menu zabalí
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -37,10 +47,14 @@ function WorkflowStepCard({
     }, [])
 
     return (
-        <div className={`flex w-full box-border overflow-hidden rounded-xl bg-foam shadow-md transition duration-200 ${isSelected ? "border-2 border-espresso" : "border-2 border-espresso/25"} ${alreadyRun ? "opacity-70" : ""}`}>
+        <div ref={setNodeRef} style={style}
+            className={`flex w-full box-border overflow-hidden rounded-xl bg-foam shadow-md transition duration-200
+            ${isSelected ? "border-2 border-espresso" : "border-2 border-espresso/25"} 
+            ${alreadyRun ? "opacity-70" : ""}`}
 
+        >
             {/* číslo - levá strana */}
-            <div className="flex w-1/10 items-center justify-center bg-espresso text-xl font-semibold text-foam">
+            <div {...attributes} {...listeners} className="cursor-grab flex w-1/10 max-w-15 items-center justify-center bg-espresso text-xl font-semibold text-foam">
                 {stepNumber}
             </div>
 

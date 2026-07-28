@@ -385,17 +385,25 @@ def _initializer_report(state: WorkflowState):
     return state.report
 
 
+# foldery= ['outputs\\f0f92e73-9ea9-44b0-92fd-19f9121a941a', 'outputs\\f0f92e73-9ea9-44b0-92fd-19f9121a941a\\figures', 'outputs\\f0f92e73-9ea9-44b0-92fd-19f9121a941a\\statistics', 'outputs\\f0f92e73-9ea9-44b0-92fd-19f9121a941a\\dropped_features']
+# foldery= ['outputs\\vv', 'outputs\\vv\\figures', 'outputs\\vv\\statistics', 'outputs\\vv\\dropped_features']
+
+
 def _initializer_folders(state: WorkflowState):
     """
     Initialize output folders.
     """
     main_folder = getattr(state, "main_folder", None)
+
     print("main folder u folderu=", main_folder)
 
     if main_folder is None:
         workflow_id = getattr(state, "workflow_id", "workflow")
         main_folder = os.path.join("outputs", str(workflow_id))
-        state.main_folder = main_folder
+    else:
+        main_folder = os.path.join("outputs", main_folder)
+
+    state.main_folder = main_folder
 
     folders = [
         main_folder,

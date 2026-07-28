@@ -1,3 +1,4 @@
+import shutil
 import uuid
 import os
 from pathlib import Path
@@ -160,6 +161,7 @@ def create_new_workflow():
 
     workflow_id = str(uuid.uuid4())
     workflow = Workflow(workflow_id=workflow_id, name=workflow_name)
+    workflow.state.main_folder = folder_name
 
     # přidání inicializačního kroku pro data
     add_init_step(workflow)
@@ -293,7 +295,14 @@ def delete_workflow(workflow_id: str):
             404,
         )
 
+    workflow_folder_name = workflow_row.folder_name
+
     try:
+        workflow_folder = OUTPUT_FOLDER / f"{workflow_folder_name}"
+
+        if workflow_folder.exists():
+            shutil.rmtree(workflow_folder)
+
         db.session.delete(workflow_row)
         db.session.commit()
     except Exception as ex:
@@ -304,6 +313,31 @@ def delete_workflow(workflow_id: str):
         jsonify({"message": "Workflow was deleted."}),
         200,
     )
+
+
+@app.route("/workflow/<workflow_id>/folder", methods=["GET"])
+def open_workflow_folder(workflow_id: str):
+    workflow_row = load_workflow(workflow_id)
+
+    if not workflow_row:
+        return (
+            jsonify({"message": f"Workflow with ID:'{workflow_id}' does not exist."}),
+            404,
+        )
+
+    workflow_folder = Path(workflow_row.state.main_folder)
+
+    if workflow_folder.exists():
+        os.startfile(workflow_folder)
+        return (
+            jsonify({"message": "Workflow folder was opened."}),
+            200,
+        )
+    else:
+        return (
+            jsonify({"message": "Workflow folder does not exist"}),
+            400,
+        )
 
 
 @app.route("/workflow/<workflow_id>/delete_step/<step_id>", methods=["DELETE"])
@@ -367,6 +401,33 @@ def update_step_parameters(workflow_id: str, step_id: str):
         ),
         200,
     )
+
+
+@app.route("/workflow/<workflow_id>/reorder", methods=["PUT"])
+def reorder_workflow_steps(workflow_id: str):
+    workflow = load_workflow(workflow_id)
+    if not workflow:
+        return (
+            jsonify({"message": f"Workflow with ID:'{workflow_id}' does not exist."}),
+            404,
+        )
+
+    payload = request.get_json(silent=True) or {}
+    step_ids = payload.get("stepIds", [])
+
+    if not isinstance(step_ids, list) or not step_ids:
+        return jsonify({"message": "stepIds must be a non-empty array"}), 400
+
+    step_map = {step.step_id: step for step in workflow.definition.steps}
+    missing_ids = [step_id for step_id in step_ids if step_id not in step_map]
+    if missing_ids:
+        return jsonify({"message": f"Unknown step ids: {missing_ids}"}), 400
+
+    reordered_steps = [step_map[step_id] for step_id in step_ids]
+    workflow.definition.steps = reordered_steps
+    save_workflow(workflow_id, workflow)
+
+    return jsonify({"message": "Workflow steps reordered"}), 200
 
 
 # Vrátí všechny workflow z databáze
@@ -473,6 +534,7 @@ def export_workflow(workflow_id: str):
             404,
         )
 
+    # ops = [{"operation_id": step.operation_id} for step in workflow.definition.steps]
     ops = []
     for step in workflow.definition.steps:
         if step.operation_id == "initializer_compound_discoverer":
