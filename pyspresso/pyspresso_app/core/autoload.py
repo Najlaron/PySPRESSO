@@ -6,7 +6,6 @@ import pyspresso_app.operations as operations
 def autoload_operations() -> None:
     """
     SIMPLER LOCAL VERSION
-
     """
     for module_info in pkgutil.iter_modules(operations.__path__):
         if module_info.ispkg:

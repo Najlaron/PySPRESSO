@@ -4,9 +4,7 @@ import StepBadge from '../molecules/StepBadge'
 import { formatNetworkError } from "../../utils/helpers"
 import { FaRegQuestionCircle } from "react-icons/fa"
 import Tooltip from "../molecules/Tooltip"
-
-
-const url = "http://127.0.0.1:5000"
+import { API_BASE_URL } from "../../config"
 
 function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadError }) {
     const navigate = useNavigate()
@@ -70,7 +68,7 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
         }
 
         try {
-            const response = await fetch(url + "/new_workflow", {
+            const response = await fetch(API_BASE_URL + "/new_workflow", {
                 method: "POST",
                 body: formData,
             })
@@ -109,23 +107,17 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
     function handleDataFileChange(e) {
         const file = e.target.files?.[0]
         if (!file) return
-        if (file.name.toLowerCase().endsWith('.csv')) {
-            filesDispatch({ type: 'SET_FILE', key: 'data', file })
-            filesDispatch({ type: 'SET_ERROR', key: 'data', error: null })
-        } else {
-            filesDispatch({ type: 'SET_ERROR', key: 'data', error: 'Please select a CSV file' })
-        }
+
+        filesDispatch({ type: 'SET_FILE', key: 'data', file })
+        filesDispatch({ type: 'SET_ERROR', key: 'data', error: null })
     }
 
     function handleBatchInfoFileChange(e) {
         const file = e.target.files?.[0]
         if (!file) return
-        if (file.name.toLowerCase().endsWith('.csv')) {
-            filesDispatch({ type: 'SET_FILE', key: 'batchInfo', file })
-            filesDispatch({ type: 'SET_ERROR', key: 'batchInfo', error: null })
-        } else {
-            filesDispatch({ type: 'SET_ERROR', key: 'batchInfo', error: 'Please select a CSV file' })
-        }
+
+        filesDispatch({ type: 'SET_FILE', key: 'batchInfo', file })
+        filesDispatch({ type: 'SET_ERROR', key: 'batchInfo', error: null })
     }
 
     return (
@@ -213,7 +205,7 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                         <label className="mb-[8px] font-medium text-noir text-2xl">
                             <div className="flex items-center gap-ds-sm">
                                 <Tooltip
-                                    text={"Input data file (CSV)"}
+                                    text={"Input data file. The file must be in spreadsheet format."}
                                 >
                                     <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
                                 </Tooltip>
@@ -232,7 +224,7 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                         <label className="mb-[8px] font-medium text-noir text-2xl">
                             <div className="flex items-center gap-ds-sm">
                                 <Tooltip
-                                    text={"Batch information file (CSV)"}
+                                    text={"Batch information file. The file must be in spreadsheet format."}
                                 >
                                     <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
                                 </Tooltip>

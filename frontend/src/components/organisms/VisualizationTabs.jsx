@@ -3,7 +3,7 @@ import TabDataButton from "../molecules/WorkflowLayout/TabDataButton"
 function VisualizationTabs({ visualizations = [], activeView, setActiveView }) {
 
     return (
-        <div className="flex gap-ds-md items-center overflow-x-auto">
+        <div className="flex gap-ds-md items-center overflow-x-auto w-full">
             {visualizations.map((visualization, index) => (
                 <TabDataButton
                     key={visualization.stepId}

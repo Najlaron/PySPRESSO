@@ -83,6 +83,7 @@ class WorkflowState:
     workflow_id: str
     name: str
     pyspresso_version: str
+    main_folder: str | None = None
     files: dict[str, str] = field(default_factory=dict)
 
     data: pd.DataFrame | None = None
@@ -142,6 +143,7 @@ class WorkflowState:
             "workflow_id": self.workflow_id,
             "name": self.name,
             "pyspresso_version": self.pyspresso_version,
+            "main_folder": self.main_folder,
             "files": self.files,
             "data": (_df_to_serializable(self.data) if self.data is not None else None),
             "variable_metadata": (
@@ -264,6 +266,7 @@ class WorkflowState:
             workflow_id=data["workflow_id"],
             name=data["name"],
             pyspresso_version=data["pyspresso_version"],
+            main_folder=data.get("main_folder"),
             files=data.get("files", {}),
             data=_restore_dataframe(data.get("data")),
             variable_metadata=_restore_dataframe(data.get("variable_metadata")),

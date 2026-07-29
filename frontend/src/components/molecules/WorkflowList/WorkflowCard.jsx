@@ -28,7 +28,6 @@ function WorkflowCard({ workflow, isSelected, onClick, onDelete, isDeleting }) {
                 if (!otherId) return
                 if (otherId !== workflow?.id) setMenuOpen(false)
             } catch (e) {
-                // ignore
             }
         }
 
@@ -52,7 +51,6 @@ function WorkflowCard({ workflow, isSelected, onClick, onDelete, isDeleting }) {
                                 try {
                                     document.dispatchEvent(new CustomEvent('workflow-menu-open', { detail: { id: workflow?.id } }))
                                 } catch (err) {
-                                    // ignore
                                 }
                             }
                             return next
@@ -66,14 +64,14 @@ function WorkflowCard({ workflow, isSelected, onClick, onDelete, isDeleting }) {
                 </button>
 
                 {menuOpen && (
-                    <div className="absolute right-10 top-15 w-42 bg-foam border border-roast/20 rounded shadow-md z-20 p-1">
+                    <div className="absolute right-10 top-15 w-45 bg-foam border border-roast/20 rounded shadow-md z-20 p-1">
                         <button
                             onClick={async (e) => { e.stopPropagation(); await onDelete(); setMenuOpen(false); }}
                             className={`w-full p-ds-sm hover:bg-crema/65 flex gap-ds-sm items-center rounded
                                                     ${isDeleting ? "cursor-wait bg-crema/65" : "cursor-pointer"}`}
                         >
                             <RiDeleteBinLine size="1.25rem" color="341100" /> {/*musí se zarovnat */}
-                            <span className="text-base text-noir">Delete method</span>
+                            <span className="text-base text-noir">Delete workflow</span>
                         </button>
                     </div>
                 )}

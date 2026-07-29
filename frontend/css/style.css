@@ -1,7 +1,3 @@
-html {
-  scroll-behavior: smooth;
-}
-
 /* Body */
 body {
   margin: 0;
@@ -136,6 +132,4 @@ main {
   to {
     transform: rotate(1turn);
   }
-}
-
-/*# sourceMappingURL=style.css.map */
+}/*# sourceMappingURL=style.css.map */

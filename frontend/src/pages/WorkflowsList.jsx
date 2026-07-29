@@ -2,8 +2,7 @@ import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import WorkflowCard from "../components/molecules/WorkflowList/WorkflowCard"
 import { formatNetworkError } from "../utils/helpers"
-
-const url = "http://127.0.0.1:5000"
+import { API_BASE_URL } from "../config"
 
 function WorkflowsList() {
     const navigate = useNavigate()
@@ -11,13 +10,6 @@ function WorkflowsList() {
     const [selectedWorkflow, setSelectedWorkflow] = useState(null)
     const [isLoading, setIsLoading] = useState(false)
     const [loadingError, setLoadingError] = useState(null)
-
-    // Import
-    const [importModalOpen, setImportModalOpen] = useState(false)
-    const [selectedImportFile, setSelectedImportFile] = useState(null)
-    const [importError, setImportError] = useState(null)
-    const [notJsonFileError, setNotJsonFileError] = useState(null)
-    const [isImporting, setIsImporting] = useState(false)
 
     //Delete
     const [isDeleting, setIsDeleting] = useState(false)
@@ -29,7 +21,7 @@ function WorkflowsList() {
             setIsLoading(true)
 
             try {
-                const response = await fetch(url + "/workflows")
+                const response = await fetch(API_BASE_URL + "/workflows")
                 const data = await response.json()
 
                 if (!response.ok) {
@@ -48,7 +40,7 @@ function WorkflowsList() {
         loadWorkflows()
     }, [])
 
-    // auto-hide success message after a short delay
+    // auto-hide u úspěšného odstranění
     useEffect(() => {
         if (!deleteSucces) return
         const timeout = setTimeout(() => setDeleteSuccess(null), 3000)
@@ -59,7 +51,7 @@ function WorkflowsList() {
         setIsDeleting(true)
 
         try {
-            const response = await fetch(url + `/workflow/${workflowId}/delete`, {
+            const response = await fetch(API_BASE_URL + `/workflow/${workflowId}/delete`, {
                 method: "DELETE"
             })
 
@@ -71,7 +63,7 @@ function WorkflowsList() {
             }
 
             // obnovení workflows
-            const responseWorkflows = await fetch(url + "/workflows")
+            const responseWorkflows = await fetch(API_BASE_URL + "/workflows")
             const dataWorkflows = await responseWorkflows.json()
             setWorkflows(dataWorkflows)
             setDeleteSuccess("Workflow was successfully deleted")
@@ -80,63 +72,6 @@ function WorkflowsList() {
         } finally {
             setIsDeleting(false)
         }
-    }
-
-    async function handleImportSubmit(e) {
-        e.preventDefault()
-        setIsImporting(true)
-        if (!selectedImportFile) {
-            setImportError("No file selected")
-            return
-        }
-
-        try {
-            const formData = new FormData()
-            formData.append("file", selectedImportFile)
-
-            const response = await fetch(url + `/workflow/import`, {
-                method: "POST",
-                body: formData,
-            })
-
-            const data = await response.json()
-
-            if (!response.ok) {
-                setImportError(data?.message ?? "Failed to import workflow.")
-                setImportModalOpen(false)
-                return
-            }
-
-            setSelectedImportFile(null)
-            setImportModalOpen(false)
-
-            // přesměrování na layout
-            setTimeout(() => {
-                navigate(`/workflow/${data.workflowId}`)
-            }, 500)
-        } catch (err) {
-            setImportError(formatNetworkError(err))
-            setImportModalOpen(false)
-        }
-        finally {
-            setIsImporting(false)
-        }
-    }
-
-    function handleFileInputChange(e) {
-        const file = e.target.files?.[0]
-        if (file && file.name.endsWith(".json")) {
-            setSelectedImportFile(file)
-            setImportError(null)
-        } else if (file) {
-            setNotJsonFileError("Please select a JSON file")
-        }
-    }
-
-    function closeImportModal() {
-        setImportModalOpen(false)
-        setSelectedImportFile(null)
-        setImportError(null)
     }
 
     return (
@@ -148,12 +83,6 @@ function WorkflowsList() {
                     <div className="mb-ds-md p-ds-md border border-green-200 bg-green-100 text-green-800 rounded-lg max-w-xl mx-auto text-center text-xl">
                         {deleteSucces}
                     </div>
-                </div>
-            )}
-
-            {importError && (
-                <div className="mb-ds-md p-ds-md border border-red-200 bg-red-100 text-red-800 rounded-lg max-w-xl mx-auto text-center text-xl">
-                    {importError}
                 </div>
             )}
 
@@ -178,17 +107,6 @@ function WorkflowsList() {
 
 
                 <div className="flex flex-col gap-ds-md items-center">
-                    <div className="flex">
-                        <button
-                            onClick={() => {
-                                setImportModalOpen(true)
-                                setImportError(null)
-                            }}
-                            className="bg-noir text-foam rounded-4xl py-ds-md px-ds-lg text-lg font-semibold cursor-pointer transition duration-300 hover:bg-noir/80"
-                        >
-                            Import Workflow
-                        </button>
-                    </div>
                     <div className="mb-8 flex flex-col gap-ds-md">
                         {workflows?.map((workflow) => (
                             <WorkflowCard
@@ -213,52 +131,6 @@ function WorkflowsList() {
                     >
                         Continue
                     </button>
-                </div>
-            )}
-
-
-            {/* Modální okno */}
-            {importModalOpen && (
-                <div className="fixed inset-0 bg-noir/25 flex items-center justify-center z-50">
-                    <div className="bg-foam rounded-2xl p-ds-lg max-w-md w-full mx-ds-md shadow-xl">
-                        <h2 className="text-2xl font-bold mb-ds-lg text-noir text-center">Import Workflow</h2>
-
-                        <form onSubmit={handleImportSubmit}>
-                            <div className="mb-ds-md">
-                                <label className="block mb-ds-sm text-noir text-lg">Select JSON file</label>
-                                <input
-                                    type="file"
-                                    accept=".json"
-                                    onChange={handleFileInputChange}
-                                    className="border border-dashed border-roast/75 rounded-[10px] px-ds-md py-ds-xl w-full"
-                                />
-                            </div>
-
-                            {notJsonFileError && (
-                                <p className="text-red-700 text-lg text-medium pb-ds-sm">{notJsonFileError}</p>
-                            )}
-
-                            <div className="flex gap-ds-sm">
-                                <button
-                                    type="button"
-                                    onClick={closeImportModal}
-                                    className="flex-1 bg-crema/85 text-noir rounded-lg py-ds-sm font-medium cursor-pointer transition hover:bg-crema"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={!selectedImportFile || isImporting}
-                                    className={`flex-1 rounded-lg py-ds-sm font-medium transition bg-grounds text-foam hover:bg-noir/90 
-                                        ${isImporting
-                                            ? "cursor-not-allowed" : "cursor-pointer"
-                                        }`}
-                                >
-                                    {isImporting ? "Importing" : "Import"}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
                 </div>
             )}
         </div>

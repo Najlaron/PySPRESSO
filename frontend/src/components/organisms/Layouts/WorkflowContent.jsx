@@ -90,7 +90,8 @@ function WorkflowContent({ workflow,
     apiBaseUrl,
     error,
     workflowError,
-    stepExecutionMessage
+    stepExecutionMessage,
+    reorderPromise
 }) {
     //const [activeTab, setActiveTab] = useState(null)
     const [activeView, setActiveView] = useState(null)
@@ -98,6 +99,7 @@ function WorkflowContent({ workflow,
     const [showLog, setShowLog] = useState(false)
     const [isExporting, setIsExporting] = useState(false)
     const [exportError, setExportError] = useState(null)
+    const [folderError, setFolderError] = useState(null)
 
     const visualizations = useMemo(() => {
         return getVisualizationSteps(workflow, operations)
@@ -134,37 +136,6 @@ function WorkflowContent({ workflow,
         }
     }, [workflow, visualizations, activeView?.type, activeView?.stepId])
 
-    // const logMessages = useMemo(() => {
-    //     if (!workflow) return []
-
-    //     const steps = workflow.definition?.steps || []
-    //     return steps
-    //         .map((step) => {
-    //             const operation = operations.find((op) => op.id === step.operation_id)
-    //             const name = operation?.label || step.operation_id
-    //             const summary = step?.output_summary || {}
-
-    //             const status = summary.status || summary.state || null
-    //             const err = summary.error || summary.exception || summary.traceback || summary.message
-
-    //             if (err) {
-    //                 return `Operation ${name} failed: ${String(err)}`
-    //             }
-
-    //             if (status && String(status).toLowerCase && ["done", "success", "completed", "ok"].includes(String(status).toLowerCase())) {
-    //                 return `Operation ${name} was completed.`
-    //             }
-
-    //             // fallback: if there's any saved_paths or figure_paths, assume success
-    //             if (summary.saved_paths || summary.figure_path || summary.plots || summary.figures) {
-    //                 return `Operation ${name} was completed.`
-    //             }
-
-    //             return null
-    //         })
-    //         .filter(Boolean)
-    // }, [workflow, operations])
-
 
     function formatWorkflowForDisplay(wf) {
         if (!wf) return wf
@@ -198,6 +169,7 @@ function WorkflowContent({ workflow,
                 operation={operation}
                 workflowId={workflowId}
                 onClose={onCloseParameters}
+                reorderPromiseParams={reorderPromise}
             />
         )
     }
@@ -259,9 +231,24 @@ function WorkflowContent({ workflow,
         }
     }
 
+    async function handleOpenFolder() {
+        try {
+            const response = await fetch(`${apiBaseUrl}/workflow/${workflowId}/folder`)
+            const data = await response.json()
+
+            if (!response.ok) {
+                setFolderError("Failed to export workflow.")
+                return
+            }
+        } catch (err) {
+            setFolderError(formatNetworkError(err))
+        }
+    }
+
+
+
     // status vykonaného kroku
     const execucitonStatus = stepExecutionMessage?.status
-
 
     return (
         // Tohle celé je ta pravá část layoutu
@@ -323,57 +310,53 @@ function WorkflowContent({ workflow,
                                 setActiveView={setActiveView}
                             />
                         )}
-                        {workflow && (
-                            <button
-                                onClick={handleExportWorkflow}
-                                disabled={isExporting}
-                                className={`bg-espresso text-foam px-ds-md py-ds-md font-semibold transition hover:bg-noir/90
+                        <div className="flex gap-ds-lg">
+                            {workflow && (
+                                <button
+                                    onClick={handleExportWorkflow}
+                                    disabled={isExporting}
+                                    className={`rounded hover:text-foam px-ds-md py-ds-md font-medium transition hover:bg-espresso
                                     ${isExporting ? "" : "cursor-pointer"}
                                     `}
-                            >
-                                {isExporting ? "Exporting" : "Export Workflow"}
-                            </button>
-                        )}
+                                >
+                                    {isExporting ? "Exporting" : "Export Workflow"}
+                                </button>
+                            )}
+                            {/* {workflow && (
+                                <button
+                                    onClick={handleOpenFolder}
+                                    disabled={isExporting}
+                                    className="p-ds-md font-medium cursor-pointer rounded hover:bg-crema"
+                                >
+                                    Open folder
+                                </button>
+                            )} */}
+                        </div>
+
                     </div>
 
-                    {/* Execution log button and panel */}
-                    {/* {workflow && (
-                        <div className="mt-ds-md">
-                            <div className="bg-white p-4 rounded border overflow-auto mt-ds-md max-h-64">
-                                {logMessages.length === 0 ? (
-                                    <p className="text-noir/60">No execution log available.</p>
-                                ) : (
-                                    <ul className="list-disc pl-5">
-                                        {logMessages.map((msg, idx) => (
-                                            <li key={idx} className="text-noir mb-1">{msg}</li>
-                                        ))}
-                                    </ul>
-                                )}
-                            </div>
-                        </div>
-                    )} */}
 
                     {workflow && (
-                        <div className="mt-ds-md">
-                            <div className={`bg-light-foam p-ds-md rounded-lg border-l-6 overflow-auto mt-ds-md max-h-64 shadow-xl
-                                ${execucitonStatus === "done" ? "border-l-[#6D8B74]" : execucitonStatus === "failed" ? "border-l-[#ED9C4C]" : "border-transparent "}
+                        <div className="">
+                            <div className={`bg-light-foam p-ds-md rounded-lg border-l-6 overflow-auto max-h-64 shadow-xl
+                                ${execucitonStatus === "done" ? "border-l-[#6D8B74]" : execucitonStatus !== "done" ? "border-l-[#ED9C4C]" : "border-transparent "}
                                 `}>
                                 {stepExecutionMessage ? (
                                     <div className="flex items-start gap-ds-md">
                                         <div>
-                                            <div className="font-semibold text-noir mb-2">{stepExecutionMessage.operation}</div>
+                                            <div className="font-semibold text-noir mb-2 text-lg">{stepExecutionMessage.operation}</div>
                                             <ul className="">
                                                 {stepExecutionMessage.message.map((msg, idx) => {
                                                     const text = msg?.message ?? msg
                                                     return (
-                                                        <li key={idx} className="text-noir mb-1">{text}</li>
+                                                        <li key={idx} className="text-noir mb-1 text-lg">{text}</li>
                                                     )
                                                 })}
                                             </ul>
                                         </div>
                                     </div>
                                 ) : (
-                                    <p className="text-noir">No output message available.</p>
+                                    <p className="text-noir text-lg">No output message available.</p>
                                 )}
                             </div>
                         </div>

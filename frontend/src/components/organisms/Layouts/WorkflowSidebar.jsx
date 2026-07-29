@@ -3,6 +3,9 @@ import SearchedMethod from "../../molecules/WorkflowLayout/SearchedMethod"
 import WorkflowStepCard from "../../molecules/WorkflowLayout/WorkflowStepCard"
 import TabDataButton from "../../molecules/WorkflowLayout/TabDataButton"
 import { MdPlayArrow } from "react-icons/md"
+import { DndContext, closestCorners, MouseSensor, useSensor, useSensors } from "@dnd-kit/core"
+import { SortableContext, arrayMove, verticalListSortingStrategy } from "@dnd-kit/sortable"
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers"
 
 function WorkflowSidebar({
     searchQuery,
@@ -21,13 +24,40 @@ function WorkflowSidebar({
     isWorkflowLoading,
     isStepDeleting,
     addedOperationId,
-    isRunningAll
+    isRunningAll,
+    onReorderSteps
 }) {
+    const sensors = useSensors(
+        useSensor(MouseSensor, {
+            activationConstraint: {
+                distance: 4,
+            },
+        })
+    )
+
+    const handleDragEnd = (event) => {
+        const { active, over } = event
+
+        if (!over || active.id === over.id) return
+
+        const oldIndex = workflow?.definition?.steps?.findIndex((step) => step.step_id === active.id) ?? -1
+        const newIndex = workflow?.definition?.steps?.findIndex((step) => step.step_id === over.id) ?? -1
+
+        if (oldIndex < 0 || newIndex < 0) return
+
+        const reorderedIds = arrayMove(
+            workflow.definition.steps.map((step) => step.step_id),
+            oldIndex,
+            newIndex
+        )
+
+        onReorderSteps?.(reorderedIds)
+    }
 
 
     return (
-        <aside className="w-[30%] bg-light-foam pt-ds-xl pb-ds-lg px-ds-lg">
-            <div className="flex flex-col justify-between h-full max-w-150">
+        <aside className="w-[30%] bg-light-foam pt-ds-xl pb-ds-lg px-ds-lg shadow-[4px_0_12px_rgba(0,0,0,0.08)] z-10">
+            <div className="flex flex-col justify-between h-full max-w-360">
                 {/* Search bar */}
                 <div className="">
                     <SearchBar
@@ -62,25 +92,30 @@ function WorkflowSidebar({
                 <div className="mt-ds-xl flex-1 overflow-y-auto">
                     <div className="flex flex-col gap-ds-md">
                         <h3 className="text-xl text-espresso font-semibold">METHODS IN WORKFLOW</h3>
-                        {workflow?.definition.steps?.map((step, idx) => {
-                            const op = operations.find(o => o.id === step.operation_id)
-                            return (
-                                <WorkflowStepCard
-                                    key={step.step_id}
-                                    step={step}
-                                    operation={op}
-                                    stepNumber={idx + 1}
-                                    isSelected={selectedStep?.step_id === step.step_id}
-                                    handlers={{
-                                        onDelete: () => onDeleteStep(step?.step_id),
-                                        onSelectStep: () => onSelectStep(step),
-                                        onExecute: () => onExecuteStep(step.step_id)
-                                    }}
-                                    runningStepId={runningStepId}
-                                    isDeleting={isStepDeleting}
-                                />
-                            )
-                        })}
+                        <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={handleDragEnd} modifiers={[restrictToVerticalAxis]}>
+                            <SortableContext items={workflow?.definition?.steps?.map((step) => step.step_id) ?? []} strategy={verticalListSortingStrategy}>
+                                {workflow?.definition.steps?.map((step, idx) => {
+                                    const op = operations.find(o => o.id === step.operation_id)
+                                    return (
+                                        <WorkflowStepCard
+                                            key={step.step_id}
+                                            id={step.step_id}
+                                            step={step}
+                                            operation={op}
+                                            stepNumber={idx + 1}
+                                            isSelected={selectedStep?.step_id === step.step_id}
+                                            handlers={{
+                                                onDelete: () => onDeleteStep(step?.step_id),
+                                                onSelectStep: () => onSelectStep(step),
+                                                onExecute: () => onExecuteStep(step.step_id)
+                                            }}
+                                            runningStepId={runningStepId}
+                                            isDeleting={isStepDeleting}
+                                        />
+                                    )
+                                })}
+                            </SortableContext>
+                        </DndContext>
                     </div>
                 </div>
                 {workflow && (

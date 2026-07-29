@@ -48,7 +48,7 @@ function ParameterInput({ parameter, value, onChange }) {
     }
 
     // asi může být stejné pro všechny čísla (int, float, ....)
-    if (paramType === "integer" || paramType === "number" || paramType === "int") {
+    if (paramType === "integer" || paramType === "number" || paramType === "int" || paramType === "float") {
         return (
             <div className="flex flex-col gap-ds-sm">
                 <label className="flex flex-col justify-center text-noir font-medium text-xl">
@@ -71,10 +71,13 @@ function ParameterInput({ parameter, value, onChange }) {
                 <input
                     type="number"
                     value={value}
-                    onChange={(e) => onChange(e.target.value)}
+                    onChange={(e) => {
+                        const default_value = e.target.value
+                        onChange(default_value === "" ? undefined : (paramType === "float" ? parseFloat(default_value) : parseInt(default_value, 10)))
+                    }}
                     placeholder={parameter.default}
                     className="px-ds-md py-ds-md border border-roast/50 rounded-lg bg-light-foam text-noir focus:outline-none focus:border-espresso"
-                    step={paramType === "integer" ? "1" : "0.01"}
+                    step={paramType === "float" ? "0.01" : "1"}
                 />
             </div>
         )
