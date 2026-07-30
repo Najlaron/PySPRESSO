@@ -5,6 +5,9 @@ import os
 import numpy as np
 import pandas as pd
 
+import ast
+import re
+from scipy.stats import gaussian_kde
 from pyspresso_app.core.registry import register_operation
 from pyspresso_app.core.operation_models import OperationTag, ParameterDef
 from pyspresso_app.core.workflow_models import WorkflowState
@@ -197,6 +200,73 @@ def _make_batch_colors(batch, cmap_name):
 
     return unique_batches, batch_colors, batch_to_color
 
+def _natural_sort_key(s):
+    if isinstance(s, tuple):
+        s = "-".join(map(str, s))
+
+    return [
+        int(text) if text.isdigit() else text.lower()
+        for text in re.split(r"(\d+)", str(s))
+    ]
+
+
+def _safe_filename(value):
+    value = str(value)
+    value = re.sub(r'[<>:"/\\\\|?*]+', "_", value)
+    value = re.sub(r"\s+", "_", value)
+    value = value.strip("_")
+    return value or "value"
+
+
+def _parse_metadata_columns(value):
+    """
+    Allows metadata grouping columns to come either as:
+        "Diagnosis"
+        "Diagnosis, Sex"
+        "['Diagnosis', 'Sex']"
+        ["Diagnosis", "Sex"]
+    """
+    if isinstance(value, list):
+        return value
+
+    if isinstance(value, str):
+        value = value.strip()
+
+        if value.startswith("[") and value.endswith("]"):
+            parsed = ast.literal_eval(value)
+            if not isinstance(parsed, list):
+                raise ValueError("column_names must be a metadata column name or a list of names.")
+            return parsed
+
+        if "," in value:
+            return [v.strip() for v in value.split(",") if v.strip()]
+
+        return value
+
+    return value
+
+
+def _parse_show_value(value):
+    """
+    Converts GUI string inputs such as '[1, 2, 3]' or '1,2,3'
+    before passing them to _resolve_feature_indices().
+    """
+    if isinstance(value, str):
+        value = value.strip()
+
+        if value.lower() in {"all", "default", "none"}:
+            return value.lower()
+
+        if value.startswith("[") and value.endswith("]"):
+            parsed = ast.literal_eval(value)
+            if not isinstance(parsed, list):
+                raise ValueError("indexes must be 'all', an integer, a cpdID, or a list.")
+            return parsed
+
+        if "," in value:
+            return [v.strip() for v in value.split(",") if v.strip()]
+
+    return value
 
 # ------------------------------------------------------------
 # Visualization operations
@@ -848,4 +918,539 @@ def visualize_samples_by_batch(
         "features_plotted": feature_indices,
         "n_features_plotted": len(feature_indices),
         "cmap": cmap,
+    }
+
+@register_operation(
+    id="visualizer_violin_plots",
+    label="Violin Plots",
+    description="Create demo violin plots for selected features grouped by metadata columns.",
+    citation="",
+    category_tags=[OperationTag.VISUALIZATION],
+    parameter_schema=[
+        ParameterDef(
+            name="column_names",
+            type="str",
+            required=True,
+            default="Sample Type",
+            label="Grouping column(s)",
+            help=(
+                "Metadata column used for grouping. You can also use multiple columns, "
+                "for example: Diagnosis, Sex or ['Diagnosis', 'Sex']."
+            ),
+        ),
+        ParameterDef(
+            name="indexes",
+            type="str",
+            required=False,
+            default="default",
+            label="Feature indexes",
+            help=(
+                "Feature indexes or cpdIDs to plot. Use 'default' for evenly spaced "
+                "features, one index such as 5, one cpdID, or a list such as [1, 2, 3]. "
+                "'all' is intentionally not supported in this demo version."
+            ),
+        ),
+        ParameterDef(
+            name="n_plots",
+            type="int",
+            required=False,
+            default=5,
+            label="Number of demo plots",
+            help="Number of evenly spaced demo plots to create when indexes='default'. Maximum is 10.",
+        ),
+        ParameterDef(
+            name="cmap",
+            type="str",
+            required=False,
+            default="nipy_spectral",
+            label="Colormap",
+            help="Matplotlib colormap name.",
+        ),
+        ParameterDef(
+            name="plt_name_suffix",
+            type="str",
+            required=False,
+            default="",
+            label="Plot name suffix",
+            help="Suffix added to output file names.",
+        ),
+        ParameterDef(
+            name="bw",
+            type="float",
+            required=False,
+            default=0.2,
+            label="Bandwidth",
+            help="Bandwidth parameter for violin plot kernel density estimation.",
+        ),
+        ParameterDef(
+            name="jitter",
+            type="bool",
+            required=False,
+            default=True,
+            label="Jitter points",
+            help="If True, individual points are jittered on the x-axis.",
+        ),
+        ParameterDef(
+            name="label_rotation",
+            type="int",
+            required=False,
+            default=0,
+            label="Label rotation",
+            help="Rotation of x-axis group labels.",
+        ),
+    ],
+    requires=["data", "metadata"],
+    produces=["figures"],
+)
+def visualizer_violin_plots(
+    state: WorkflowState,
+    column_names="Sample Type",
+    indexes="default",
+    n_plots=5,
+    cmap="nipy_spectral",
+    plt_name_suffix="",
+    bw=0.2,
+    jitter=True,
+    label_rotation=0,
+):
+    """
+    Demo-friendly violin plot visualization.
+
+    Creates a small number of violin plots across the dataset or for selected
+    feature indexes / cpdIDs. This version intentionally does not support
+    plotting all features, PDF export, PDF merging, or report insertion.
+    """
+
+    import ast
+    import os
+    import re
+
+    import numpy as np
+    import pandas as pd
+
+    plt, mpl, _ = _load_plotting()
+
+    try:
+        from scipy.stats import gaussian_kde
+    except ImportError as exc:
+        raise ImportError(
+            "scipy is required for violin plot jitter density. "
+            "Install it with: python -m pip install scipy"
+        ) from exc
+
+    # ------------------------------------------------------------------
+    # Local helpers
+    # ------------------------------------------------------------------
+
+    def _natural_sort_key_local(value):
+        if isinstance(value, tuple):
+            value = "-".join(map(str, value))
+
+        return [
+            int(text) if text.isdigit() else text.lower()
+            for text in re.split(r"(\d+)", str(value))
+        ]
+
+    def _safe_filename_local(value):
+        value = str(value)
+        value = re.sub(r'[<>:"/\\\\|?*]+', "_", value)
+        value = re.sub(r"\s+", "_", value)
+        value = value.strip("_")
+        return value or "value"
+
+    def _parse_metadata_columns(value):
+        """
+        Accept:
+            "Diagnosis"
+            "Diagnosis, Sex"
+            "['Diagnosis', 'Sex']"
+            ["Diagnosis", "Sex"]
+        """
+        if isinstance(value, list):
+            return value
+
+        if isinstance(value, str):
+            value = value.strip()
+
+            if value.startswith("[") and value.endswith("]"):
+                parsed = ast.literal_eval(value)
+                if not isinstance(parsed, list):
+                    raise ValueError(
+                        "column_names must be a metadata column name or a list of names."
+                    )
+                return parsed
+
+            if "," in value:
+                return [v.strip() for v in value.split(",") if v.strip()]
+
+            return value
+
+        return value
+
+    def _parse_indexes_value(value):
+        """
+        Convert GUI string inputs before using _resolve_feature_indices().
+        """
+        if isinstance(value, str):
+            value = value.strip()
+
+            if value.lower() in {"default", "none"}:
+                return value.lower()
+
+            if value.lower() == "all":
+                raise ValueError(
+                    "'all' is intentionally not supported in this demo violin plot operation. "
+                    "Use indexes='default' or provide a short list of feature indexes."
+                )
+
+            if value.startswith("[") and value.endswith("]"):
+                parsed = ast.literal_eval(value)
+                if not isinstance(parsed, list):
+                    raise ValueError(
+                        "indexes must be 'default', an integer, a cpdID, or a short list."
+                    )
+                return parsed
+
+            if "," in value:
+                return [v.strip() for v in value.split(",") if v.strip()]
+
+        return value
+
+    # ------------------------------------------------------------------
+    # Basic checks
+    # ------------------------------------------------------------------
+
+    if state.data is None:
+        raise ValueError("No data found. Run dataset initialization first.")
+
+    if state.metadata is None:
+        raise ValueError("No metadata found. Run dataset initialization first.")
+
+    data = state.data.copy()
+    metadata = state.metadata.copy()
+
+    if len(data) == 0:
+        raise ValueError("Data table is empty; no violin plots can be created.")
+
+    main_folder, figures_folder = _ensure_main_folders(state)
+
+    output_file_prefix = getattr(state, "output_file_prefix", None)
+    if not output_file_prefix:
+        output_file_prefix = getattr(state, "name", None)
+    if not output_file_prefix:
+        output_file_prefix = "PySPRESSO"
+
+    QC_samples = getattr(state, "QC_samples", None)
+
+    # ------------------------------------------------------------------
+    # Resolve feature indexes
+    # ------------------------------------------------------------------
+
+    indexes = _parse_indexes_value(indexes)
+
+    if isinstance(indexes, str) and indexes.lower() == "default":
+        n_plots = int(n_plots)
+
+        if n_plots < 1:
+            raise ValueError("n_plots must be at least 1.")
+
+        if n_plots > 10:
+            print("n_plots was higher than 10. For demo mode, it was capped to 10.")
+            n_plots = 10
+
+        n_plots = min(n_plots, len(data))
+
+        resolved_indexes = np.linspace(
+            0,
+            len(data) - 1,
+            n_plots,
+            dtype=int,
+        ).tolist()
+
+    else:
+        resolved_indexes = _resolve_feature_indices(indexes, data)
+
+        if len(resolved_indexes) > 10:
+            raise ValueError(
+                "This demo violin plot operation supports at most 10 selected features. "
+                "Please provide a shorter list of indexes or cpdIDs."
+            )
+
+    if not resolved_indexes:
+        raise ValueError(
+            "No valid feature indexes were resolved from the indexes parameter."
+        )
+
+    # Remove duplicates while preserving order.
+    resolved_indexes = list(dict.fromkeys(resolved_indexes))
+
+    bad_indexes = [
+        idx for idx in resolved_indexes
+        if idx < 0 or idx >= len(data)
+    ]
+
+    if bad_indexes:
+        raise ValueError(f"Some feature indexes are out of range: {bad_indexes}")
+
+    # ------------------------------------------------------------------
+    # Prepare metadata grouping
+    # ------------------------------------------------------------------
+
+    original_column_names = column_names
+    column_names = _parse_metadata_columns(column_names)
+
+    grouping_label_for_axis = column_names
+
+    if isinstance(column_names, list):
+        for col in column_names:
+            if col not in metadata.columns:
+                raise ValueError(f"Metadata column '{col}' was not found.")
+
+        grouping_column = str(column_names)
+
+        metadata[grouping_column] = metadata[column_names].apply(
+            lambda row: "_".join(row.map(str)),
+            axis=1,
+        )
+
+        column_names = grouping_column
+
+    else:
+        if column_names not in metadata.columns:
+            raise ValueError(f"Metadata column '{column_names}' was not found.")
+
+    # Transpose data so rows are samples and columns are features.
+    # The first transposed row is cpdID.
+    data_transposed = data.T.copy()
+
+    grouping_values = metadata[column_names].to_list()
+    grouping_values.insert(0, None)
+
+    if len(grouping_values) != len(data_transposed):
+        raise ValueError(
+            "Metadata length does not match the number of sample columns in data. "
+            "Check that metadata rows correspond to data sample columns."
+        )
+
+    data_transposed[column_names] = grouping_values
+
+    data_transposed[column_names] = data_transposed[column_names].where(
+        pd.notnull(data_transposed[column_names]),
+        "None",
+    )
+
+    samples_only = data_transposed.iloc[1:, :].copy()
+
+    grouped = samples_only.groupby(column_names, sort=False)
+
+    group_order = sorted(
+        list(grouped.groups.keys()),
+        key=_natural_sort_key_local,
+    )
+
+    # Move QC group to the end, if it can be detected by sample-name overlap.
+    qc_key = None
+
+    if QC_samples:
+        qc_set = set(map(str, QC_samples))
+        best_key = None
+        best_overlap = 0
+
+        for key in group_order:
+            group_ids = set(map(str, grouped.get_group(key).index))
+            overlap = len(group_ids & qc_set)
+
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_key = key
+
+        if best_overlap > 0:
+            qc_key = best_key
+
+    if qc_key is not None and qc_key in group_order:
+        group_order.append(group_order.pop(group_order.index(qc_key)))
+
+    print("Group order:", group_order, "| QC detected as:", qc_key)
+
+    x_labels = [
+        f"{key} ({len(grouped.get_group(key))})"
+        for key in group_order
+    ]
+
+    cmap_obj = mpl.cm.get_cmap(cmap)
+
+    if len(group_order) == 1:
+        color_indices = [0.5]
+    else:
+        color_indices = np.linspace(0.05, 0.95, len(group_order))
+
+    colors = [cmap_obj(i) for i in color_indices]
+
+    # Remove grouping column again so feature indexes match the data columns.
+    data_transposed = data_transposed.drop([column_names], axis=1)
+
+    safe_grouping_name = _safe_filename_local(column_names)
+    safe_suffix = _safe_filename_local(plt_name_suffix)
+
+    saved_paths = []
+    plotted_features = []
+
+    # ------------------------------------------------------------------
+    # Plotting loop
+    # ------------------------------------------------------------------
+
+    for plot_i, feature_index in enumerate(resolved_indexes):
+        values = []
+
+        for group_name in group_order:
+            group = grouped.get_group(group_name)
+
+            raw_values = group.iloc[:, feature_index]
+
+            numeric_values = pd.to_numeric(
+                raw_values,
+                errors="coerce",
+            ).dropna().to_numpy(dtype=float)
+
+            if numeric_values.size > 0:
+                values.append(numeric_values)
+            else:
+                values.append(np.array([0.0]))
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        violin = ax.violinplot(
+            values,
+            showmeans=False,
+            showmedians=False,
+            showextrema=False,
+            bw_method=bw,
+        )
+
+        # Violin colors.
+        for i, body in enumerate(violin["bodies"]):
+            body.set_facecolor(colors[i])
+            body.set_edgecolor(colors[i])
+            body.set_linewidth(1)
+            body.set_alpha(0.75)
+
+        # Mean and median lines.
+        for i, value_group in enumerate(values):
+            x_center = i + 1
+
+            ax.plot(
+                [x_center - 0.2, x_center + 0.2],
+                [np.mean(value_group)] * 2,
+                color=colors[i],
+                linewidth=0.5,
+            )
+
+            ax.plot(
+                [x_center - 0.2, x_center + 0.2],
+                [np.median(value_group)] * 2,
+                color=colors[i],
+                linewidth=0.5,
+            )
+
+        # Scatter individual points.
+        for i, value_group in enumerate(values):
+            x_center = i + 1
+
+            if jitter:
+                if len(value_group) > 1:
+                    try:
+                        kde = gaussian_kde(value_group)
+                        densities = kde(value_group)
+
+                        max_density = np.nanmax(densities)
+
+                        if np.isfinite(max_density) and max_density > 0:
+                            x_jitter = 0.05 * densities / max_density
+                        else:
+                            x_jitter = np.repeat(0.03, len(value_group))
+
+                        x_jittered = np.random.normal(
+                            x_center,
+                            x_jitter,
+                            size=len(value_group),
+                        )
+
+                    except Exception:
+                        # gaussian_kde can fail for constant or nearly constant values.
+                        x_jittered = np.random.normal(
+                            x_center,
+                            0.03,
+                            size=len(value_group),
+                        )
+                else:
+                    x_jittered = np.full(len(value_group), x_center)
+
+            else:
+                x_jittered = np.full(len(value_group), x_center)
+
+            ax.scatter(
+                x_jittered,
+                value_group,
+                color=colors[i],
+                s=5,
+                alpha=1,
+            )
+
+        cpd_title = data_transposed.loc["cpdID", feature_index]
+
+        ax.set_xticks(np.arange(1, len(group_order) + 1))
+        ax.set_xticklabels(x_labels, rotation=int(label_rotation))
+
+        ax.set_title(str(cpd_title))
+        ax.set_xlabel(str(grouping_label_for_axis))
+        ax.set_ylabel("Intensity")
+
+        fig.tight_layout()
+
+        out_base = os.path.join(
+            figures_folder,
+            _safe_filename_local(
+                f"{output_file_prefix}_violin_plot_"
+                f"{safe_grouping_name}_{safe_suffix}_{feature_index}"
+            ),
+        )
+
+        out_path = _unique_path(out_base + ".png")
+
+        fig.savefig(out_path, bbox_inches="tight", dpi=300)
+        plt.close(fig)
+
+        saved_paths.append(out_path)
+
+        plotted_features.append({
+            "feature_index": int(feature_index),
+            "cpdID": str(cpd_title),
+            "path": out_path,
+        })
+
+        print(
+            "Violin plots created: "
+            f"{((plot_i + 1) / len(resolved_indexes)) * 100:.2f}%"
+        )
+
+    # ------------------------------------------------------------------
+    # Artifact registration, if your state supports it
+    # ------------------------------------------------------------------
+
+    if hasattr(state, "artifacts") and state.artifacts is not None:
+        for path in saved_paths:
+            state.artifacts.append({
+                "type": "figure",
+                "path": path,
+                "description": "Violin plot output",
+            })
+
+    return {
+        "message": "Demo violin plots were created.",
+        "grouping": str(column_names),
+        "original_grouping": original_column_names,
+        "indexes": [int(i) for i in resolved_indexes],
+        "n_plots": len(saved_paths),
+        "saved_paths": saved_paths,
+        "plotted_features": plotted_features,
     }

@@ -105,6 +105,21 @@ def _add_artifact_if_available(state: WorkflowState, path, artifact_type, descri
         }
     )
 
+def _unique_path(path: str):
+    """
+    Return a filesystem path that does not yet exist by appending an index.
+    """
+    if not os.path.exists(path):
+        return path
+
+    root, ext = os.path.splitext(path)
+    i = 1
+
+    while True:
+        candidate = f"{root}_{i}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+        i += 1
 
 # ------------------------------------------------------------
 # Filter operations
@@ -801,16 +816,25 @@ def filter_relative_standard_deviation(
                     "QC_samples_scatter_" + str(i) + "_high_RSD-deleted_by_correction",
                 )
 
+                saved_png = None
+                first_saved = None
+
                 for suffix in suffixes:
+                    out_path = _unique_path(base_path + suffix)
                     plt.savefig(
-                        base_path + suffix,
+                        out_path,
                         dpi=400,
                         bbox_inches="tight",
                     )
 
-                images.append(base_path + ".png")
-                plt.close()
+                    if first_saved is None:
+                        first_saved = out_path
 
+                    if suffix == ".png":
+                        saved_png = out_path
+
+                images.append(saved_png if saved_png is not None else first_saved)
+                plt.close()
     # UPDATE STATE ------------------------------------------------------
 
     state.data = data
@@ -1117,14 +1141,24 @@ def filter_dilution_series_linearity(
                     + "_low_R2-deleted_by_correction",
                 )
 
+                saved_png = None
+                first_saved = None
+
                 for suffix in suffixes:
+                    out_path = _unique_path(base_path + suffix)
                     plt.savefig(
-                        base_path + suffix,
+                        out_path,
                         dpi=400,
                         bbox_inches="tight",
                     )
 
-                images.append(base_path + ".png")
+                    if first_saved is None:
+                        first_saved = out_path
+
+                    if suffix == ".png":
+                        saved_png = out_path
+
+                images.append(saved_png if saved_png is not None else first_saved)
                 plt.close()
 
     # FILTERING ---------------------------------------------------------
