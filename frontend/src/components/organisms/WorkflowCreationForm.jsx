@@ -15,7 +15,7 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
 
     const [successMessage, setSuccessMessage] = useState("")
     const [isSubmitting, setIsSubmitting] = useState(false)
-    const [dataFormat, setDataFormat] = useState()
+    const [dataFormat, setDataFormat] = useState("cd")
 
     async function onSubmit(e) {
         e.preventDefault()
@@ -54,6 +54,7 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
         formData.append("workflowName", workflowName)
         formData.append("folderName", folderName)
         formData.append("reportFileName", reportFileName)
+        formData.append("dataFormat", dataFormat)
 
         if (filesState?.data?.file) {
             formData.append("data", filesState.data.file)
@@ -293,6 +294,7 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                         value={dataFormat}
                         onChange={(e) => setDataFormat(e.target.value)}
                         className="border border-roast/75 rounded-lg p-ds-sm h-18 w-80 focus:border-noir focus:outline-none focus:border-2"
+                        required
                     >
                         <option value="cd" className="">Compound Discoverer</option>
                     </select>

@@ -99,13 +99,24 @@ def load_workflow(workflow_id: str):
     return workflow
 
 
-def add_init_step(wf):
-    operation_id = "initializer_compound_discoverer"
+def add_init_step(wf, data_format: str):
+    format_to_initializer = {
+        "cd": "initializer_compound_discoverer",
+    }
+
+    selected_format = (data_format or "").strip().lower()
+    operation_id = format_to_initializer.get(selected_format)
+    if not operation_id:
+        supported_formats = ", ".join(sorted(format_to_initializer.keys()))
+        raise ValueError(
+            f"Unsupported dataFormat '{data_format}'. "
+            f"Supported values: {supported_formats}"
+        )
 
     try:
         get_operation(operation_id)
-    except KeyError:
-        return jsonify({"message": f"Operation '{operation_id}' not found"}), 404
+    except KeyError as ex:
+        raise KeyError(f"Operation '{operation_id}' not found") from ex
 
     step_id = str(uuid.uuid4())
     new_step = WorkflowStep(
@@ -114,7 +125,6 @@ def add_init_step(wf):
     )
 
     wf.definition.steps.append(new_step)
-    return True
 
 
 def get_operation_func(operation_id: str):
@@ -132,6 +142,7 @@ def create_new_workflow():
     workflow_name = request.form.get("workflowName", "").strip()
     folder_name = request.form.get("folderName", "").strip()
     report_file_name = request.form.get("reportFileName", "").strip()
+    data_format = request.form.get("dataFormat", "").strip()
 
     # kontrola, jestli byly vyplněné povinné pole
     if not workflow_name:
@@ -142,6 +153,9 @@ def create_new_workflow():
 
     if not report_file_name:
         return jsonify({"message": "reportFileName is required."}), 400
+
+    if not data_format:
+        return jsonify({"message": "dataFormat is required."}), 400
 
     # uloží data a batch info a vratí cesty k nim (možná hodit do samotné funkce, at tady toho není moc)
     files_dict = {}
@@ -178,7 +192,12 @@ def create_new_workflow():
                 return jsonify({"message": str(ex)}), 400
     else:
         # přidání inicializačního kroku pro data
-        add_init_step(workflow)
+        try:
+            add_init_step(workflow, data_format)
+        except ValueError as ex:
+            return jsonify({"message": str(ex)}), 400
+        except KeyError as ex:
+            return jsonify({"message": str(ex)}), 404
 
     # uloží cesty k souborům
     workflow.state.files = files_dict
@@ -186,7 +205,7 @@ def create_new_workflow():
     definition = workflow.definition.to_dict()
     state = workflow.state.to_dict()
 
-    # sanitize to ensure no NaN/Inf remain before storing
+    # před uložením nezůstanou žádné hodnoty NaN ani Inf
     def _sanitize_for_json(obj):
         if isinstance(obj, dict):
             return {k: _sanitize_for_json(v) for k, v in obj.items()}
@@ -577,10 +596,12 @@ def import_methods_from_file(workflow: Workflow, import_file):
             op_id = item.get("operation_id")
             op_params = item.get("params")
         else:
-            op_id = item
+            raise ValueError("Invalid format: one operation must be a dictionary.")
 
         if not op_id:
             continue
+        elif op_params is None:
+            op_params = {}
 
         try:
             get_operation(op_id)
