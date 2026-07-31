@@ -164,7 +164,7 @@ def create_new_workflow():
     workflow.state.main_folder = folder_name
 
     # přidání inicializačního kroku pro data
-    add_init_step(workflow)
+    # add_init_step(workflow)
 
     # import kroků z jiného workflow
     if "importFile" in request.files:
@@ -174,6 +174,11 @@ def create_new_workflow():
                 _ = import_methods_from_file(workflow, import_file)
             except ValueError as ex:
                 return jsonify({"message": str(ex)}), 400
+            except KeyError as ex:
+                return jsonify({"message": str(ex)}), 400
+    else:
+        # přidání inicializačního kroku pro data
+        add_init_step(workflow)
 
     # uloží cesty k souborům
     workflow.state.files = files_dict
@@ -537,10 +542,11 @@ def export_workflow(workflow_id: str):
     # ops = [{"operation_id": step.operation_id} for step in workflow.definition.steps]
     ops = []
     for step in workflow.definition.steps:
-        if step.operation_id == "initializer_compound_discoverer":
-            continue
-        else:
-            ops.append({"operation_id": step.operation_id})
+        # if step.operation_id == "initializer_compound_discoverer":
+        #     continue
+        # else:
+        #     ops.append({"operation_id": step.operation_id, "params": step.params})
+        ops.append({"operation_id": step.operation_id, "params": step.params})
 
     payload = {"operations": ops}
     resp = jsonify(payload)
@@ -569,6 +575,7 @@ def import_methods_from_file(workflow: Workflow, import_file):
     for item in ops:
         if isinstance(item, dict):
             op_id = item.get("operation_id")
+            op_params = item.get("params")
         else:
             op_id = item
 
@@ -581,7 +588,7 @@ def import_methods_from_file(workflow: Workflow, import_file):
             raise KeyError(f"Operation {op_id} does not exist.")
 
         step_id = str(uuid.uuid4())
-        new_step = WorkflowStep(step_id=step_id, operation_id=op_id)
+        new_step = WorkflowStep(step_id=step_id, operation_id=op_id, params=op_params)
         workflow.definition.steps.append(new_step)
         created_steps.append({"step_id": step_id, "operation_id": op_id})
 

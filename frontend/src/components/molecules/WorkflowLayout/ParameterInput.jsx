@@ -75,7 +75,7 @@ function ParameterInput({ parameter, value, onChange }) {
                         const default_value = e.target.value
                         onChange(default_value === "" ? undefined : (paramType === "float" ? parseFloat(default_value) : parseInt(default_value, 10)))
                     }}
-                    placeholder={parameter.default}
+                    placeholder={parameter.example}
                     className="px-ds-md py-ds-md border border-roast/50 rounded-lg bg-light-foam text-noir focus:outline-none focus:border-espresso"
                     step={paramType === "float" ? "0.01" : "1"}
                 />

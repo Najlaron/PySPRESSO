@@ -1,24 +1,30 @@
 import { BsGraphUp } from "react-icons/bs"
 import { useEffect, useState } from "react"
 
+// nahradí \\ za /
 function normalizePath(path) {
     if (!path) return null
     return String(path).replace(/\\/g, "/")
 }
 
+
+// vytvoří url pro volání endpointu na serveru
 function toImageUrl(path, apiBaseUrl) {
     const normalizedPath = normalizePath(path)
 
     if (!normalizedPath) return null
 
+    // zkontroluje, jestli normalizedPath začíná http:// nebo https://
     if (/^https?:\/\//i.test(normalizedPath)) {
         return normalizedPath
     }
 
+    // pokud nezačíná, přidá na začátek normalizedPath / 
     const pathWithLeadingSlash = normalizedPath.startsWith("/")
         ? normalizedPath
         : `/${normalizedPath}`
 
+    // a před cestu k obrázku přidá url pro endpoint
     return `${apiBaseUrl}${pathWithLeadingSlash}`
 }
 
@@ -52,6 +58,7 @@ function WorkflowVisualization({ visualization, apiBaseUrl }) {
         }
     }, [activeImageIndex, imagePaths.length])
 
+    // pokud není žádná vizualizace
     if (!visualization) {
         return (
             <div className="w-full flex items-center justify-center flex-col gap-ds-md h-200 shadow-lg bg-light-foam rounded-xl">
@@ -65,6 +72,7 @@ function WorkflowVisualization({ visualization, apiBaseUrl }) {
         )
     }
 
+    // vrátí url k obrázku, aby mohl obrázek získat ze serveru
     const imageUrl = toImageUrl(activeImagePath, apiBaseUrl)
 
     return (

@@ -9,12 +9,14 @@ import { formatNetworkError } from "../../../utils/helpers"
 
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".svg"]
 
+// kontroluje, jestli cesta končí příponou značící vizualizaci
 function isImagePath(path) {
     return IMAGE_EXTENSIONS.some((ext) =>
         String(path).toLowerCase().endsWith(ext)
     )
 }
 
+// vezme danou cestu z getImagePathFromStep a zkontroluje, jestli nevede k vizualizaci
 function collectImagePaths(value) {
     if (!value) return []
 
@@ -36,6 +38,8 @@ function collectImagePaths(value) {
 function getImagePathsFromStep(step) {
     const summary = step?.output_summary || {}
 
+    // vezme cesty které jsou obsaženy ve výstupu kroku
+    // a zkontroluje, jestli vedou k vizualizaci
     const imagePaths = [
         ...collectImagePaths(summary.saved_paths),
         ...collectImagePaths(summary.figure_path),
@@ -53,6 +57,7 @@ function getImagePathsFromStep(step) {
         imagePaths.push(`${summary.figure_base_path}.png`)
     }
 
+    // set odstraní duplicity
     return [...new Set(imagePaths)]
 }
 
@@ -61,6 +66,7 @@ function getVisualizationSteps(workflow, operations) {
 
     return steps
         .map((step, index) => {
+            // kontroluje, jestli krok vytvořil nějakou vizualizaci
             const imagePaths = getImagePathsFromStep(step)
 
             if (imagePaths.length === 0) return null
@@ -69,6 +75,7 @@ function getVisualizationSteps(workflow, operations) {
                 (op) => op.id === step.operation_id
             )
 
+            // objekt poposující vizualizaci
             return {
                 stepId: step.step_id,
                 operationId: step.operation_id,
@@ -101,6 +108,7 @@ function WorkflowContent({ workflow,
     const [exportError, setExportError] = useState(null)
     const [folderError, setFolderError] = useState(null)
 
+    // získává vizualizace z kroků
     const visualizations = useMemo(() => {
         return getVisualizationSteps(workflow, operations)
     }, [workflow, operations])
@@ -108,6 +116,8 @@ function WorkflowContent({ workflow,
     useEffect(() => {
         if (!workflow) return
 
+        // pokud existuje nějaká vizualizace ale žádná není aktivní,
+        // nastaví se na aktivní poslední vytvořená vizualizace
         if (!activeView && visualizations.length > 0) {
             const latestVisualization = visualizations[visualizations.length - 1]
             setActiveView({
@@ -117,6 +127,8 @@ function WorkflowContent({ workflow,
             return
         }
 
+        // kontrola, jestli aktivní vizualizace stále existuje,
+        // pokud neexistuje (krok byl smazán), vrátí poslední vytvořenou vizaulizaci
         if (activeView?.type === "visualization") {
             const selectedStillExists = visualizations.some(
                 (visualization) => visualization.stepId === activeView.stepId
@@ -245,8 +257,6 @@ function WorkflowContent({ workflow,
         }
     }
 
-
-
     // status vykonaného kroku
     const execucitonStatus = stepExecutionMessage?.status
 
@@ -262,8 +272,6 @@ function WorkflowContent({ workflow,
             <div className="flex justify-between items-center">
                 {/* 1. Nadpis */}
                 <h1 className="text-4xl font-bold mb-ds-xl">{workflow?.workflow_name}</h1>
-
-
 
                 {error && !workflowError && (
                     <div className="p-ds-lg rounded border border-red-200 bg-red-50 text-red-800 text-xl">

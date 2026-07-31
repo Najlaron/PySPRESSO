@@ -116,7 +116,7 @@ function ParametersForm({ step, operation, workflowId, onClose, reorderPromisePa
                                 className={`bg-espresso hover:bg-roast disabled:bg-roast/50 text-foam px-ds-lg py-ds-md rounded-lg font-semibold shadow-md text-xl ${isAdding ? "" : "cursor-pointer"}`}
                                 disabled={isAdding}
                             >
-                                {isAdding ? "Adding parameters" : "Submit"}
+                                {isAdding ? "Submitting" : "Submit"}
                             </button>
                         </>
                     ) : (

@@ -76,7 +76,7 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
             const responseData = await response.json()
 
             if (!response.ok) {
-                setLoadError(dataResponse?.message ?? "Failed to create new workflow.")
+                setLoadError(responseData?.message ?? "Failed to create new workflow.")
                 return
             }
 

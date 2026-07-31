@@ -67,6 +67,23 @@ def _get_suffixes(state: WorkflowState):
     return suffixes
 
 
+def _unique_path(path: str):
+    """
+    Return a filesystem path that does not yet exist by appending an index.
+    """
+    if not os.path.exists(path):
+        return path
+
+    root, ext = os.path.splitext(path)
+    i = 1
+
+    while True:
+        candidate = f"{root}_{i}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+        i += 1
+
+
 def _resolve_show_indices(show, n_features, feature_names):
     """
     Resolve show parameter into a set of feature indexes.
@@ -408,6 +425,7 @@ def _plot_s_exploration(batch_best_s, batch_p_ranges, figures_folder):
         )
 
         out_path = os.path.join(figures_folder, f"s_exploration_{batch_name}.png")
+        out_path = _unique_path(out_path)
 
         plt.tight_layout()
         plt.savefig(out_path, dpi=200)
@@ -772,10 +790,24 @@ def correct_qc_interpolation(
                 f"QC_correction_{feature_idx}_original",
             )
 
-            for suffix in suffixes:
-                plt.savefig(plt_name + suffix, dpi=300, bbox_inches="tight")
+            saved_png = None
+            first_saved = None
 
-            plot_names_original.append(plt_name + ".png")
+            for suffix in suffixes:
+                # plt.savefig(plt_name + suffix, dpi=300, bbox_inches="tight")
+                out_path = _unique_path(plt_name + suffix)
+                plt.savefig(out_path, dpi=300, bbox_inches="tight")
+
+                if first_saved is None:
+                    first_saved = out_path
+
+                if suffix == ".png":
+                    saved_png = out_path
+
+            # plot_names_original.append(plt_name + ".png")
+            plot_names_original.append(
+                saved_png if saved_png is not None else first_saved
+            )
             plt.close()
 
         # Apply correction in log space.
