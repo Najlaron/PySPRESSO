@@ -334,6 +334,7 @@ function WorkflowLayout() {
                 selectedStep={selectedStep}
                 operations={operations}
                 workflowId={workflowId}
+                onRefreshWorkflow={refreshWorkflow}
                 onCloseParameters={handleCloseParameters}
                 onParametersSubmitPromiseChange={registerParametersSubmitPromise}
                 onDismissError={() => setError("")}

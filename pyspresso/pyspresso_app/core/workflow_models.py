@@ -441,6 +441,7 @@ class WorkflowORM(db.Model):
 
     folder_name = db.Column(db.String(255), nullable=True)
     report_file_name = db.Column(db.String(255), nullable=True)
+    description = db.Column(db.Text, nullable=True)
 
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(
@@ -459,6 +460,7 @@ class WorkflowORM(db.Model):
             "state": self.state,
             "folder_name": self.folder_name,
             "report_file_name": self.report_file_name,
+            "description": self.description,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

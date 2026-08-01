@@ -6,8 +6,11 @@ import DataFrame from "../DataFrame"
 import VisualizationTabs from "../VisualizationTabs"
 import WorkflowError from "../WorkflowError"
 import ErrorAlert from "../../molecules/ErrorAlert"
+import WorkflowDescriptionModal from "../../molecules/WorkflowDescriptionModal"
 import StepExecutionResult from "./StepExecutionResult"
 import { formatNetworkError } from "../../../utils/helpers"
+import { PiExportBold } from "react-icons/pi"
+import { MdEdit } from "react-icons/md"
 
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".svg"]
 
@@ -94,6 +97,7 @@ function WorkflowContent({ workflow,
     selectedStep,
     operations,
     workflowId,
+    onRefreshWorkflow,
     onCloseParameters,
     onParametersSubmitPromiseChange,
     onDismissError,
@@ -111,6 +115,11 @@ function WorkflowContent({ workflow,
     const [isExporting, setIsExporting] = useState(false)
     const [exportError, setExportError] = useState(null)
     const [folderError, setFolderError] = useState(null)
+
+    // Modal pro vyplnění popisu workflow
+    const [isDescriptionModalOpen, setIsDescriptionModalOpen] = useState(false)
+    const [isDescriptionSaving, setIsDescriptionSaving] = useState(false)
+    const [descriptionError, setDescriptionError] = useState(null)
 
     // získává vizualizace z kroků
     const visualizations = useMemo(() => {
@@ -262,6 +271,46 @@ function WorkflowContent({ workflow,
         }
     }
 
+    // otevření modalu
+    function openDescriptionModal() {
+        setDescriptionError(null)
+        setIsDescriptionModalOpen(true)
+    }
+
+    // zavření modalu
+    function closeDescriptionModal() {
+        if (isDescriptionSaving) return
+        setIsDescriptionModalOpen(false)
+        setDescriptionError(null)
+    }
+
+    async function handleSaveDescription(descriptionValue) {
+        setIsDescriptionSaving(true)
+        setDescriptionError(null)
+
+        try {
+            const response = await fetch(`${apiBaseUrl}/workflow/${workflowId}/description`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ description: descriptionValue }),
+            })
+
+            const data = await response.json().catch(() => ({}))
+
+            if (!response.ok) {
+                setDescriptionError(data?.message ?? "Failed to save workflow description.")
+                return
+            }
+
+            await onRefreshWorkflow?.()
+            setIsDescriptionModalOpen(false)
+        } catch (err) {
+            setDescriptionError(formatNetworkError(err))
+        } finally {
+            setIsDescriptionSaving(false)
+        }
+    }
+
     return (
         // Tohle celé je ta pravá část layoutu
         <main className="flex-1 min-h-0 overflow-y-auto pt-ds-lg! px-ds-xl bg-foam gap-0!">
@@ -271,26 +320,53 @@ function WorkflowContent({ workflow,
                 />
             )}
 
-            <div className="flex justify-between items-center">
-                {/* 1. Nadpis */}
+            <div className="flex justify-between items-start gap-ds-md">
                 <h1 className="text-4xl font-bold mb-ds-xl">{workflow?.workflow_name}</h1>
-
-                {error && !workflowError && (
-                    <ErrorAlert
-                        message={error}
-                        className="bg-red-50 mb-ds-md"
-                        onDismiss={onDismissError}
-                    />
-                )}
-
-                {exportError && !workflowError && (
-                    <ErrorAlert
-                        message={exportError}
-                        className="bg-red-50 mb-ds-md"
-                        onDismiss={() => setExportError(null)}
-                    />
-                )}
+                <div className="flex items-center">
+                    {workflow && (
+                        <button
+                            onClick={handleExportWorkflow}
+                            disabled={isExporting}
+                            className={`flex items-center gap-ds-sm rounded-md px-ds-md py-ds-md text-base font-semibold transition
+                                        ${isExporting ? "opacity-50 cursor-not-allowed border-noir/10 text-noir/40 bg-transparent"
+                                    : "border-espresso text-espresso hover:bg-espresso hover:text-foam cursor-pointer"}
+                                    `}
+                        >
+                            <PiExportBold size="1.5rem" />
+                            <span>{isExporting ? "Exporting" : "Export Workflow"}</span>
+                        </button>
+                    )}
+                    {workflow && (
+                        <div aria-hidden="true" className="self-center h-6 w-px bg-noir/20 mx-ds-md" />
+                    )}
+                    {workflow && (
+                        <button
+                            onClick={openDescriptionModal}
+                            className="flex items-center gap-ds-sm rounded-md px-ds-md py-ds-md text-base font-semibold transition
+                            text-noir hover:bg-espresso hover:text-foam cursor-pointer"
+                        >
+                            <MdEdit size="1.5rem" />
+                            <span>Edit Description</span>
+                        </button>
+                    )}
+                </div>
             </div>
+
+            {error && !workflowError && (
+                <ErrorAlert
+                    message={error}
+                    className="bg-red-50 mb-ds-md"
+                    onDismiss={onDismissError}
+                />
+            )}
+
+            {exportError && !workflowError && (
+                <ErrorAlert
+                    message={exportError}
+                    className="bg-red-50 mb-ds-md"
+                    onDismiss={() => setExportError(null)}
+                />
+            )}
 
             {isLoading
                 ? <div className="flex justify-center flex-col items-center gap-ds-sm">
@@ -324,28 +400,7 @@ function WorkflowContent({ workflow,
                                 setActiveView={setActiveView}
                             />
                         )}
-                        <div className="flex gap-ds-lg">
-                            {workflow && (
-                                <button
-                                    onClick={handleExportWorkflow}
-                                    disabled={isExporting}
-                                    className={`rounded hover:text-foam px-ds-md py-ds-md font-medium transition hover:bg-espresso
-                                    ${isExporting ? "" : "cursor-pointer"}
-                                    `}
-                                >
-                                    {isExporting ? "Exporting" : "Export Workflow"}
-                                </button>
-                            )}
-                            {/* {workflow && (
-                                <button
-                                    onClick={handleOpenFolder}
-                                    disabled={isExporting}
-                                    className="p-ds-md font-medium cursor-pointer rounded hover:bg-crema"
-                                >
-                                    Open folder
-                                </button>
-                            )} */}
-                        </div>
+
                     </div>
 
 
@@ -362,7 +417,7 @@ function WorkflowContent({ workflow,
                     )} */}
 
                     {/* 5. Tohle je ten JSON */}
-                    {workflow && (
+                    {/* {workflow && (
                         <div className="mt-ds-lg">
                             <button className="bg-crema p-ds-md text-noir font-semibold"
                                 onClick={() => setShowJson(!showJson)}
@@ -377,11 +432,19 @@ function WorkflowContent({ workflow,
                             )}
 
                         </div>
-                    )}
-
+                    )} */}
                 </div>
-
             }
+
+            <WorkflowDescriptionModal
+                isOpen={isDescriptionModalOpen}
+                currentDescription={workflow?.description || ""}
+                isSaving={isDescriptionSaving}
+                error={descriptionError}
+                onClose={closeDescriptionModal}
+                onSave={handleSaveDescription}
+                onDismissError={() => setDescriptionError(null)}
+            />
         </main >
     )
 }

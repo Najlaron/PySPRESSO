@@ -30,7 +30,7 @@ function WorkflowStepCard({
     const alreadyRun = step.status === "done"
     const isCurrentStepRunning = runningStepId === step.step_id
     const isAnyStepRunning = Boolean(runningStepId)
-    const isCorrectionCategory = operation.categoryTags?.some((tag) => String(tag).toLowerCase() === "correction")
+    const isCorrectionCategory = operation?.categoryTags?.some((tag) => String(tag).toLowerCase() === "correction")
     const takeLong = isCorrectionCategory || operation?.id === "visualizer_violin_plots"
 
     // drag and drop část

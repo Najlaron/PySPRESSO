@@ -265,6 +265,47 @@ def get_workflow(workflow_id: str):
     return jsonify(workflow_row.to_dict()), 200
 
 
+@app.route("/workflow/<workflow_id>/description", methods=["POST"])
+def update_description(workflow_id: str):
+    workflow_row = db.session.get(WorkflowORM, workflow_id)
+
+    if not workflow_row:
+        return (
+            jsonify({"message": f"Workflow with ID:'{workflow_id}' does not exist."}),
+            404,
+        )
+
+    payload = request.get_json(silent=True) or {}
+
+    if "description" not in payload:
+        return jsonify({"message": "Description is required."}), 400
+
+    description = payload.get("description")
+
+    if description is not None and not isinstance(description, str):
+        return jsonify({"message": "Description must be a string."}), 400
+
+    description = description.strip()
+    workflow_row.description = description
+
+    try:
+        db.session.commit()
+    except Exception as ex:
+        db.session.rollback()
+        return jsonify({"message": str(ex)}), 400
+
+    return (
+        jsonify(
+            {
+                "message": "Workflow description updated.",
+                "workflowId": workflow_row.id,
+                "description": workflow_row.description,
+            }
+        ),
+        200,
+    )
+
+
 # Přidá krok do workflow
 @app.route("/workflow/<workflow_id>/step", methods=["POST"])
 def add_workflow_step(workflow_id: str):

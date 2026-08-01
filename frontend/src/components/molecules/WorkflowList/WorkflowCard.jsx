@@ -58,9 +58,9 @@ function WorkflowCard({ workflow, isSelected, onClick, onDelete, isDeleting }) {
                     }}
                     aria-haspopup="true"
                     aria-expanded={menuOpen}
-                    className="cursor-pointer shrink-0"
+                    className={`cursor-pointer shrink-0 ${isSelected ? "text-foam" : "text-noir"}`}
                 >
-                    <HiOutlineDotsHorizontal size="1.5rem" color="341100" />
+                    <HiOutlineDotsHorizontal size="1.5rem" />
                 </button>
 
                 {menuOpen && (
@@ -78,7 +78,7 @@ function WorkflowCard({ workflow, isSelected, onClick, onDelete, isDeleting }) {
             </div>
 
             <p className={`mb-ds-lg ${isSelected ? "text-foam" : "text-noir"}`}>
-                Cross-validated cubic spline correction and normalization of multi-batch LC–MS data with outlier detection and PCA overview.
+                {workflow?.description}
             </p>
 
             <p className={`text-espresso ${isSelected ? "text-foam" : "text-espresso"}`}>
