@@ -5,6 +5,8 @@ import DataTabs from "../DataTabs"
 import DataFrame from "../DataFrame"
 import VisualizationTabs from "../VisualizationTabs"
 import WorkflowError from "../WorkflowError"
+import ErrorAlert from "../../molecules/ErrorAlert"
+import StepExecutionResult from "./StepExecutionResult"
 import { formatNetworkError } from "../../../utils/helpers"
 
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".svg"]
@@ -93,6 +95,8 @@ function WorkflowContent({ workflow,
     operations,
     workflowId,
     onCloseParameters,
+    onParametersSubmitPromiseChange,
+    onDismissError,
     isLoading,
     apiBaseUrl,
     error,
@@ -181,6 +185,7 @@ function WorkflowContent({ workflow,
                 operation={operation}
                 workflowId={workflowId}
                 onClose={onCloseParameters}
+                onSubmitPromiseChange={onParametersSubmitPromiseChange}
                 reorderPromiseParams={reorderPromise}
             />
         )
@@ -257,12 +262,9 @@ function WorkflowContent({ workflow,
         }
     }
 
-    // status vykonaného kroku
-    const execucitonStatus = stepExecutionMessage?.status
-
     return (
         // Tohle celé je ta pravá část layoutu
-        <main className="flex-1 pt-ds-lg! px-ds-xl bg-foam gap-0!">
+        <main className="flex-1 min-h-0 overflow-y-auto pt-ds-lg! px-ds-xl bg-foam gap-0!">
             {workflowError && (
                 <WorkflowError
                     errorType={workflowError}
@@ -274,15 +276,19 @@ function WorkflowContent({ workflow,
                 <h1 className="text-4xl font-bold mb-ds-xl">{workflow?.workflow_name}</h1>
 
                 {error && !workflowError && (
-                    <div className="p-ds-lg rounded border border-red-200 bg-red-50 text-red-800 text-xl">
-                        {error}
-                    </div>
+                    <ErrorAlert
+                        message={error}
+                        className="bg-red-50 mb-ds-md"
+                        onDismiss={onDismissError}
+                    />
                 )}
 
                 {exportError && !workflowError && (
-                    <div className="p-ds-lg rounded border border-red-200 bg-red-50 text-red-800 text-xl">
-                        {exportError}
-                    </div>
+                    <ErrorAlert
+                        message={exportError}
+                        className="bg-red-50 mb-ds-md"
+                        onDismiss={() => setExportError(null)}
+                    />
                 )}
             </div>
 
@@ -340,34 +346,11 @@ function WorkflowContent({ workflow,
                                 </button>
                             )} */}
                         </div>
-
                     </div>
 
 
                     {workflow && (
-                        <div className="">
-                            <div className={`bg-light-foam p-ds-md rounded-lg border-l-6 overflow-auto max-h-64 shadow-xl
-                                ${execucitonStatus === "done" ? "border-l-[#6D8B74]" : execucitonStatus !== "done" ? "border-l-[#ED9C4C]" : "border-transparent "}
-                                `}>
-                                {stepExecutionMessage ? (
-                                    <div className="flex items-start gap-ds-md">
-                                        <div>
-                                            <div className="font-semibold text-noir mb-2 text-lg">{stepExecutionMessage.operation}</div>
-                                            <ul className="">
-                                                {stepExecutionMessage.message.map((msg, idx) => {
-                                                    const text = msg?.message ?? msg
-                                                    return (
-                                                        <li key={idx} className="text-noir mb-1 text-lg">{text}</li>
-                                                    )
-                                                })}
-                                            </ul>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <p className="text-noir text-lg">No output message available.</p>
-                                )}
-                            </div>
-                        </div>
+                        <StepExecutionResult stepExecutionMessage={stepExecutionMessage} />
                     )}
 
                     {/* 4. Tohle jsou ty tlačítka (data, metadata,...) */}

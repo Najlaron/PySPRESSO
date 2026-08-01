@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import WorkflowCard from "../components/molecules/WorkflowList/WorkflowCard"
+import ErrorAlert from "../components/molecules/ErrorAlert"
 import { formatNetworkError } from "../utils/helpers"
 import { API_BASE_URL } from "../config"
 
@@ -40,12 +41,31 @@ function WorkflowsList() {
         loadWorkflows()
     }, [])
 
+    useEffect(() => {
+        if (isDeleting) {
+            document.body.classList.add("app-busy-cursor")
+        } else {
+            document.body.classList.remove("app-busy-cursor")
+        }
+
+        return () => {
+            document.body.classList.remove("app-busy-cursor")
+        }
+    }, [isDeleting])
+
     // auto-hide u úspěšného odstranění
     useEffect(() => {
         if (!deleteSucces) return
         const timeout = setTimeout(() => setDeleteSuccess(null), 3000)
         return () => clearTimeout(timeout)
     }, [deleteSucces])
+
+    // auto-hide u chyby při odstranění
+    useEffect(() => {
+        if (!deleteError) return
+        const timeout = setTimeout(() => setDeleteError(false), 3000)
+        return () => clearTimeout(timeout)
+    }, [deleteError])
 
     async function handleDeleteWorkflow(workflowId) {
         setIsDeleting(true)
@@ -87,8 +107,12 @@ function WorkflowsList() {
             )}
 
             {deleteError && (
-                <div className="mb-ds-md p-ds-md border border-red-200 bg-red-100 text-red-800 rounded-lg max-w-xl mx-auto text-center text-xl">
-                    {deleteError}
+                <div className="fixed top-ds-lg left-1/2 transform -translate-x-1/2 z-40">
+                    <ErrorAlert
+                        message={deleteError}
+                        className="mb-ds-md p-ds-md rounded-lg max-w-xl mx-auto text-center"
+                        onDismiss={() => setDeleteError(false)}
+                    />
                 </div>
             )}
 
@@ -121,12 +145,10 @@ function WorkflowsList() {
                     </div>
                     <button
                         type="submit"
-                        disabled={!selectedWorkflow}
+                        disabled={!selectedWorkflow || isDeleting}
                         className={`bg-grounds text-foam rounded-4xl py-ds-md w-50 text-2xl font-semibold ${!selectedWorkflow ? "opacity-85 cursor-not-allowed" : "cursor-pointer transition duration-300 hover:bg-noir/90"}`}
                         onClick={() => {
-                            setTimeout(() => {
-                                navigate(`/workflow/${selectedWorkflow}`)
-                            }, 1000)
+                            navigate(`/workflow/${selectedWorkflow}`)
                         }}
                     >
                         Continue

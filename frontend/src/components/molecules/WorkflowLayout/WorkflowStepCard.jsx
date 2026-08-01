@@ -8,7 +8,9 @@ import { RiDeleteBinLine } from "react-icons/ri"
 import { CapitalizeFirstLetter } from "../../../utils/helpers"
 import { MdDone } from "react-icons/md"
 import { useSortable } from "@dnd-kit/sortable"
-import { CSS } from "@dnd-kit/utilities";
+import { CSS } from "@dnd-kit/utilities"
+import { LuClock3 } from "react-icons/lu"
+
 
 
 function WorkflowStepCard({
@@ -19,6 +21,7 @@ function WorkflowStepCard({
     isSelected,
     handlers: { onDelete, onSelectStep, onExecute },
     runningStepId,
+    isRunningAll,
     isDeleting
 }) {
     const [menuOpen, setMenuOpen] = useState(false)
@@ -26,6 +29,9 @@ function WorkflowStepCard({
     const menuRef = useRef(null)
     const alreadyRun = step.status === "done"
     const isCurrentStepRunning = runningStepId === step.step_id
+    const isAnyStepRunning = Boolean(runningStepId)
+    const isCorrectionCategory = operation.categoryTags?.some((tag) => String(tag).toLowerCase() === "correction")
+    const takeLong = isCorrectionCategory || operation?.id === "visualizer_violin_plots"
 
     // drag and drop část
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
@@ -45,6 +51,14 @@ function WorkflowStepCard({
         document.addEventListener('click', handleClickOutside)
         return () => document.removeEventListener('click', handleClickOutside)
     }, [])
+
+    useEffect(() => {
+        if (isAnyStepRunning) {
+            setMenuOpen(false)
+        }
+    }, [isAnyStepRunning])
+
+    //const takeLong = operation.categoryTags.
 
     return (
         <div ref={setNodeRef} style={style}
@@ -68,9 +82,14 @@ function WorkflowStepCard({
                         </div>
 
                         <div className="min-w-0">
-                            <h2 className="text-base font-medium text-noir truncate">
-                                {operation?.label}
-                            </h2>
+                            <div className="flex items-center gap-2 min-w-0">
+                                <h2 className="text-base font-medium text-noir truncate">
+                                    {operation?.label}
+                                </h2>
+                                {takeLong && (
+                                    <LuClock3 className="h-4 w-4 shrink-0 text-espresso" title="This operation may take longer than usual." />
+                                )}
+                            </div>
                             <p className="mt-1 text-sm text-noir/60 truncate">
                                 {CapitalizeFirstLetter(operation?.categoryTags?.join(", "))}
                             </p>
@@ -79,10 +98,14 @@ function WorkflowStepCard({
 
                     <div className="relative ml-ds-md" ref={menuRef}>
                         <button
-                            onClick={() => setMenuOpen((s) => !s)}
+                            onClick={() => {
+                                if (isAnyStepRunning) return
+                                setMenuOpen((s) => !s)
+                            }}
                             aria-haspopup="true"
                             aria-expanded={menuOpen}
-                            className="cursor-pointer shrink-0"
+                            disabled={isAnyStepRunning}
+                            className={`shrink-0 ${isAnyStepRunning ? "opacity-60" : "cursor-pointer"}`}
                         >
                             <HiOutlineDotsHorizontal size="1.5rem" color="341100" />
                         </button>
@@ -91,11 +114,15 @@ function WorkflowStepCard({
                             <div className="absolute right-0 w-42 bg-foam border border-roast/20 rounded shadow-md z-20 p-1">
                                 <button
                                     onClick={async () => {
+                                        if (isAnyStepRunning) return
                                         await onDelete()
                                         setMenuOpen(false)
                                     }}
-                                    className={`w-full p-ds-sm hover:bg-crema/65 flex gap-ds-sm items-center rounded
-                                        ${isDeleting ? "cursor-wait bg-crema/65" : "cursor-pointer"}`}
+                                    className={`w-full p-ds-sm flex gap-ds-sm items-center rounded
+                                        ${isAnyStepRunning ? "opacity-60" : "hover:bg-crema/65"}
+                                        ${isDeleting ? "cursor-wait bg-crema/65" : ""}
+                                        ${!isAnyStepRunning && !isDeleting ? "cursor-pointer" : ""}`}
+                                    disabled={isAnyStepRunning || isDeleting}
                                 >
                                     <RiDeleteBinLine size="1.25rem" color="341100" /> {/*musí se zarovnat */}
                                     <span className="text-base text-noir">Delete method</span>
@@ -120,18 +147,19 @@ function WorkflowStepCard({
                         </button>
 
                         <button className={`flex items-center gap-2 px-ds-md py-1 text-espresso border-2 border-transparent  rounded-lg transition
-                                        ${isCurrentStepRunning || alreadyRun ? "" : "cursor-pointer hover:border-espresso hover:text-noir"}`}
+                                        ${isCurrentStepRunning || alreadyRun || isDeleting ? "" : "cursor-pointer hover:border-espresso hover:text-noir"}`}
                             onClick={onSelectStep}
-                            disabled={isCurrentStepRunning || alreadyRun}
+                            disabled={isCurrentStepRunning || alreadyRun || isDeleting || isRunningAll}
                         >
                             <PiSliders size="1.5rem" color="713105" />
                             <span className="text-base">Parameters</span>
                         </button>
 
+                        {/* nejde spustit, pokud už krok proběhl, nebo zrovna probíhá, nebo je zrovna odstraňován */}
                         <button className={`flex items-center gap-2 px-ds-md py-1  text-espresso rounded-lg transition border-2 border-crema
-                    ${(!isCurrentStepRunning && alreadyRun) ? "cursor-default" : "cursor-pointer"} ${isCurrentStepRunning ? "cursor-wait" : ""} ${alreadyRun ? "" : "hover:bg-crema"} `}
+                    ${(!alreadyRun && !isDeleting && !isRunningAll) ? "cursor-pointer" : ""} ${isCurrentStepRunning || isRunningAll ? "cursor-wait" : ""} ${(alreadyRun || isDeleting || isRunningAll) ? "" : "hover:bg-crema"} `}
                             onClick={onExecute}
-                            disabled={isCurrentStepRunning || alreadyRun}
+                            disabled={isCurrentStepRunning || alreadyRun || isDeleting || isRunningAll}
                         >
                             <MdPlayArrow size="1.5rem" />
                             <span className="text-base">{isCurrentStepRunning ? "Running" : alreadyRun ? "Done" : "Run"}</span>

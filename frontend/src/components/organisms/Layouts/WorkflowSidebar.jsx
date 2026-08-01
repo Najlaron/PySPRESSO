@@ -27,6 +27,11 @@ function WorkflowSidebar({
     isRunningAll,
     onReorderSteps
 }) {
+    const isAddingMethod = Boolean(addedOperationId)
+    // search bar je zablokovaný pokud se přidává nějaká metody, pokud běží krok nebo pokud se odstranuje krok
+    const isMethodActionsLocked = isAddingMethod || isStepRunning || Boolean(runningStepId) || isStepDeleting
+    const isSingleStepRunning = isStepRunning || Boolean(runningStepId)
+
     const sensors = useSensors(
         useSensor(MouseSensor, {
             activationConstraint: {
@@ -56,7 +61,7 @@ function WorkflowSidebar({
 
 
     return (
-        <aside className="w-[30%] bg-light-foam pt-ds-xl pb-ds-lg px-ds-lg shadow-[4px_0_12px_rgba(0,0,0,0.08)] z-10">
+        <aside className="w-[30%] h-screen overflow-hidden bg-light-foam pt-ds-xl pb-ds-lg px-ds-lg shadow-[4px_0_12px_rgba(0,0,0,0.08)] z-10">
             <div className="flex flex-col justify-between h-full max-w-360">
                 {/* Search bar */}
                 <div className="">
@@ -64,6 +69,7 @@ function WorkflowSidebar({
                         searchQuery={searchQuery}
                         setSearchQuery={setSearchQuery}
                         isWorkflowLoading={isWorkflowLoading}
+                        isDisabled={isMethodActionsLocked}
                     />
 
                     {/* zobrazí se metody, odpovídající zadanému výrazu */}
@@ -73,10 +79,12 @@ function WorkflowSidebar({
                                 <SearchedMethod
                                     key={op.id}
                                     onClick={() => {
+                                        if (isMethodActionsLocked) return
                                         onAddStep(op)
                                     }}
                                     operation={op}
                                     addedId={addedOperationId}
+                                    disabled={isMethodActionsLocked}
                                 />
                             ))}
                         </div>
@@ -89,7 +97,7 @@ function WorkflowSidebar({
                     )}
                 </div>
 
-                <div className="mt-ds-xl flex-1 overflow-y-auto">
+                <div className="mt-ds-xl flex-1 min-h-0 overflow-y-auto">
                     <div className="flex flex-col gap-ds-md">
                         <h3 className="text-xl text-espresso font-semibold">METHODS IN WORKFLOW</h3>
                         <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={handleDragEnd} modifiers={[restrictToVerticalAxis]}>
@@ -110,6 +118,7 @@ function WorkflowSidebar({
                                                 onExecute: () => onExecuteStep(step.step_id)
                                             }}
                                             runningStepId={runningStepId}
+                                            isRunningAll={isRunningAll}
                                             isDeleting={isStepDeleting}
                                         />
                                     )
@@ -118,12 +127,14 @@ function WorkflowSidebar({
                         </DndContext>
                     </div>
                 </div>
+
+                {/* nejde spustit, pokud už probíhá spouštění nějaké metody, nebo všech metod nebo je zrovna odstraňován nějaký krok */}
                 {workflow && (
                     <button onClick={onExecuteAll}
-                        disabled={isRunningAll}
+                        disabled={isRunningAll || isSingleStepRunning || isStepDeleting}
                         className={`bg-espresso text-foam rounded-xl shadow-md py-ds-md text-xl font-medium mt-ds-xl
                         flex gap-ds-md items-center justify-center
-                        hover:bg-noir/90 transition ${isRunningAll ? "cursor-wait bg-noir/90" : " cursor-pointer"}`}>
+                        hover:bg-noir/90 transition duration-300 ${isRunningAll || isSingleStepRunning ? "cursor-wait bg-noir/90" : " cursor-pointer"}`}>
                         <MdPlayArrow size="1.5rem" />
                         <span>{isRunningAll ? "Running..." : "Run all methods"}</span>
                     </button>

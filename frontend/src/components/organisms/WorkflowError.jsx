@@ -1,4 +1,6 @@
-import spiledCoffeeSrc from "../../../media/spilled_coffee.png"
+import { VscError } from "react-icons/vsc"
+import { HiOutlineExclamationTriangle } from "react-icons/hi2"
+
 
 function WorkflowError({ errorType }) {
     let title = ""
@@ -15,7 +17,10 @@ function WorkflowError({ errorType }) {
     }
 
     return (
-        <div className="p-ds-md rounded border border-red-200 bg-red-50 text-red-800">
+        <div className="py-ds-md px-ds-lg rounded border border-red-200 bg-red-50 text-red-800 flex items-center gap-ds-lg">
+            <div className="shrink-0 flex items-center justify-center">
+                <HiOutlineExclamationTriangle size="2rem" />
+            </div>
             <hgroup>
                 <h3 className="font-medium text-2xl">{title}</h3>
                 <p className="text-xl">{message}</p>

@@ -1278,7 +1278,8 @@ def visualizer_violin_plots(
 
     x_labels = [f"{key} ({len(grouped.get_group(key))})" for key in group_order]
 
-    cmap_obj = mpl.cm.get_cmap(cmap)
+    # cmap_obj = mpl.cm.get_cmap(cmap)
+    cmap_obj = mpl.colormaps.get_cmap(cmap)
 
     if len(group_order) == 1:
         color_indices = [0.5]

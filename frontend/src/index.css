@@ -14,3 +14,8 @@
     --spacing-ds-md: 1rem;
     --spacing-ds-sm: 0.5rem;
 }
+
+body.app-busy-cursor,
+body.app-busy-cursor * {
+    cursor: wait !important;
+}

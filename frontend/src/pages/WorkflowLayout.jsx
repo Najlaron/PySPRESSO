@@ -24,6 +24,22 @@ function WorkflowLayout() {
     const [stepExecutionMessage, setStepExecutionMessage] = useState(null)
     const [executeFailed, setExecuteFailed] = useState(false)
     const reorderPromiseRef = useRef(Promise.resolve())
+    const parameterSubmitPromiseRef = useRef(Promise.resolve())
+    const isBusy = Boolean(
+        runningStepId || isRunning || isAllStepsRunning || isStepDeleting || addedOperationId
+    )
+
+    useEffect(() => {
+        if (isBusy) {
+            document.body.classList.add("app-busy-cursor")
+        } else {
+            document.body.classList.remove("app-busy-cursor")
+        }
+
+        return () => {
+            document.body.classList.remove("app-busy-cursor")
+        }
+    }, [isBusy])
 
     useEffect(() => {
         async function loadWorkflow() {
@@ -97,8 +113,14 @@ function WorkflowLayout() {
         }
     }
 
+    function registerParametersSubmitPromise(submitPromise) {
+        parameterSubmitPromiseRef.current = Promise.resolve(submitPromise).catch(() => null)
+    }
+
 
     async function handleAddStep(operation) {
+        await parameterSubmitPromiseRef.current
+
         setAddedOperationId(operation.id)
         await reorderPromiseRef.current // čeká se na dokončení změny pořadí
 
@@ -130,6 +152,8 @@ function WorkflowLayout() {
     }
 
     async function handleExecuteStep(stepId) {
+        await parameterSubmitPromiseRef.current
+
         setIsRunning(true) // krok běží, asi se může odstranit
         setRunningStepId(stepId)
 
@@ -170,6 +194,8 @@ function WorkflowLayout() {
     }
 
     async function handleExecuteAllSteps() {
+        await parameterSubmitPromiseRef.current
+
         setIsAllStepsRunning(true)
 
         const steps = workflow?.definition?.steps.filter((step) => {
@@ -200,6 +226,7 @@ function WorkflowLayout() {
     }
 
     async function handleDeleteStep(stepId) {
+        await parameterSubmitPromiseRef.current
         await reorderPromiseRef.current // čeká se na dokončení změny pořadí
         setIsStepDeleting(true)
 
@@ -236,6 +263,8 @@ function WorkflowLayout() {
     }
 
     async function handleReorderSteps(reorderedStepIds) {
+        await parameterSubmitPromiseRef.current
+
         const reorderPromise = (async () => {
             setWorkflow((prevWorkflow) => {
                 if (!prevWorkflow?.definition?.steps) return prevWorkflow
@@ -279,7 +308,7 @@ function WorkflowLayout() {
     }
 
     return (
-        <div className="min-h-screen flex">
+        <div className="h-screen overflow-hidden flex">
             <WorkflowSidebar
                 searchQuery={searchQuery}
                 setSearchQuery={setSearchQuery}
@@ -306,6 +335,8 @@ function WorkflowLayout() {
                 operations={operations}
                 workflowId={workflowId}
                 onCloseParameters={handleCloseParameters}
+                onParametersSubmitPromiseChange={registerParametersSubmitPromise}
+                onDismissError={() => setError("")}
                 isLoading={isWorkflowLoading}
                 apiBaseUrl={API_BASE_URL}
                 error={error}

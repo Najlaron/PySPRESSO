@@ -312,7 +312,9 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
             <button
                 type="submit"
                 disabled={isSubmitting || Boolean(filesState?.data?.error || filesState?.batchInfo?.error || filesState?.importFile?.error)}
-                className={`bg-grounds text-foam rounded-4xl py-4 w-50 text-2xl font-semibold mb-ds-lg ${isSubmitting || Boolean(filesState?.data?.error || filesState?.batchInfo?.error || filesState?.importFile?.error) ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                className={`bg-grounds text-foam rounded-4xl py-4 w-50 text-2xl font-semibold  transition duration-300 hover:bg-noir/90
+                            mb-ds-lg ${isSubmitting || Boolean(filesState?.data?.error || filesState?.batchInfo?.error || filesState?.importFile?.error)
+                        ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
             >
                 {isSubmitting ? 'Submitting...' : 'Submit'}
             </button>

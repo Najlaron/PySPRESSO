@@ -5,14 +5,16 @@ import { IoAddCircleOutline } from "react-icons/io5";
 import { MdOutlineAddBox } from "react-icons/md";
 
 
-function SearchedMethod({ operation, onClick, addedId }) {
+function SearchedMethod({ operation, onClick, addedId, disabled = false }) {
     const isCurrentOpAdded = operation.id === addedId
+    const isDisabled = disabled && !isCurrentOpAdded
 
     return (
-        <div className={`flex items-center justify-between gap-ds-md cursor-pointer border-l-8 border-l-transparent hover:bg-crema/65 hover:border-l-espresso p-ds-md bg-foam
-            ${isCurrentOpAdded ? "bg-crema/65 border-l-espresso cursor-wait" : ""}`}
+        <div className={`flex items-center justify-between gap-ds-md border-l-8 border-l-transparent p-ds-md bg-foam
+            ${isCurrentOpAdded ? "bg-crema/65 border-l-espresso cursor-wait" : ""}
+            ${isDisabled ? "opacity-60" : "cursor-pointer hover:bg-crema/65 hover:border-l-espresso"}`}
             onClick={() => {
-                if (isCurrentOpAdded) return;
+                if (isCurrentOpAdded || isDisabled) return;
                 onClick();
             }}
         >

@@ -3,7 +3,7 @@ import ParameterInput from "../molecules/WorkflowLayout/ParameterInput"
 import { formatNetworkError } from "../../utils/helpers"
 import { API_BASE_URL } from "../../config"
 
-function ParametersForm({ step, operation, workflowId, onClose, reorderPromiseParams }) {
+function ParametersForm({ step, operation, workflowId, onClose, reorderPromiseParams, onSubmitPromiseChange }) {
     const [error, setError] = useState("")
     const [isAdding, setIsAdding] = useState(false)
 
@@ -43,33 +43,39 @@ function ParametersForm({ step, operation, workflowId, onClose, reorderPromisePa
     async function handleSubmit(e) {
         e.preventDefault()
         setError("")
-        setIsAdding(true)
 
-        try {
-            await reorderPromiseParams
+        const submitPromise = (async () => {
+            setIsAdding(true)
 
-            const response = await fetch(
-                API_BASE_URL + `/workflow/${workflowId}/step/${step.step_id}/parameters`,
-                {
-                    method: "PUT",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ parameters: parameterValues }),
+            try {
+                await reorderPromiseParams
+
+                const response = await fetch(
+                    API_BASE_URL + `/workflow/${workflowId}/step/${step.step_id}/parameters`,
+                    {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ parameters: parameterValues }),
+                    }
+                )
+
+                const data = await response.json()
+
+                if (!response.ok) {
+                    setError(data?.message ?? "Failed to save parameters")
+                    return
                 }
-            )
 
-            const data = await response.json()
-
-            if (!response.ok) {
-                setError(data?.message ?? "Failed to save parameters")
-                return
+                onClose()
+            } catch (err) {
+                setError(formatNetworkError(err))
+            } finally {
+                setIsAdding(false)
             }
+        })()
 
-            onClose()
-        } catch (err) {
-            setError(formatNetworkError(err))
-        } finally {
-            setIsAdding(false)
-        }
+        onSubmitPromiseChange?.(submitPromise)
+        await submitPromise
     }
 
     if (!operation) {
@@ -111,13 +117,26 @@ function ParametersForm({ step, operation, workflowId, onClose, reorderPromisePa
                             ))}
                             <div className="text-base text-noir">* Required parameter</div>
 
-                            <button
-                                type="submit"
-                                className={`bg-espresso hover:bg-roast disabled:bg-roast/50 text-foam px-ds-lg py-ds-md rounded-lg font-semibold shadow-md text-xl ${isAdding ? "" : "cursor-pointer"}`}
-                                disabled={isAdding}
-                            >
-                                {isAdding ? "Submitting" : "Submit"}
-                            </button>
+                            <div className="flex gap-ds-lg">
+                                <button
+                                    type="submit"
+                                    className={`bg-espresso hover:bg-noir/90 transition text-foam px-ds-lg py-ds-md rounded-lg 
+                                            font-semibold shadow-md text-xl ${isAdding ? "bg-noir/90" : "cursor-pointer"}`}
+                                    disabled={isAdding}
+                                >
+                                    {isAdding ? "Submitting" : "Submit"}
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`hover:bg-crema transition text-noir px-ds-lg py-ds-md rounded-lg 
+                                            font-medium text-xl border-2 border-crema cursor-pointer`}
+                                    disabled={isAdding}
+                                    onClick={() => (onClose())}
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+
                         </>
                     ) : (
                         <p className="text-noir/60">
