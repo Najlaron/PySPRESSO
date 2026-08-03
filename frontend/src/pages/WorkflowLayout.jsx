@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import WorkflowSidebar from "../components/organisms/Layouts/WorkflowSidebar"
 import WorkflowContent from "../components/organisms/Layouts/WorkflowContent"
-import WorkflowError from "../components/organisms/WorkflowError"
+import WorkflowError from "../components/organisms/WorkflowLayout/WorkflowError"
 import { formatNetworkError } from "../utils/helpers"
 import { API_BASE_URL } from "../config"
 

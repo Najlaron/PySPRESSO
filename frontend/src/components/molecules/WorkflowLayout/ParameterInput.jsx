@@ -1,10 +1,23 @@
 import { useState } from "react"
 import { FaRegQuestionCircle } from "react-icons/fa"
-import Tooltip from "../Tooltip"
+import Tooltip from "./Tooltip"
 
 
 function ParameterInput({ parameter, value, onChange }) {
     const paramType = parameter.type
+
+    function parseNumericValue(rawValue, type) {
+        if (rawValue === "") {
+            return undefined
+        }
+
+        if (type === "float") {
+            const normalized = rawValue.replace(",", ".")
+            return parseFloat(normalized)
+        }
+
+        return parseInt(rawValue, 10)
+    }
 
     const TYPE_LABELS = {
         str: "String",
@@ -14,7 +27,14 @@ function ParameterInput({ parameter, value, onChange }) {
         number: "Integer",
         boolean: "Boolean",
         bool: "Boolean",
-        float: "Float"
+        float: "Float",
+        list: "List",
+        list_or_bool: "List or Boolean",
+        bool_or_int: "Boolean or Integer",
+        list_or_none: "List or None",
+        str_or_none: "String or None",
+        list_or_str: "String or List",
+        str_or_list: "String or List",
     }
 
     function getTypeLabel(paramType) {
@@ -72,8 +92,7 @@ function ParameterInput({ parameter, value, onChange }) {
                     type="number"
                     value={value}
                     onChange={(e) => {
-                        const default_value = e.target.value
-                        onChange(default_value === "" ? undefined : (paramType === "float" ? parseFloat(default_value) : parseInt(default_value, 10)))
+                        onChange(parseNumericValue(e.target.value, paramType))
                     }}
                     placeholder={parameter.example}
                     className="px-ds-md py-ds-md border border-roast/50 rounded-lg bg-light-foam text-noir focus:outline-none focus:border-espresso"

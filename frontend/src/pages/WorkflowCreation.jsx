@@ -1,5 +1,5 @@
-import StepBadge from '../components/molecules/StepBadge'
-import WorkflowForm from '../components/organisms/WorkflowCreationForm'
+import StepBadge from '../components/molecules/HomePage/StepBadge'
+import WorkflowForm from '../components/organisms/WorkflowCreation/WorkflowCreationForm'
 import { useReducer, useState, useEffect } from 'react'
 
 const initialFilesState = {

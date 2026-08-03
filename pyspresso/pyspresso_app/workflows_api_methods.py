@@ -22,7 +22,7 @@ import math
 
 # místo, kam se ukládáají data
 UPLOAD_FOLDER = Path(__file__).parent.parent.parent / "uploads"
-UPLOAD_FOLDER.mkdir(exist_ok=True)
+UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 # povolené formáty dat
 ALLOWED_EXTENSIONS = {"csv", "txt", "xlsx", "xls", "tsv"}
 
@@ -45,7 +45,7 @@ def save_uploaded_file(file, subfolder="workflows"):
 
     # vytvoří složku pro dané workflow
     folder_path = UPLOAD_FOLDER / subfolder
-    folder_path.mkdir(exist_ok=True)
+    folder_path.mkdir(parents=True, exist_ok=True)
     filename = secure_filename(file.filename)
     filepath = folder_path / filename
 

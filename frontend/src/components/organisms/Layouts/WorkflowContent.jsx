@@ -1,13 +1,13 @@
-import ParametersForm from "../ParametersForm"
+import ParametersForm from "../WorkflowLayout/ParametersForm"
 import { useState, useEffect, useMemo } from "react"
-import WorkflowVisualization from "../WorkflowVisualization"
-import DataTabs from "../DataTabs"
-import DataFrame from "../DataFrame"
-import VisualizationTabs from "../VisualizationTabs"
-import WorkflowError from "../WorkflowError"
-import ErrorAlert from "../../molecules/ErrorAlert"
-import WorkflowDescriptionModal from "../../molecules/WorkflowDescriptionModal"
-import StepExecutionResult from "./StepExecutionResult"
+import WorkflowVisualization from "../WorkflowLayout/WorkflowVisualization"
+import DataTabs from "../WorkflowLayout/DataTabs"
+import DataFrame from "../WorkflowLayout/DataFrame"
+import VisualizationTabs from "../WorkflowLayout/VisualizationTabs"
+import WorkflowError from "../WorkflowLayout/WorkflowError"
+import ErrorAlert from "../../molecules/WorkflowLayout/ErrorAlert"
+import WorkflowDescriptionModal from "../../molecules/WorkflowLayout/WorkflowDescriptionModal"
+import StepExecutionResult from "../WorkflowLayout/StepExecutionResult"
 import { formatNetworkError } from "../../../utils/helpers"
 import { PiExportBold } from "react-icons/pi"
 import { MdEdit } from "react-icons/md"
@@ -343,7 +343,7 @@ function WorkflowContent({ workflow,
                         <button
                             onClick={openDescriptionModal}
                             className="flex items-center gap-ds-sm rounded-md px-ds-md py-ds-md text-base font-semibold transition
-                            text-noir hover:bg-espresso hover:text-foam cursor-pointer"
+                            text-espresso hover:bg-espresso hover:text-foam cursor-pointer"
                         >
                             <MdEdit size="1.5rem" />
                             <span>Edit Description</span>

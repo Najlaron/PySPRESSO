@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import WorkflowCard from "../components/molecules/WorkflowList/WorkflowCard"
-import ErrorAlert from "../components/molecules/ErrorAlert"
+import ErrorAlert from "../components/molecules/WorkflowLayout/ErrorAlert"
 import { formatNetworkError } from "../utils/helpers"
 import { API_BASE_URL } from "../config"
 

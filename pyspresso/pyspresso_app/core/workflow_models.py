@@ -235,7 +235,7 @@ class WorkflowState:
             try:
                 idx = pd.Index(df.index)
                 if len(idx) > 0 and idx.map(lambda x: isinstance(x, str)).all():
-                    parsed_idx = pd.to_datetime(idx, errors="coerce")
+                    parsed_idx = pd.to_datetime(idx, errors="coerce", format="mixed")
                     if parsed_idx.notna().sum() > 0:
                         df.index = parsed_idx
             except Exception:
@@ -248,12 +248,12 @@ class WorkflowState:
                 if non_null.empty:
                     continue
 
-            if non_null.map(lambda x: isinstance(x, str)).all():
-                parsed = pd.to_datetime(ser, errors="coerce")
-                parsed_success = parsed.notna().sum()
-                total_non_null = len(non_null)
-                if total_non_null > 0 and (parsed_success / total_non_null) >= 0.5:
-                    df[col] = parsed
+                if non_null.map(lambda x: isinstance(x, str)).all():
+                    parsed = pd.to_datetime(ser, errors="coerce", format="mixed")
+                    parsed_success = parsed.notna().sum()
+                    total_non_null = len(non_null)
+                    if total_non_null > 0 and (parsed_success / total_non_null) >= 0.5:
+                        df[col] = parsed
 
             return df
 

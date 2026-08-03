@@ -395,8 +395,6 @@ def _initializer_folders(state: WorkflowState):
     """
     main_folder = getattr(state, "main_folder", None)
 
-    print("main folder u folderu=", main_folder)
-
     if main_folder is None:
         workflow_id = getattr(state, "workflow_id", "workflow")
         main_folder = os.path.join("outputs", str(workflow_id))
@@ -411,8 +409,6 @@ def _initializer_folders(state: WorkflowState):
         os.path.join(main_folder, "statistics"),
         os.path.join(main_folder, "dropped_features"),
     ]
-
-    print("foldery=", folders)
 
     for folder in folders:
         os.makedirs(folder, exist_ok=True)
