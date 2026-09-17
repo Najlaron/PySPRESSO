@@ -1,3 +1,4 @@
+import ast
 import os
 import re
 
@@ -121,6 +122,54 @@ def _unique_path(path: str):
         if not os.path.exists(candidate):
             return candidate
         i += 1
+
+
+def _parse_blank_setting(setting):
+    """
+    Parse blank-reference setting.
+
+    This keeps compatibility with the module behaviour:
+        - 'median', 'min', 'mean', 'first', 'last'
+        - [x], where x is one integer index among blank samples
+
+    In the App, a list value may arrive either as an actual list or as a
+    string typed in the parameter field, e.g. '[0]' or '[-1]'.
+    """
+    if isinstance(setting, str):
+        stripped = setting.strip()
+
+        if stripped.startswith("[") and stripped.endswith("]"):
+            try:
+                setting = ast.literal_eval(stripped)
+            except Exception as exc:
+                raise ValueError(
+                    "If setting is a list, use exactly one integer index, "
+                    "for example [0], [1], or [-1]."
+                ) from exc
+        else:
+            return stripped.lower()
+
+    if isinstance(setting, tuple):
+        setting = list(setting)
+
+    if isinstance(setting, list):
+        if len(setting) != 1:
+            raise ValueError(
+                "If setting is a list, use exactly one index, "
+                "for example [0], [1], or [-1]."
+            )
+
+        blank_index = setting[0]
+
+        if isinstance(blank_index, bool) or not isinstance(blank_index, (int, np.integer)):
+            raise ValueError(
+                "Blank index inside setting list must be an integer, "
+                "for example [0], [1], or [-1]."
+            )
+
+        return [int(blank_index)]
+
+    return setting
 
 
 # ------------------------------------------------------------
@@ -394,14 +443,16 @@ def filter_missing_values(
         ),
         ParameterDef(
             name="setting",
-            type="str",
+            type="list_or_str",
             required=False,
             default="first",
             label="Blank setting",
             help=(
-                "How to calculate blank intensity. "
-                "Choose from: median, min, mean, first, last."
+                "How to calculate blank intensity. Choose from: median, min, mean, "
+                "first, last, or use [x] where x is the blank index among blank "
+                "samples, e.g. [0], [1], [-1]."
             ),
+            example="first or [0]",
         ),
     ],
     requires=["data", "variable_metadata", "QC_samples", "blank_samples"],
@@ -410,7 +461,7 @@ def filter_missing_values(
 def filter_blank_intensity_ratio(
     state: WorkflowState,
     ratio: float = 20,
-    setting: str = "first",
+    setting="first",
 ):
     """
     Filter out features with intensity sample/blank < ratio.
@@ -422,6 +473,7 @@ def filter_blank_intensity_ratio(
         - mean
         - first
         - last
+        - [x], where x is the blank index among blank samples
     """
     data = state.data
     variable_metadata = state.variable_metadata
@@ -481,22 +533,52 @@ def filter_blank_intensity_ratio(
         )
 
     # Different approaches for blank intensity.
+    setting = _parse_blank_setting(setting)
+
     if setting == "median":
         blank_intensities = data[blank_cols].median(axis=1)
+        blank_used_text = "median of all blank samples"
     elif setting == "min":
         blank_intensities = data[blank_cols].min(axis=1)
+        blank_used_text = "minimum of all blank samples"
     elif setting == "mean":
         blank_intensities = data[blank_cols].mean(axis=1)
+        blank_used_text = "mean of all blank samples"
     elif setting == "first":
-        blank_intensities = data[blank_cols].iloc[:, 0]
+        selected_blank = blank_cols[0]
+        blank_intensities = data[selected_blank]
+        blank_used_text = str(selected_blank)
     elif setting == "last":
-        blank_intensities = data[blank_cols].iloc[:, -1]
+        selected_blank = blank_cols[-1]
+        blank_intensities = data[selected_blank]
+        blank_used_text = str(selected_blank)
+    elif isinstance(setting, list):
+        blank_index = setting[0]
+
+        if blank_index >= len(blank_cols) or blank_index < -len(blank_cols):
+            raise ValueError(
+                "Blank index "
+                + str(blank_index)
+                + " is out of range. Number of blank samples found: "
+                + str(len(blank_cols))
+                + "."
+            )
+
+        selected_blank = blank_cols[blank_index]
+        blank_intensities = data[selected_blank]
+        blank_used_text = str(selected_blank)
     else:
         raise ValueError(
-            "Setting not recognized. Choose from: "
-            "'median', 'min', 'mean', 'first' or 'last'. "
-            "(Chooses blank to use as reference value.)"
+            "Setting not recognized. Choose from: 'median', 'min', 'mean', "
+            "'first', 'last', or use [x] where x is the blank index, "
+            "e.g. [0], [1], [-1]."
         )
+
+    print(
+        "Blank intensity ratio filter used blank reference: "
+        + blank_used_text,
+        flush=True,
+    )
 
     intensity_sample_blank = data[qc_cols].median(axis=1) / blank_intensities
 
@@ -550,6 +632,8 @@ def filter_blank_intensity_ratio(
         + str(blank_threshold)
         + " were removed. Number of features removed: "
         + str(removed_count)
+        + ". Blank reference used: "
+        + blank_used_text
     )
 
     if removed_count > 0 and removed_count < 25:
@@ -569,8 +653,24 @@ def filter_blank_intensity_ratio(
         "removed_count": removed_count,
         "ratio": ratio,
         "setting": setting,
+        "blank_reference": blank_used_text,
         "removed_features_file": txt_path,
         "skipped": False,
+        "report": {
+            "title": "Blank intensity ratio filter",
+            "summary": [
+                f"Sample/blank ratio threshold: {ratio}",
+                f"Blank reference used: {blank_used_text}",
+                f"Features removed: {removed_count}",
+            ],
+            "artifacts": [
+                {
+                    "type": "file",
+                    "label": "Removed features by blank intensity ratio",
+                    "path": txt_path,
+                }
+            ],
+        },
     }
 
 
@@ -922,7 +1022,10 @@ def filter_relative_standard_deviation(
             required=False,
             default=False,
             label="Concentrations",
-            help="False uses sample order. Otherwise provide concentrations as a list.",
+            help=(
+                "False uses sample order. True uses dilution concentrations saved during "
+                "initialization. You may also provide a list directly."
+            ),
         ),
         ParameterDef(
             name="to_plot",

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+import ast
 import os
 import re
-import shutil
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -11,8 +10,6 @@ import pandas as pd
 from pyspresso_app.core.registry import register_operation
 from pyspresso_app.core.operation_models import OperationTag, ParameterDef
 from pyspresso_app.core.workflow_models import WorkflowState
-from pyspresso_app.core.pdf_reporter import Report
-
 
 @register_operation(
     id="initializer_compound_discoverer",
@@ -60,15 +57,6 @@ from pyspresso_app.core.pdf_reporter import Report
             label="cpdID columns",
             help="Use two columns for m/z+RT mode, or one column if cpdID_from_column=True.",
             example="e.g.: m/z, RT [min]",
-        ),
-        ParameterDef(
-            name="more_batches",
-            type="bool",
-            required=False,
-            default=False,
-            label="Multiple batches",
-            help="If False, all samples are treated as one batch.",
-            example="e.g.: False",
         ),
         ParameterDef(
             name="datetime_format",
@@ -121,8 +109,26 @@ from pyspresso_app.core.pdf_reporter import Report
             required=False,
             default="dilQC_",
             label="dilution series concentration prefix",
-            help="The prefix to the concentration values in the name.",
+            help=(
+                "Optional prefix used for automatic concentration extraction from "
+                "sample names. Manual dilution_concentrations overrides this."
+            ),
             example="e.g.: dilQC_ if you have dilQC_50, etc...",
+        ),
+        ParameterDef(
+            name="dilution_concentrations",
+            type="list_or_str",
+            required=False,
+            default="",
+            label="Dilution concentrations",
+            help=(
+                "Optional manual dilution concentrations. Recommended when file-name "
+                "parsing is ambiguous. Use dot decimals with comma separation "
+                "(6.25, 12.5, 25) or semicolons with decimal commas "
+                "(6,25; 12,5; 25). If empty, PySPRESSO keeps the previous "
+                "automatic extraction behaviour."
+            ),
+            example="6.25, 12.5, 25, 50, 100",
         ),
     ],
     requires=["files"],
@@ -154,6 +160,7 @@ def initializer_compound_discoverer(
     standard_samples_distinguisher="Standard",
     dil_distinguisher="dilQC",
     conc_distinguisher="dilQC_",
+    dilution_concentrations="",
 ):
     if cpdID_columns is None:
         cpdID_columns = ["m/z", "RT [min]"]
@@ -179,7 +186,6 @@ def initializer_compound_discoverer(
 
     # Initialize folders first, then report.
     _initializer_folders(state)
-    _initializer_report(state)
 
     # Load raw Compound Discoverer table.
     _, data_load_info = _loader_data(
@@ -257,6 +263,7 @@ def initializer_compound_discoverer(
         standard_samples_distinguisher=standard_samples_distinguisher,
         dil_distinguisher=dil_distinguisher,
         conc_distinguisher=conc_distinguisher,
+        dilution_concentrations=dilution_concentrations,
     )
 
     if state.report is not None:
@@ -276,23 +283,6 @@ def initializer_compound_discoverer(
         )
 
     print("všechno proběhlo")
-
-    # remove uploaded data folder after successful initialization
-    data_file = state.files.get("data")
-    print(data_file)
-    if data_file:
-        data_path = Path.cwd().parent / data_file
-        uploads_folder = data_path.parent
-        if uploads_folder.exists():
-            try:
-                shutil.rmtree(uploads_folder)
-                print(f"Removed uploaded data folder: {uploads_folder}")
-            except Exception as e:
-                print(
-                    f"Warning: Could not remove uploaded data folder {uploads_folder}: {e}"
-                )
-
-        state.files = None
 
     return {
         "initialized": True,
@@ -318,72 +308,50 @@ def initializer_compound_discoverer(
             if state.dilution_series_samples is not None
             else 0
         ),
+        "dil_concentrations": state.dil_concentrations,
+        "n_dil_concentrations": (
+            len(state.dil_concentrations)
+            if state.dil_concentrations is not None
+            else 0
+        ),
         "n_standard_samples": (
             len(state.standard_samples) if state.standard_samples is not None else 0
         ),
+        "report_html_path": getattr(state, "report_html_path", None),
+        "report_html_url": getattr(state, "report_html_url", None),
+        "report": {
+            "title": "Compound Discoverer dataset initialization",
+            "summary": [
+                "Compound Discoverer dataset initialization completed.",
+                f"Number of features: {int(state.data.shape[0])}",
+                f"Number of samples: {int(state.data.shape[1] - 1)}",
+                f"QC samples detected: {len(state.QC_samples) if state.QC_samples is not None else 0}",
+                f"Blank samples detected: {len(state.blank_samples) if state.blank_samples is not None else 0}",
+                f"Dilution series samples detected: {len(state.dilution_series_samples) if state.dilution_series_samples is not None else 0}",
+                f"Dilution concentrations set: {state.dil_concentrations if state.dil_concentrations is not None else []}",
+                f"Standard samples detected: {len(state.standard_samples) if state.standard_samples is not None else 0}",
+            ],
+            "metrics": {
+                "n_features": int(state.data.shape[0]),
+                "n_samples": int(state.data.shape[1] - 1),
+                "n_qc_samples": len(state.QC_samples) if state.QC_samples is not None else 0,
+                "n_blank_samples": len(state.blank_samples) if state.blank_samples is not None else 0,
+                "n_dilution_series_samples": len(state.dilution_series_samples) if state.dilution_series_samples is not None else 0,
+                "n_dil_concentrations": len(state.dil_concentrations) if state.dil_concentrations is not None else 0,
+                "n_standard_samples": len(state.standard_samples) if state.standard_samples is not None else 0,
+            },
+            "artifacts": [
+                {
+                    "type": "html",
+                    "label": "Live HTML report",
+                    "path": getattr(state, "report_html_path", None),
+                }
+            ],
+        },
     }
 
 
 # helping functions copied from previous version of the module
-
-
-def _initializer_report(state: WorkflowState):
-    """
-    Initialize the report object.
-    """
-    main_folder = state.main_folder
-    print("main folder u reportu=", main_folder)
-
-    if main_folder is None:
-        raise ValueError("state.main_folder is not set. Initialize folders first.")
-
-    report_file_name = getattr(state, "report_file_name", None)
-
-    if report_file_name is None:
-        report_file_name = "pyspresso_report"
-
-    if not report_file_name.endswith(".pdf"):
-        report_file_name = report_file_name + ".pdf"
-
-    report_path = os.path.join(main_folder, report_file_name)
-    title_text = main_folder
-
-    report = Report(name=report_path, title=title_text)
-    report.initialize_report()
-
-    logo_path = "pyspresso_logo.png"
-
-    if os.path.exists(logo_path):
-        report.add_image(logo_path, max_width=420, max_height=260)
-    else:
-        print("Logo not found, skipping logo addition to the report.")
-
-    processed_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    pyspresso_version = getattr(state, "pyspresso_version", None)
-
-    report.add_text(
-        f"Processed at: {processed_time}",
-        style="italic",
-        alignment="center",
-        font_size=10,
-    )
-
-    if pyspresso_version is not None:
-        report.add_text(
-            f"PySPRESSO version: {pyspresso_version}",
-            style="italic",
-            alignment="center",
-            font_size=10,
-        )
-
-    state.report = report
-    state.report_path = report_path
-    state.report_file_name = report_file_name
-
-    print("Report initialized.")
-
-    return state.report
-
 
 # foldery= ['outputs\\f0f92e73-9ea9-44b0-92fd-19f9121a941a', 'outputs\\f0f92e73-9ea9-44b0-92fd-19f9121a941a\\figures', 'outputs\\f0f92e73-9ea9-44b0-92fd-19f9121a941a\\statistics', 'outputs\\f0f92e73-9ea9-44b0-92fd-19f9121a941a\\dropped_features']
 # foldery= ['outputs\\vv', 'outputs\\vv\\figures', 'outputs\\vv\\statistics', 'outputs\\vv\\dropped_features']
@@ -395,25 +363,50 @@ def _initializer_folders(state: WorkflowState):
     """
     main_folder = getattr(state, "main_folder", None)
 
-    if main_folder is None:
-        workflow_id = getattr(state, "workflow_id", "workflow")
-        main_folder = os.path.join("outputs", str(workflow_id))
-    else:
-        main_folder = os.path.join("outputs", main_folder)
+    if not main_folder:
+        workflow_id = getattr(
+            state,
+            "workflow_id",
+            "workflow",
+        )
+        main_folder = str(workflow_id)
+
+    main_folder = os.path.normpath(str(main_folder))
+
+    # Add "outputs" only if it is not already present.
+    path_parts = os.path.normpath(main_folder).split(os.sep)
+
+    if not path_parts or path_parts[0] != "outputs":
+        main_folder = os.path.join(
+            "outputs",
+            main_folder,
+        )
 
     state.main_folder = main_folder
 
     folders = [
         main_folder,
-        os.path.join(main_folder, "figures"),
-        os.path.join(main_folder, "statistics"),
-        os.path.join(main_folder, "dropped_features"),
+        os.path.join(
+            main_folder,
+            "figures",
+        ),
+        os.path.join(
+            main_folder,
+            "statistics",
+        ),
+        os.path.join(
+            main_folder,
+            "dropped_features",
+        ),
     ]
 
     for folder in folders:
-        os.makedirs(folder, exist_ok=True)
+        os.makedirs(
+            folder,
+            exist_ok=True,
+        )
 
-    print("Folders initialized.")
+    print(f"Folders initialized in: {main_folder}")
 
     return main_folder
 
@@ -1161,6 +1154,91 @@ def _loader_batch_info(state: WorkflowState, batch_info_input_file_name):
     return state.batch_info, load_info
 
 
+def _is_empty_dilution_concentrations(value):
+    if value is None:
+        return True
+
+    if value is False:
+        return True
+
+    if isinstance(value, str) and value.strip() == "":
+        return True
+
+    if isinstance(value, (list, tuple)) and len(value) == 0:
+        return True
+
+    return False
+
+
+def _parse_dilution_concentrations(value):
+    """
+    Parse manual dilution concentrations from GUI/backend input.
+
+    Accepted examples:
+        [6.25, 12.5, 25, 50, 100]
+        "6.25, 12.5, 25, 50, 100"
+        "6,25; 12,5; 25; 50; 100"
+        "6,25 12,5 25 50 100"
+
+    Decimal-comma values should be separated by semicolons or spaces. A string
+    like "6,25,12,5" is ambiguous and is rejected with a helpful message.
+    """
+    if _is_empty_dilution_concentrations(value):
+        return None
+
+    raw = value
+
+    if isinstance(value, str):
+        text = value.strip()
+
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                raw = ast.literal_eval(text)
+            except Exception as exc:
+                raise ValueError(
+                    "Could not parse dilution_concentrations. Use for example: "
+                    "6.25, 12.5, 25 or [6.25, 12.5, 25]."
+                ) from exc
+        elif ";" in text:
+            raw = [part.strip() for part in text.split(";") if part.strip()]
+        elif re.search(r"\d,\d", text) and "," in text and "." not in text:
+            # Decimal-comma values may be separated by whitespace, e.g.
+            # "6,25 12,5 25". If there is no whitespace, the input is
+            # ambiguous and should be fixed by the user.
+            parts = [part.strip() for part in re.split(r"\s+", text) if part.strip()]
+            if len(parts) <= 1:
+                raise ValueError(
+                    "Ambiguous dilution_concentrations with decimal commas. "
+                    "Use semicolons as separators, e.g. 6,25; 12,5; 25, "
+                    "or use dot decimals, e.g. 6.25, 12.5, 25."
+                )
+            raw = parts
+        else:
+            raw = [part.strip() for part in text.split(",") if part.strip()]
+
+    if not isinstance(raw, (list, tuple)):
+        raw = [raw]
+
+    concentrations = []
+
+    for item in raw:
+        if item is None or item == "":
+            continue
+
+        try:
+            concentrations.append(float(str(item).strip().replace(",", ".")))
+        except ValueError as exc:
+            raise ValueError(
+                "All dilution_concentrations values must be numeric. "
+                f"Could not parse value: {item!r}."
+            ) from exc
+
+    if len(concentrations) == 0:
+        return None
+
+    return concentrations
+
+
 def _initialize_sample_type_lists(
     state: WorkflowState,
     qc_samples_distinguisher="Quality Control",
@@ -1168,12 +1246,15 @@ def _initialize_sample_type_lists(
     standard_samples_distinguisher="Standard",
     dil_distinguisher="dilQC",
     conc_distinguisher="dilQC_",
+    dilution_concentrations=None,
 ):
     """
     Initialize sample lists used by filters and corrections.
 
     QC, blank, and standard samples are identified from metadata['Sample Type'].
     Dilution-series samples are identified from metadata['Sample File'] names.
+    Dilution concentrations can be provided manually. If they are not provided,
+    PySPRESSO preserves the previous automatic extraction from file names.
     """
     metadata = state.metadata
 
@@ -1208,9 +1289,12 @@ def _initialize_sample_type_lists(
     ].tolist()
 
     # Dilution-series samples by name
+    concentration_source = "manual" if not _is_empty_dilution_concentrations(dilution_concentrations) else "auto_from_sample_names"
+    manual_dil_concentrations = _parse_dilution_concentrations(dilution_concentrations)
+
     if dil_distinguisher is None or dil_distinguisher == "":
         state.dilution_series_samples = []
-        state.dil_concentrations = []
+        state.dil_concentrations = manual_dil_concentrations or []
     else:
         dilution_mask = sample_file.str.contains(
             str(dil_distinguisher),
@@ -1224,32 +1308,58 @@ def _initialize_sample_type_lists(
             "Sample File",
         ].tolist()
 
-        # Optional: try to extract concentration/order after conc_distinguisher.
-        # Example: "sample_dilQC_0.25" with conc_distinguisher="dilQC_"
-        dil_concentrations = []
+        if manual_dil_concentrations is not None:
+            state.dil_concentrations = manual_dil_concentrations
+            concentration_source = "manual"
+        else:
+            # Preserve previous behaviour: try to extract concentration/order after
+            # conc_distinguisher. Example: "sample_dilQC_0.25" with
+            # conc_distinguisher="dilQC_". Manual input is recommended because
+            # file names are often ambiguous.
+            auto_dil_concentrations = []
 
-        for name in state.dilution_series_samples:
-            match = re.search(
-                re.escape(str(conc_distinguisher)) + r"([0-9]+(?:[.,][0-9]+)?)",
-                str(name),
+            for name in state.dilution_series_samples:
+                match = re.search(
+                    re.escape(str(conc_distinguisher)) + r"([0-9]+(?:[.,][0-9]+)?)",
+                    str(name),
+                )
+
+                if match:
+                    value = match.group(1).replace(",", ".")
+
+                    try:
+                        auto_dil_concentrations.append(float(value))
+                    except ValueError:
+                        auto_dil_concentrations.append(None)
+                else:
+                    auto_dil_concentrations.append(None)
+
+            state.dil_concentrations = auto_dil_concentrations
+            concentration_source = "auto_from_sample_names"
+
+    if len(state.dilution_series_samples) > 0 and state.dil_concentrations is None:
+        state.dil_concentrations = []
+
+    if len(state.dilution_series_samples) > 0 and state.dil_concentrations:
+        n_dil = len(state.dilution_series_samples)
+        n_conc = len(state.dil_concentrations)
+        if n_conc != n_dil and n_dil % n_conc != 0:
+            print(
+                "Warning: dilution_concentrations length ("
+                + str(n_conc)
+                + ") does not match dilution-series sample count ("
+                + str(n_dil)
+                + ") and is not an even per-series divisor. "
+                "This can still be valid for some workflows, but check the "
+                "number_of_series parameter in dilution linearity filtering."
             )
-
-            if match:
-                value = match.group(1).replace(",", ".")
-
-                try:
-                    dil_concentrations.append(float(value))
-                except ValueError:
-                    dil_concentrations.append(None)
-            else:
-                dil_concentrations.append(None)
-
-        state.dil_concentrations = dil_concentrations
 
     print("Sample type lists initialized.")
     print(f"QC samples: {len(state.QC_samples)}")
     print(f"Blank samples: {len(state.blank_samples)}")
     print(f"Dilution-series samples: {len(state.dilution_series_samples)}")
+    print(f"Dilution concentrations: {state.dil_concentrations}")
+    print(f"Dilution concentrations source: {concentration_source}")
     print(f"Standard samples: {len(state.standard_samples)}")
 
     if state.report is not None:
@@ -1272,6 +1382,10 @@ def _initialize_sample_type_lists(
                     "text",
                     f"Dilution-series samples distinguished by sample name containing {dil_distinguisher!r}: {len(state.dilution_series_samples)}",
                 ),
+                (
+                    "text",
+                    f"Dilution concentrations ({concentration_source}): {state.dil_concentrations}",
+                ),
                 "line",
             ]
         )
@@ -1281,5 +1395,6 @@ def _initialize_sample_type_lists(
         "blank_samples": state.blank_samples,
         "dilution_series_samples": state.dilution_series_samples,
         "dil_concentrations": state.dil_concentrations,
+        "dil_concentrations_source": concentration_source,
         "standard_samples": state.standard_samples,
     }

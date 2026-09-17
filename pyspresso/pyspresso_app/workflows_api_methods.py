@@ -1,9 +1,9 @@
 import shutil
 import uuid
-import os
 from pathlib import Path
 import json
-from datetime import datetime
+import math
+import copy
 
 from flask import request, jsonify, send_from_directory, abort
 from werkzeug.utils import secure_filename
@@ -17,8 +17,8 @@ from pyspresso_app.core.workflow_models import (
 )
 from pyspresso_app.core.registry import get_operation, list_operations
 from pyspresso_app.core.executor import run_step
-import pandas as pd
-import math
+from pyspresso_app.bootstrap import initialize
+from pyspresso_app.core.html_reporter import get_report_path
 
 # místo, kam se ukládáají data
 UPLOAD_FOLDER = Path(__file__).parent.parent.parent / "uploads"
@@ -37,6 +37,7 @@ def ensure_database_tables() -> None:
         db.create_all()
 
 
+initialize()
 ensure_database_tables()
 
 
@@ -52,9 +53,9 @@ def save_uploaded_file(file, subfolder="workflows"):
     if not allowed_file(file.filename):
         return None
 
-    # vytvoří složku pro dané workflow
+    # Never allow a client-provided folder name to escape the uploads directory.
+    subfolder = _validate_folder_name(subfolder)
     folder_path = UPLOAD_FOLDER / subfolder
-    print(folder_path)
     folder_path.mkdir(parents=True, exist_ok=True)
     filename = secure_filename(file.filename)
     filepath = folder_path / filename
@@ -62,36 +63,91 @@ def save_uploaded_file(file, subfolder="workflows"):
     file.save(str(filepath))
     return str(filepath.relative_to(UPLOAD_FOLDER.parent))
 
+def _validate_folder_name(folder_name: str) -> str:
+    folder_name = str(folder_name or "").strip()
+    candidate = Path(folder_name)
+    if (
+        not folder_name
+        or candidate.is_absolute()
+        or candidate.name != folder_name
+        or folder_name in {".", ".."}
+        or "/" in folder_name
+        or "\\" in folder_name
+    ):
+        raise ValueError(
+            "folderName must be a single folder name without path separators."
+        )
+    return folder_name
 
-# aktualizuje záznam v databázi z instance třídy workflow
-def save_workflow(workflow_id: str, workflow: Workflow):
-    workflow_row = db.session.get(WorkflowORM, workflow_id)
-    if not workflow_row:
-        return False
+def _json_safe_for_database(value):
+    """
+    Convert workflow data to values accepted by the database JSON column.
 
-    def _sanitize_for_json(obj):
-        if isinstance(obj, dict):
-            return {k: _sanitize_for_json(v) for k, v in obj.items()}
-        if isinstance(obj, (list, tuple)):
-            return [_sanitize_for_json(v) for v in obj]
+    This is persistence logic only.
+    It has nothing to do with HTML reporting.
+    """
 
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return None
+        return value
+
+    if isinstance(value, Path):
+        return str(value)
+
+    if isinstance(value, dict):
+        return {
+            str(key): _json_safe_for_database(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, (list, tuple, set)):
+        return [
+            _json_safe_for_database(item)
+            for item in value
+        ]
+
+    # numpy scalar types
+    if hasattr(value, "item"):
         try:
-            if pd.isna(obj):
-                return None
+            return _json_safe_for_database(value.item())
         except Exception:
             pass
 
-        if isinstance(obj, float):
-            if math.isnan(obj) or math.isinf(obj):
-                return None
+    # datetime / pandas Timestamp / similar
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
 
-        return obj
+    raise TypeError(
+        f"Value of type {type(value).__name__} "
+        "cannot be stored in workflow JSON."
+    )
 
-    workflow_row.definition = _sanitize_for_json(workflow.definition.to_dict())
-    workflow_row.state = _sanitize_for_json(workflow.state.to_dict())
+# aktualizuje záznam v databázi z instance třídy workflow
+def save_workflow(workflow_id: str, workflow: Workflow):
+    workflow_row = WorkflowORM.query.filter_by(
+        id=workflow_id
+    ).first()
+
+    if not workflow_row:
+        return False
+
+    workflow_row.definition = _json_safe_for_database(
+        workflow.definition.to_dict()
+    )
+    workflow_row.state = _json_safe_for_database(
+        workflow.state.to_dict()
+    )
+
     db.session.commit()
-    return True
 
+    return True
 
 # vytvoří instanci workflow ze záznamu z databáze
 def load_workflow(workflow_id: str):
@@ -104,6 +160,53 @@ def load_workflow(workflow_id: str):
     workflow.state = WorkflowState.from_dict(workflow_row.state)
     return workflow
 
+
+def load_workflow_definition(workflow_id: str):
+    """Load only the small workflow definition, leaving analytical state deferred."""
+    result = (
+        db.session.query(WorkflowORM.definition)
+        .filter(WorkflowORM.id == workflow_id)
+        .first()
+    )
+    if result is None:
+        return None
+    return WorkflowDefinition.from_dict(result[0])
+
+
+def save_workflow_definition(workflow_id: str, definition: WorkflowDefinition):
+    """Persist an editor-only change without reading or rewriting full table state."""
+
+    definition_payload = _json_safe_for_database(
+        definition.to_dict()
+    )
+    updated_rows = (
+        WorkflowORM.query
+        .filter_by(id=workflow_id)
+        .update(
+            {"definition": definition_payload},
+            synchronize_session=False,
+        )
+    )
+    if updated_rows == 0:
+        return None
+
+    db.session.commit()
+
+    return definition_payload
+
+def _get_default_operation_params(operation_id: str) -> dict:
+    """
+    Build the complete default parameter dictionary for an operation.
+
+    A deep copy is used so mutable defaults such as lists are not shared
+    between workflow steps.
+    """
+    operation = get_operation(operation_id)
+
+    return {
+        parameter.name: copy.deepcopy(parameter.default)
+        for parameter in operation.parameter_schema
+    }
 
 # přidá inicialiační metodu podle zvoleného formátu dat do nově vytvořeného workflow
 def add_init_step(wf, data_format: str):
@@ -121,14 +224,19 @@ def add_init_step(wf, data_format: str):
         )
 
     try:
-        get_operation(operation_id)
+        default_params = _get_default_operation_params(operation_id)
+
     except KeyError as ex:
-        raise KeyError(f"Operation '{operation_id}' not found") from ex
+        raise KeyError(
+            f"Operation '{operation_id}' not found"
+        ) from ex
 
     step_id = str(uuid.uuid4())
+
     new_step = WorkflowStep(
         step_id=step_id,
         operation_id=operation_id,
+        params=default_params,
     )
 
     wf.definition.steps.append(new_step)
@@ -154,7 +262,8 @@ def create_new_workflow():
     workflow_name = request.form.get("workflowName", "").strip()
     folder_name = request.form.get("folderName", "").strip()
     report_file_name = request.form.get("reportFileName", "").strip()
-    data_format = request.form.get("dataFormat", "").strip()
+    if not report_file_name:
+        report_file_name = "report"
 
     # kontrola, jestli byly vyplněné povinné pole
     if not workflow_name:
@@ -163,9 +272,17 @@ def create_new_workflow():
     if not folder_name:
         return jsonify({"message": "folderName is required."}), 400
 
-    # if not report_file_name:
-    #     return jsonify({"message": "reportFileName is required."}), 400
+    try:
+        folder_name = _validate_folder_name(folder_name)
+    except ValueError as ex:
+        return jsonify({"message": str(ex)}), 400
 
+    # if WorkflowORM.query.filter_by(folder_name=folder_name).first() is not None:
+    #     return jsonify(
+    #         {"message": f"A workflow using folder '{folder_name}' already exists."}
+    #     ), 409
+
+    data_format = request.form.get("dataFormat", "").strip()
     if not data_format:
         return jsonify({"message": "dataFormat is required."}), 400
 
@@ -188,6 +305,7 @@ def create_new_workflow():
     workflow_id = str(uuid.uuid4())
     workflow = Workflow(workflow_id=workflow_id, name=workflow_name)
     workflow.state.main_folder = folder_name
+    workflow.state.report_file_name = report_file_name or "report"
 
     # přidání inicializačního kroku pro data
     # add_init_step(workflow)
@@ -214,27 +332,13 @@ def create_new_workflow():
     # uloží cesty k souborům
     workflow.state.files = files_dict
 
-    definition = workflow.definition.to_dict()
-    state = workflow.state.to_dict()
+    definition = _json_safe_for_database(
+        workflow.definition.to_dict()
+    )
 
-    # před uložením nezůstanou žádné hodnoty NaN ani Inf
-    def _sanitize_for_json(obj):
-        if isinstance(obj, dict):
-            return {k: _sanitize_for_json(v) for k, v in obj.items()}
-        if isinstance(obj, (list, tuple)):
-            return [_sanitize_for_json(v) for v in obj]
-        try:
-            if pd.isna(obj):
-                return None
-        except Exception:
-            pass
-        if isinstance(obj, float):
-            if math.isnan(obj) or math.isinf(obj):
-                return None
-        return obj
-
-    definition = _sanitize_for_json(definition)
-    state = _sanitize_for_json(state)
+    state = _json_safe_for_database(
+        workflow.state.to_dict()
+    )
 
     workflow_row = WorkflowORM(
         id=workflow_id,
@@ -322,46 +426,74 @@ def update_description(workflow_id: str):
 # přidání kroku do workflow
 @app.route("/workflow/<workflow_id>/step", methods=["POST"])
 def add_workflow_step(workflow_id: str):
-    # vytvoří třídu workflow ze záznamu z databáze
-    workflow = load_workflow(workflow_id)
-    if not workflow:
+    definition = load_workflow_definition(workflow_id)
+
+    if not definition:
         return (
-            jsonify({"message": f"Workflow with ID:'{workflow_id}' does not exist."}),
+            jsonify(
+                {
+                    "message":
+                    f"Workflow with ID:'{workflow_id}' does not exist."
+                }
+            ),
             404,
         )
 
     payload = request.get_json(silent=True) or {}
+
     operation_id = payload.get("operationId", "").strip()
-    params = payload.get("params", {})
+    submitted_params = payload.get("params", {})
 
     if not operation_id:
-        return jsonify({"message": "operationId is required"}), 400
+        return jsonify(
+            {"message": "operationId is required"}
+        ), 400
 
-    # kontrola, že operace existuje
+    if not isinstance(submitted_params, dict):
+        return jsonify(
+            {"message": "params must be a dictionary"}
+        ), 400
+
+    # Check that the operation exists and obtain its defaults.
     try:
-        get_operation(operation_id)
+        default_params = _get_default_operation_params(
+            operation_id
+        )
     except KeyError:
-        return jsonify({"message": f"Operation '{operation_id}' not found"}), 404
+        return jsonify(
+            {
+                "message":
+                f"Operation '{operation_id}' not found"
+            }
+        ), 404
+
+    # Start with all defaults.
+    # Any values explicitly supplied by the frontend override them.
+    params = default_params.copy()
+    params.update(submitted_params)
 
     step_id = str(uuid.uuid4())
+
     new_step = WorkflowStep(
         step_id=step_id,
         operation_id=operation_id,
         params=params,
     )
 
-    workflow.definition.steps.append(new_step)
-    save_workflow(workflow_id, workflow)
+    definition.steps.append(new_step)
+
+    definition_payload = save_workflow_definition(workflow_id,definition,)
 
     return (
         jsonify(
             {
                 "message": "Step added",
+                "stepId": step_id,
+                "definition": definition_payload,
             }
         ),
         201,
     )
-
 
 # smaže workflow
 @app.route("/workflow/<workflow_id>/delete", methods=["DELETE"])
@@ -377,11 +509,17 @@ def delete_workflow(workflow_id: str):
     workflow_folder_name = workflow_row.folder_name
 
     try:
-        workflow_folder = OUTPUT_FOLDER / f"{workflow_folder_name}"
+        workflow_folder = (OUTPUT_FOLDER / f"{workflow_folder_name}").resolve()
+        workflow_folder.relative_to(OUTPUT_FOLDER.resolve())
+        upload_folder = (UPLOAD_FOLDER / f"{workflow_folder_name}").resolve()
+        upload_folder.relative_to(UPLOAD_FOLDER.resolve())
 
         # s workflow se pokusí smazat i příslušnou složku
         if workflow_folder.exists():
             shutil.rmtree(workflow_folder)
+
+        if upload_folder.exists():
+            shutil.rmtree(upload_folder)
 
         db.session.delete(workflow_row)
         db.session.commit()
@@ -423,8 +561,8 @@ def delete_workflow(workflow_id: str):
 # smazání kroku
 @app.route("/workflow/<workflow_id>/delete_step/<step_id>", methods=["DELETE"])
 def delete_step(workflow_id: str, step_id: str):
-    workflow = load_workflow(workflow_id)
-    if not workflow:
+    definition = load_workflow_definition(workflow_id)
+    if not definition:
         return (
             jsonify({"message": f"Workflow with ID:'{workflow_id}' does not exist."}),
             404,
@@ -432,7 +570,7 @@ def delete_step(workflow_id: str, step_id: str):
 
     # najde konrétní krok podle jeho ID
     step = None
-    for s in workflow.definition.steps:
+    for s in definition.steps:
         if s.step_id == step_id:
             step = s
             break
@@ -440,24 +578,26 @@ def delete_step(workflow_id: str, step_id: str):
     if not step:
         return jsonify({"message": f"Step '{step_id}' not found"}), 404
 
-    workflow.definition.steps.remove(step)
-    save_workflow(workflow_id, workflow)
+    definition.steps.remove(step)
+    definition_payload = save_workflow_definition(workflow_id, definition)
 
-    return jsonify({"message": "Step deleted"}), 200
+    return jsonify(
+        {"message": "Step deleted", "definition": definition_payload}
+    ), 200
 
 
 # nastavení parametrů metody
 @app.route("/workflow/<workflow_id>/step/<step_id>/parameters", methods=["PUT"])
 def update_step_parameters(workflow_id: str, step_id: str):
-    workflow = load_workflow(workflow_id)
-    if not workflow:
+    definition = load_workflow_definition(workflow_id)
+    if not definition:
         return (
             jsonify({"message": f"Workflow with ID:'{workflow_id}' does not exist."}),
             404,
         )
 
     step = None
-    for s in workflow.definition.steps:
+    for s in definition.steps:
         if s.step_id == step_id:
             step = s
             break
@@ -471,14 +611,25 @@ def update_step_parameters(workflow_id: str, step_id: str):
     if not isinstance(parameters, dict):
         return jsonify({"message": "Parameters must be a dictionary"}), 400
 
-    step.params = parameters
+    default_params = _get_default_operation_params(step.operation_id)
 
-    save_workflow(workflow_id, workflow)
+    updated_params = default_params.copy()
+
+    # Preserve previously stored values.
+    updated_params.update(step.params or {})
+
+    # Apply the newly submitted values.
+    updated_params.update(parameters)
+
+    step.params = updated_params
+
+    definition_payload = save_workflow_definition(workflow_id, definition)
 
     return (
         jsonify(
             {
                 "message": "Step parameters updated",
+                "definition": definition_payload,
             }
         ),
         200,
@@ -488,8 +639,8 @@ def update_step_parameters(workflow_id: str, step_id: str):
 # přeuspořádání kroků
 @app.route("/workflow/<workflow_id>/reorder", methods=["PUT"])
 def reorder_workflow_steps(workflow_id: str):
-    workflow = load_workflow(workflow_id)
-    if not workflow:
+    definition = load_workflow_definition(workflow_id)
+    if not definition:
         return (
             jsonify({"message": f"Workflow with ID:'{workflow_id}' does not exist."}),
             404,
@@ -501,21 +652,50 @@ def reorder_workflow_steps(workflow_id: str):
     if not isinstance(step_ids, list) or not step_ids:
         return jsonify({"message": "stepIds must be a non-empty array"}), 400
 
-    step_map = {step.step_id: step for step in workflow.definition.steps}
+    step_map = {step.step_id: step for step in definition.steps}
     missing_ids = [step_id for step_id in step_ids if step_id not in step_map]
     if missing_ids:
         return jsonify({"message": f"Unknown step ids: {missing_ids}"}), 400
 
     reordered_steps = [step_map[step_id] for step_id in step_ids]
-    workflow.definition.steps = reordered_steps
-    save_workflow(workflow_id, workflow)
+    definition.steps = reordered_steps
+    definition_payload = save_workflow_definition(workflow_id, definition)
 
-    return jsonify({"message": "Workflow steps reordered"}), 200
+    return jsonify(
+        {"message": "Workflow steps reordered", "definition": definition_payload}
+    ), 200
 
 
 # vrátí všechny workflow z databáze
 @app.route("/workflows", methods=["GET"])
 def get_workflows():
+    if request.args.get("summary", "").strip().lower() in {"1", "true", "yes"}:
+        rows = db.session.query(
+            WorkflowORM.id,
+            WorkflowORM.workflow_name,
+            WorkflowORM.pyspresso_version,
+            WorkflowORM.folder_name,
+            WorkflowORM.report_file_name,
+            WorkflowORM.description,
+            WorkflowORM.created_at,
+            WorkflowORM.updated_at,
+        ).all()
+        return jsonify(
+            [
+                {
+                    "id": row.id,
+                    "workflow_name": row.workflow_name,
+                    "pyspresso_version": row.pyspresso_version,
+                    "folder_name": row.folder_name,
+                    "report_file_name": row.report_file_name,
+                    "description": row.description,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                }
+                for row in rows
+            ]
+        ), 200
+
     saved_workflows = WorkflowORM.query.all()
     return jsonify([w.to_dict() for w in saved_workflows]), 200
 
@@ -583,12 +763,71 @@ def execute_step(workflow_id: str, step_id: str):
                     "stepMessage": step.messages,
                     "stepOperationId": step.operation_id,
                     "stepStatus": step.status,
+                    "reportUrl": f"/workflow/{workflow_id}/report",
                 }
             ),
             200,
         )
     except Exception as ex:
         return jsonify({"message": str(ex), "step": step.to_dict()}), 400
+
+
+# vrátí informaci o live HTML reportu workflow
+@app.route(
+    "/workflow/<workflow_id>/report",
+    methods=["GET"],
+)
+def get_workflow_report(workflow_id: str):
+
+    workflow = load_workflow(
+        workflow_id
+    )
+
+    if not workflow:
+        return (
+            jsonify(
+                {
+                    "message":
+                    f"Workflow with ID:'{workflow_id}' "
+                    "does not exist."
+                }
+            ),
+            404,
+        )
+
+    try:
+        report_path = Path(
+            get_report_path(
+                workflow.state
+            )
+        )
+
+    except Exception as exc:
+        return (
+            jsonify(
+                {
+                    "message":
+                    f"Could not resolve workflow report: {exc}"
+                }
+            ),
+            500,
+        )
+
+    if not report_path.is_file():
+        return (
+            jsonify(
+                {
+                    "message":
+                    "HTML report has not been created yet."
+                }
+            ),
+            404,
+        )
+
+    return send_from_directory(
+        report_path.parent,
+        report_path.name,
+    )
 
 
 # vrátí obrázek podle cesty
@@ -661,17 +900,37 @@ def import_methods_from_file(workflow: Workflow, import_file):
 
         if not op_id:
             continue
-        elif op_params is None:
+        try:
+            default_params = _get_default_operation_params(
+                op_id
+            )
+        except KeyError:
+            raise KeyError(
+                f"Operation {op_id} does not exist."
+            )
+
+        if op_params is None:
             op_params = {}
 
-        try:
-            get_operation(op_id)
-        except KeyError:
-            raise KeyError(f"Operation {op_id} does not exist.")
+        if not isinstance(op_params, dict):
+            raise ValueError(
+                f"Parameters for operation '{op_id}' must be a dictionary."
+            )
+
+        merged_params = default_params.copy()
+        merged_params.update(op_params)
 
         step_id = str(uuid.uuid4())
-        new_step = WorkflowStep(step_id=step_id, operation_id=op_id, params=op_params)
-        workflow.definition.steps.append(new_step)
+
+        new_step = WorkflowStep(
+            step_id=step_id,
+            operation_id=op_id,
+            params=merged_params,
+        )
+
+        workflow.definition.steps.append(
+            new_step
+        )
         created_steps.append({"step_id": step_id, "operation_id": op_id})
 
     return {"created_steps": created_steps}
