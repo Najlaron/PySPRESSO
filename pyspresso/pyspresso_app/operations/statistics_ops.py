@@ -1,16 +1,18 @@
 # pyspresso_app/operations/statistics_ops.py
 
+import json
 import os
 import warnings
 
 import numpy as np
 import pandas as pd
+from joblib import dump
 
 from scipy.stats import shapiro, ttest_ind, mannwhitneyu
-from sklearn.model_selection import LeaveOneOut, KFold, StratifiedKFold
+from sklearn.model_selection import StratifiedKFold
 from sklearn.decomposition import PCA
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.metrics import mean_squared_error, r2_score, roc_auc_score
+from sklearn.metrics import r2_score, roc_auc_score
 
 from pyspresso_app.core.registry import register_operation
 from pyspresso_app.core.operation_models import OperationTag, ParameterDef
@@ -103,10 +105,12 @@ def _get_suffixes(state: WorkflowState):
 
 
 def _add_artifact_if_available(state: WorkflowState, path, artifact_type, description):
-    if not hasattr(state, "artifacts"):
+    artifacts = getattr(state, "artifacts", None)
+
+    if artifacts is None:
         return
 
-    state.artifacts.append(
+    artifacts.append(
         {
             "type": artifact_type,
             "path": path,
@@ -193,11 +197,6 @@ def _add_candidates(state: WorkflowState, features, method, specification, score
 
     hits = [0] * len(features)
 
-    names = None
-    formulas = None
-    annotdeltamass = None
-    annotation_mw = None
-
     if state.candidates is None:
         state.candidates = pd.DataFrame(
             columns=[
@@ -213,64 +212,35 @@ def _add_candidates(state: WorkflowState, features, method, specification, score
             ]
         )
 
+    candidate_columns = {
+        "feature": features,
+        "method": method,
+        "specification": specification,
+        "score": scores,
+        "hits": hits,
+    }
+
     if variable_metadata is not None and "cpdID" in variable_metadata.columns:
-        vm_cpd = variable_metadata["cpdID"].astype(str)
+        metadata_lookup = variable_metadata.copy()
+        metadata_lookup["cpdID"] = metadata_lookup["cpdID"].astype(str)
+        metadata_lookup = metadata_lookup.drop_duplicates("cpdID").set_index("cpdID")
 
-        if "Name" in variable_metadata.columns:
-            names = variable_metadata[vm_cpd.isin(features)]["Name"].tolist()
-        elif "Compound Name" in variable_metadata.columns:
-            names = variable_metadata[vm_cpd.isin(features)]["Compound Name"].tolist()
-        if "Formula" in variable_metadata.columns:
-            formulas = variable_metadata[vm_cpd.isin(features)]["Formula"].tolist()
-        if "Annot. DeltaMass [ppm]" in variable_metadata.columns:
-            annotdeltamass = variable_metadata[vm_cpd.isin(features)][
-                "Annot. DeltaMass [ppm]"
-            ].tolist()
-        if "Annotation MW" in variable_metadata.columns:
-            annotation_mw = variable_metadata[vm_cpd.isin(features)][
-                "Annotation MW"
-            ].tolist()
+        name_column = (
+            "Name" if "Name" in metadata_lookup.columns else "Compound Name"
+        )
+        optional_columns = [
+            ("Name", name_column),
+            ("Formula", "Formula"),
+            ("Annot. DeltaMass [ppm]", "Annot. DeltaMass [ppm]"),
+            ("Annotation MW", "Annotation MW"),
+        ]
+        for output_column, source_column in optional_columns:
+            if source_column in metadata_lookup.columns:
+                candidate_columns[output_column] = metadata_lookup.reindex(features)[
+                    source_column
+                ].tolist()
 
-    if (
-        names is not None
-        and formulas is not None
-        and annotdeltamass is not None
-        and annotation_mw is not None
-    ):
-        new_candidates = pd.DataFrame(
-            {
-                "feature": features,
-                "method": method,
-                "specification": specification,
-                "score": scores,
-                "hits": hits,
-                "Name": names,
-                "Formula": formulas,
-                "Annot. DeltaMass [ppm]": annotdeltamass,
-                "Annotation MW": annotation_mw,
-            }
-        )
-    elif names is not None:
-        new_candidates = pd.DataFrame(
-            {
-                "feature": features,
-                "method": method,
-                "specification": specification,
-                "score": scores,
-                "hits": hits,
-                "Name": names,
-            }
-        )
-    else:
-        new_candidates = pd.DataFrame(
-            {
-                "feature": features,
-                "method": method,
-                "specification": specification,
-                "score": scores,
-                "hits": hits,
-            }
-        )
+    new_candidates = pd.DataFrame(candidate_columns)
 
     if state.candidates.empty:
         state.candidates = new_candidates
@@ -293,6 +263,47 @@ def _shapiro_ok(x):
         return "Not enough data for normality test"
     stat, p = shapiro(x)
     return p > 0.05
+
+
+def _adjust_pvalues(p_values, method=None):
+    """Apply a supported multiple-testing correction while preserving NaNs."""
+    normalized_method = "none" if method is None else str(method).strip().lower()
+    aliases = {
+        "": "none",
+        "none": "none",
+        "fdr_bh": "fdr_bh",
+        "bh": "fdr_bh",
+        "benjamini-hochberg": "fdr_bh",
+        "benjamini_hochberg": "fdr_bh",
+        "bonferroni": "bonferroni",
+    }
+    if normalized_method not in aliases:
+        raise ValueError(
+            "p_value_correction_method must be None, 'fdr_bh', or 'bonferroni'."
+        )
+    normalized_method = aliases[normalized_method]
+
+    values = np.asarray(p_values, dtype=float)
+    adjusted = np.full(values.shape, np.nan, dtype=float)
+    valid_indices = np.flatnonzero(np.isfinite(values))
+    if not len(valid_indices):
+        return adjusted, normalized_method
+
+    valid = values[valid_indices]
+    if normalized_method == "none":
+        adjusted[valid_indices] = valid
+    elif normalized_method == "bonferroni":
+        adjusted[valid_indices] = np.minimum(valid * len(valid), 1.0)
+    else:
+        order = np.argsort(valid)
+        ranked = valid[order]
+        corrected = ranked * len(ranked) / np.arange(1, len(ranked) + 1)
+        corrected = np.minimum.accumulate(corrected[::-1])[::-1]
+        restored = np.empty_like(corrected)
+        restored[order] = np.minimum(corrected, 1.0)
+        adjusted[valid_indices] = restored
+
+    return adjusted, normalized_method
 
 
 def _plsda_double_cv_predict(
@@ -325,6 +336,7 @@ def _plsda_double_cv_predict(
 
     pred_sum = np.zeros((n_samples, n_classes), dtype=float)
     pred_count = np.zeros((n_samples,), dtype=int)
+    repeat_predictions = []
 
     chosen_lvs = []
 
@@ -343,6 +355,7 @@ def _plsda_double_cv_predict(
             raise ValueError("select_metric must be 'auroc' or 'nmc'")
 
     for rep in range(int(outer_repeats)):
+        repeat_pred = np.full((n_samples, n_classes), np.nan, dtype=float)
         _, cts = np.unique(y_strat, return_counts=True)
         outer_min_class = int(cts.min()) if cts.size else 0
         outer_k = min(int(outer_splits), outer_min_class)
@@ -406,7 +419,9 @@ def _plsda_double_cv_predict(
                             feasible = False
                             break
 
-                        m = PLSRegression(n_components=int(lv))
+                        # Upstream PySPRESSO scaling (including Pareto scaling)
+                        # must not be replaced by sklearn's unit-variance scaling.
+                        m = PLSRegression(n_components=int(lv), scale=False)
                         m.fit(X_tr[tr_in], Y_tr[tr_in])
                         y_inner[te_in] = m.predict(X_tr[te_in])
 
@@ -436,16 +451,23 @@ def _plsda_double_cv_predict(
 
             chosen_lvs.append(int(best_lv))
 
-            m_outer = PLSRegression(n_components=int(best_lv))
+            m_outer = PLSRegression(n_components=int(best_lv), scale=False)
             m_outer.fit(X_tr, Y_tr)
             y_hat = m_outer.predict(X_te)
 
             pred_sum[te_outer] += y_hat
             pred_count[te_outer] += 1
+            repeat_pred[te_outer] = y_hat
+
+        if np.isnan(repeat_pred).any():
+            raise RuntimeError(
+                "PLS-DA outer cross-validation did not predict every sample."
+            )
+        repeat_predictions.append(repeat_pred)
 
     y_cv_outer = pred_sum / np.maximum(pred_count[:, None], 1)
 
-    return y_cv_outer, chosen_lvs
+    return y_cv_outer, chosen_lvs, np.stack(repeat_predictions, axis=0)
 
 
 def _vip(model):
@@ -459,10 +481,63 @@ def _vip(model):
     vips = np.zeros((p,))
     s = np.diag(t.T @ t @ q.T @ q).reshape(h, -1)
     total_s = np.sum(s)
+    if not np.isfinite(total_s) or total_s <= np.finfo(float).eps:
+        return vips
     for i in range(p):
-        weight = np.array([(w[i, j] / np.linalg.norm(w[:, j])) ** 2 for j in range(h)])
+        weight = np.array(
+            [
+                (w[i, j] / norm) ** 2 if norm > np.finfo(float).eps else 0.0
+                for j in range(h)
+                for norm in [np.linalg.norm(w[:, j])]
+            ]
+        )
         vips[i] = np.sqrt(p * (s.T @ weight) / total_s)
     return vips
+
+
+def _classification_metrics(Y_true, Y_pred):
+    """Return classification metrics for one complete CV prediction matrix."""
+    true_codes = Y_true.argmax(axis=1)
+    predicted_codes = Y_pred.argmax(axis=1)
+    nmc = int((true_codes != predicted_codes).sum())
+    accuracy = float((true_codes == predicted_codes).mean())
+
+    try:
+        if Y_true.shape[1] == 2:
+            auc = float(roc_auc_score(Y_true[:, 1], Y_pred[:, 1]))
+        else:
+            auc = float(
+                roc_auc_score(Y_true, Y_pred, multi_class="ovr", average="macro")
+            )
+    except ValueError:
+        auc = np.nan
+
+    return nmc, accuracy, auc
+
+
+def _q2(Y_true, predictions):
+    """Calculate repeated-CV Q2 per class and globally from held-out predictions."""
+    repeated_truth = np.broadcast_to(Y_true, predictions.shape)
+    press_per_class = np.sum((repeated_truth - predictions) ** 2, axis=(0, 1))
+    centered = Y_true - Y_true.mean(axis=0, keepdims=True)
+    tss_per_class = predictions.shape[0] * np.sum(centered**2, axis=0)
+    q2_per_class = np.divide(
+        press_per_class,
+        tss_per_class,
+        out=np.full_like(press_per_class, np.nan, dtype=float),
+        where=tss_per_class > 0,
+    )
+    q2_per_class = 1.0 - q2_per_class
+
+    flat_truth = repeated_truth.ravel()
+    flat_predictions = predictions.ravel()
+    global_tss = np.sum((flat_truth - flat_truth.mean()) ** 2)
+    q2_global = (
+        float(1.0 - np.sum((flat_truth - flat_predictions) ** 2) / global_tss)
+        if global_tss > 0
+        else np.nan
+    )
+    return q2_per_class, q2_global
 
 
 # ---------------------------------------------------------------------
@@ -541,6 +616,16 @@ def statistics_correlation_means(
         raise ValueError("No metadata loaded in state.metadata.")
     if column_name not in metadata.columns:
         raise ValueError(f"Column '{column_name}' was not found in metadata.")
+    if "Sample File" not in metadata.columns:
+        raise ValueError("Expected 'Sample File' in metadata to align samples.")
+
+    method = str(method).strip().lower()
+    if method not in {"pearson", "spearman", "kendall"}:
+        raise ValueError("method must be 'pearson', 'spearman', or 'kendall'.")
+
+    if not isinstance(min_max, (list, tuple)) or len(min_max) != 2:
+        raise ValueError("min_max must contain exactly [minimum, maximum].")
+    min_max = [float(min_max[0]), float(min_max[1])]
 
     if min_max[0] < -1:
         min_max[0] = -1
@@ -549,12 +634,30 @@ def statistics_correlation_means(
     if min_max[0] > min_max[1]:
         min_max = [-1, 1]
 
-    # Kept intentionally equivalent to the old PySPRESSO implementation.
-    grouped_means = data.iloc[:, 1:].groupby(metadata[column_name]).mean()
+    sample_names = metadata["Sample File"].astype(str).tolist()
+    missing_samples = [sample for sample in sample_names if sample not in data.columns]
+    if missing_samples:
+        raise ValueError(
+            "Metadata sample(s) missing from data: "
+            + ", ".join(missing_samples[:10])
+        )
 
-    # Kept intentionally equivalent to the old PySPRESSO implementation.
-    # The old code accepted 'method' but did not pass it into corr().
-    correlation_matrix = grouped_means.T.corr()
+    try:
+        sample_by_feature = data.set_index("cpdID")[sample_names].T.apply(
+            pd.to_numeric, errors="raise"
+        )
+    except KeyError as exc:
+        raise ValueError("Expected a 'cpdID' column in data.") from exc
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Correlation input contains non-numeric abundance values.") from exc
+
+    sample_by_feature.index = sample_names
+    groups = metadata.set_index(metadata["Sample File"].astype(str))[column_name]
+    grouped_means = sample_by_feature.groupby(groups, dropna=True).mean()
+    if len(grouped_means) < 2:
+        raise ValueError("At least two non-empty groups are required for correlation.")
+
+    correlation_matrix = grouped_means.T.corr(method=method)
 
     fig, ax = plt.subplots(figsize=(10, 8))
     sns.heatmap(correlation_matrix, cmap=cmap, vmin=min_max[0], vmax=min_max[1], ax=ax)
@@ -608,7 +711,7 @@ def statistics_correlation_means(
     return {
         "message": "Group correlation matrix heatmap was created.",
         "column_name": column_name,
-        "method_parameter": method,
+        "method": method,
         "saved_paths": saved_paths,
         "table_path": csv_path,
     }
@@ -777,12 +880,51 @@ def statistics_PCA(state: WorkflowState, n_components_for_candidates=2):
             default=99.5,
             label="VIP candidate percentile",
         ),
+        ParameterDef(
+            name="outer_splits",
+            type="int",
+            required=False,
+            default=5,
+            label="Outer CV folds",
+            help="Requested outer stratified folds; automatically capped by the smallest class.",
+        ),
+        ParameterDef(
+            name="outer_repeats",
+            type="int",
+            required=False,
+            default=10,
+            label="Outer CV repeats",
+        ),
+        ParameterDef(
+            name="inner_splits",
+            type="int",
+            required=False,
+            default=5,
+            label="Inner CV folds",
+            help="Requested folds used to select the number of latent variables.",
+        ),
+        ParameterDef(
+            name="selection_metric",
+            type="str",
+            required=False,
+            default="auroc",
+            label="LV selection metric",
+            help="Use 'auroc' (maximize) or 'nmc' (minimize misclassifications).",
+        ),
+        ParameterDef(
+            name="random_state",
+            type="int",
+            required=False,
+            default=42,
+            label="Random seed",
+        ),
     ],
     requires=["data", "metadata"],
     produces=[
         "plsda_model",
         "plsda_stats",
         "plsda_metadata",
+        "plsda_scores",
         "plsda_vip_scores",
         "candidates",
     ],
@@ -792,7 +934,17 @@ def statistics_PLSDA(
     response_column_names,
     ignored_groups=None,
     candidate_percentile=99.5,
+    outer_splits=5,
+    outer_repeats=10,
+    inner_splits=5,
+    selection_metric="auroc",
+    random_state=42,
 ):
+    if state.data is None:
+        raise ValueError("No data loaded in state.data.")
+    if state.metadata is None:
+        raise ValueError("No metadata loaded in state.metadata.")
+
     data = state.data.copy()
     metadata = state.metadata.copy()
     report = state.report
@@ -812,110 +964,230 @@ def statistics_PLSDA(
         warnings.warn(msg, UserWarning)
         warning_messages.append(msg)
 
-    n_comp = 2
-    n_folds = 10
-    rng = 42
-
-    if ignored_groups is None:
-        ignored_groups = []
-    if (
-        isinstance(ignored_groups, list)
-        and len(ignored_groups) > 0
-        and isinstance(ignored_groups[0], str)
-    ):
-        ignored_groups = [ignored_groups]
-
-    for col_name, grp_name in ignored_groups:
-        metadata = metadata[metadata[col_name] != grp_name]
-    metadata = metadata.reset_index(drop=True)
-
     if "Sample File" not in metadata.columns:
         raise ValueError("Expected 'Sample File' in metadata to align samples.")
 
-    columns_to_keep = ["cpdID"] + metadata["Sample File"].tolist()
-    data = data.loc[:, data.columns.isin(columns_to_keep)]
+    if "cpdID" not in data.columns:
+        raise ValueError("Expected a 'cpdID' feature identifier column in data.")
 
-    fixed_cols = ["cpdID"]
-    sample_cols = [c for c in metadata["Sample File"].tolist() if c in data.columns]
-    data = pd.concat([data[fixed_cols], data[sample_cols]], axis=1)
-
-    if isinstance(response_column_names, list):
-        tmp_col = str(response_column_names)
-        metadata[tmp_col] = metadata[response_column_names].apply(
-            lambda x: "_".join(x.map(str)), axis=1
-        )
-        response_col = tmp_col
+    if isinstance(response_column_names, str):
+        response_columns = [response_column_names.strip()]
+    elif isinstance(response_column_names, (list, tuple)):
+        response_columns = [str(column).strip() for column in response_column_names]
     else:
-        response_col = str(response_column_names)
+        raise ValueError("response_column_names must be a column name or a list of names.")
+
+    if not response_columns or any(not column for column in response_columns):
+        raise ValueError("At least one non-empty response column name is required.")
+    if len(set(response_columns)) != len(response_columns):
+        raise ValueError("response_column_names contains duplicate column names.")
+
+    missing_response_columns = [
+        column for column in response_columns if column not in metadata.columns
+    ]
+    if missing_response_columns:
+        raise ValueError(
+            "Response column(s) not found in metadata: "
+            + ", ".join(missing_response_columns)
+        )
+
+    if ignored_groups is None:
+        ignored_groups = []
+    elif (
+        isinstance(ignored_groups, (list, tuple))
+        and len(ignored_groups) == 2
+        and not isinstance(ignored_groups[0], (list, tuple))
+    ):
+        ignored_groups = [ignored_groups]
+
+    if not isinstance(ignored_groups, (list, tuple)):
+        raise ValueError("ignored_groups must be a list of [column, value] pairs.")
+
+    for pair in ignored_groups:
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise ValueError(
+                "Each ignored_groups entry must contain exactly [column, value]."
+            )
+        col_name, grp_name = pair
+        if col_name not in metadata.columns:
+            raise ValueError(
+                f"Ignored-group column '{col_name}' was not found in metadata."
+            )
+        metadata = metadata.loc[metadata[col_name].astype(str) != str(grp_name)]
+
+    metadata = metadata.reset_index(drop=True)
+    if metadata.empty:
+        raise ValueError("No samples remain after applying ignored_groups.")
+
+    missing_sample_mask = metadata["Sample File"].isna() | metadata[
+        "Sample File"
+    ].astype(str).str.strip().eq("")
+    if missing_sample_mask.any():
+        raise ValueError("Metadata contains an empty 'Sample File' value.")
+
+    metadata["Sample File"] = metadata["Sample File"].astype(str)
+    duplicated_samples = metadata.loc[
+        metadata["Sample File"].duplicated(keep=False), "Sample File"
+    ].unique()
+    if len(duplicated_samples):
+        raise ValueError(
+            "Metadata contains duplicate 'Sample File' values: "
+            + ", ".join(map(str, duplicated_samples[:10]))
+        )
+
+    data.columns = [str(column) for column in data.columns]
+    sample_names = metadata["Sample File"].tolist()
+    missing_samples = [sample for sample in sample_names if sample not in data.columns]
+    if missing_samples:
+        preview = ", ".join(missing_samples[:10])
+        extra = " ..." if len(missing_samples) > 10 else ""
+        raise ValueError(
+            f"{len(missing_samples)} metadata sample(s) are missing from data: "
+            f"{preview}{extra}"
+        )
+
+    if data["cpdID"].isna().any() or data["cpdID"].astype(str).str.strip().eq("").any():
+        raise ValueError("Data contains an empty cpdID feature identifier.")
+    if data["cpdID"].astype(str).duplicated().any():
+        duplicates = data.loc[
+            data["cpdID"].astype(str).duplicated(keep=False), "cpdID"
+        ].astype(str).unique()
+        raise ValueError(
+            "Data contains duplicate cpdID values: " + ", ".join(duplicates[:10])
+        )
+
+    missing_response = metadata[response_columns].isna()
+    blank_response = metadata[response_columns].astype(str).apply(
+        lambda column: column.str.strip().eq("")
+    )
+    if (missing_response | blank_response).any(axis=None):
+        bad_rows = metadata.loc[
+            (missing_response | blank_response).any(axis=1), "Sample File"
+        ].tolist()
+        raise ValueError(
+            "PLS-DA response values are missing for sample(s): "
+            + ", ".join(map(str, bad_rows[:10]))
+        )
+
+    response_frame = metadata[response_columns].astype(str)
+    response_keys = response_frame.apply(
+        lambda row: json.dumps(row.tolist(), ensure_ascii=False, separators=(",", ":")),
+        axis=1,
+    )
+    y_strat, unique_response_keys = pd.factorize(response_keys, sort=True)
+    class_names = []
+    for key in unique_response_keys:
+        values = json.loads(key)
+        if len(response_columns) == 1:
+            class_names.append(str(values[0]))
+        else:
+            class_names.append(
+                " | ".join(
+                    f"{column}={value}"
+                    for column, value in zip(response_columns, values)
+                )
+            )
+
+    if len(class_names) < 2:
+        raise ValueError(
+            "PLS-DA requires at least two distinct response classes after filtering."
+        )
+
+    Y_full = np.eye(len(class_names), dtype=float)[y_strat]
+    response_display = pd.Series(
+        [class_names[code] for code in y_strat], index=metadata.index
+    )
+    metadata["PLSDA response"] = response_display
+
+    try:
+        numeric_data = data.loc[:, sample_names].apply(pd.to_numeric, errors="raise")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "PLS-DA data contains a non-numeric abundance value. "
+            "Check the selected sample columns."
+        ) from exc
+
+    X_full = numeric_data.T.to_numpy(dtype=float)
+    if not np.isfinite(X_full).all():
+        invalid_count = int((~np.isfinite(X_full)).sum())
+        raise ValueError(
+            f"PLS-DA data contains {invalid_count} missing or infinite value(s). "
+            "Remove affected features or run an imputation step before PLS-DA."
+        )
+    if X_full.shape[1] == 0:
+        raise ValueError("PLS-DA requires at least one feature.")
+
+    try:
+        candidate_percentile = float(candidate_percentile)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("candidate_percentile must be numeric.") from exc
+    if not np.isfinite(candidate_percentile) or not 0 <= candidate_percentile <= 100:
+        raise ValueError("candidate_percentile must be between 0 and 100.")
+
+    outer_splits = int(outer_splits)
+    outer_repeats = int(outer_repeats)
+    inner_splits = int(inner_splits)
+    random_state = int(random_state)
+    selection_metric = str(selection_metric).strip().lower()
+    if outer_splits < 2 or inner_splits < 2:
+        raise ValueError("outer_splits and inner_splits must each be at least 2.")
+    if outer_repeats < 1:
+        raise ValueError("outer_repeats must be at least 1.")
+    if selection_metric not in {"auroc", "nmc"}:
+        raise ValueError("selection_metric must be 'auroc' or 'nmc'.")
 
     state.plsda_metadata = metadata.copy()
-    y_labels = pd.Categorical(metadata[response_col])
-    y_strat = y_labels.codes
-    y_onehot = pd.get_dummies(y_labels)
-    class_names = list(y_onehot.columns)
-
-    X_full = data.iloc[:, 1:].T.values
-    Y_full = y_onehot.values
-
     class_counts = pd.Series(y_strat).value_counts().to_dict()
-    min_class = min(class_counts.values()) if len(class_counts) else 0
+    min_class = min(class_counts.values()) if class_counts else 0
     if min_class < 2:
         raise ValueError(
             f"PLS-DA requires at least 2 samples in each class. Found a class with only {min_class} samples."
         )
-    if min_class < n_folds:
-        new_folds = max(2, min_class)
-        if new_folds != n_folds:
-            n_folds = new_folds
 
-    outer_splits = 5
-    outer_repeats = 10
-    inner_splits = 5
-    select_metric = "auroc"
+    actual_outer_splits = min(outer_splits, min_class)
 
-    if min_class < outer_splits:
-        outer_splits = max(2, min_class)
-
-    y_cv, chosen_lvs = _plsda_double_cv_predict(
+    y_cv, chosen_lvs, repeat_predictions = _plsda_double_cv_predict(
         X_full,
         Y_full,
         y_strat,
-        outer_splits=outer_splits,
+        outer_splits=actual_outer_splits,
         outer_repeats=outer_repeats,
         inner_splits=inner_splits,
         ncomp_grid=None,
-        select_metric=select_metric,
-        rng=rng,
+        select_metric=selection_metric,
+        rng=random_state,
     )
 
-    lv_counts = pd.Series(chosen_lvs).value_counts()
-    n_comp = int(lv_counts.index[0])
+    lv_counts = pd.Series(chosen_lvs).value_counts().sort_index()
+    modal_lvs = lv_counts.loc[lv_counts == lv_counts.max()].index
+    n_comp = int(min(modal_lvs))
 
     lv_counts_dict = {int(k): int(v) for k, v in lv_counts.to_dict().items()}
-    lv_mode = n_comp
 
-    y_true_int = Y_full.argmax(axis=1)
-    y_pred_int = y_cv.argmax(axis=1)
-    nmc = int((y_true_int != y_pred_int).sum())
-    cv_accuracy = float((y_true_int == y_pred_int).mean())
+    repeat_metrics = [
+        _classification_metrics(Y_full, prediction)
+        for prediction in repeat_predictions
+    ]
+    repeat_nmc = [metric[0] for metric in repeat_metrics]
+    repeat_accuracy = [metric[1] for metric in repeat_metrics]
+    repeat_auc = [metric[2] for metric in repeat_metrics]
+    nmc = float(np.mean(repeat_nmc))
+    cv_accuracy = float(np.mean(repeat_accuracy))
+    auc = float(np.nanmean(repeat_auc))
+    consensus_nmc, consensus_accuracy, consensus_auc = _classification_metrics(
+        Y_full, y_cv
+    )
 
-    try:
-        if Y_full.shape[1] == 2:
-            auc = float(roc_auc_score(Y_full[:, 1], y_cv[:, 1]))
-        else:
-            auc = float(roc_auc_score(Y_full, y_cv, multi_class="ovr", average="macro"))
-    except ValueError as exc:
-        warnings.warn(f"AUROC could not be computed: {exc}", UserWarning)
-        auc = np.nan
-
-    model = PLSRegression(n_components=n_comp)
+    model = PLSRegression(n_components=n_comp, scale=False)
     model.fit(X_full, Y_full)
+    calibrated_predictions = model.predict(X_full)
 
     vips = _vip(model)
-    state.plsda_vip_scores = pd.Series(vips, index=data.iloc[:, 0])
+    feature_ids = data["cpdID"].astype(str).tolist()
+    state.plsda_vip_scores = pd.Series(vips, index=feature_ids, name="VIP_score")
 
     candidate_mask = vips > np.percentile(vips, candidate_percentile)
-    candidate_vips = data.iloc[:, 0][candidate_mask]
+    candidate_vips = data.loc[candidate_mask, "cpdID"].astype(str)
     candidate_vips_scores = vips[candidate_mask]
     state.plsda_vip_candidates = candidate_vips.to_list()
     state.plsda_vip_candidates_len = len(candidate_vips)
@@ -928,61 +1200,96 @@ def statistics_PLSDA(
         scores=candidate_vips_scores,
     )
 
-    r2_per_class = {}
-    q2_per_class = {}
-    for i, cname in enumerate(class_names):
-        yt = Y_full[:, i]
-        yp = y_cv[:, i]
-        r2_i = r2_score(yt, yp)
-        mse_i = mean_squared_error(yt, yp)
-        var_i = np.var(yt)
-        q2_i = 1.0 - (mse_i / var_i) if var_i > 0 else np.nan
-        r2_per_class[cname] = float(r2_i)
-        q2_per_class[cname] = float(q2_i)
+    # R2 describes calibration fit of the final model.
+    # Q2 describes predictive performance from held-out outer-CV predictions.
 
-    q2_macro = float(np.nanmean(list(q2_per_class.values())))
+    q2_values, q2_global_flat = _q2(Y_full, repeat_predictions)
+    r2_per_class = {
+        str(cname): float(r2_score(Y_full[:, i], calibrated_predictions[:, i]))
+        for i, cname in enumerate(class_names)
+    }
+    q2_per_class = {
+        str(cname): float(q2_values[i])
+        for i, cname in enumerate(class_names)
+    }
+    q2_macro = float(np.nanmean(q2_values))
     r2_macro = float(np.nanmean(list(r2_per_class.values())))
-
-    r2_global_flat = float(r2_score(Y_full.ravel(), y_cv.ravel()))
-    mse_global = float(mean_squared_error(Y_full.ravel(), y_cv.ravel()))
-    var_global = float(np.var(Y_full.ravel()))
-    q2_global_flat = (
-        float(1.0 - (mse_global / var_global)) if var_global > 0 else np.nan
+    r2_global_flat = float(
+        r2_score(Y_full.ravel(), calibrated_predictions.ravel())
     )
 
+    score_columns = [f"LV{i}" for i in range(1, model.x_scores_.shape[1] + 1)]
+    scores_df = pd.DataFrame(model.x_scores_, columns=score_columns)
+    scores_df.insert(0, "Sample File", sample_names)
+    scores_df["PLSDA response"] = response_display.to_list()
+    for response_column in response_columns:
+        scores_df[response_column] = metadata[response_column].to_list()
+
+    predicted_codes = y_cv.argmax(axis=1)
+    cv_predictions_df = pd.DataFrame(
+        {
+            "Sample File": sample_names,
+            "True class": response_display.to_list(),
+            "Predicted class": [class_names[code] for code in predicted_codes],
+        }
+    )
+    for class_index, class_name in enumerate(class_names):
+        cv_predictions_df[f"CV score: {class_name}"] = y_cv[:, class_index]
+
     state.plsda_stats = {
-        "validation_method": "Double CV",
-        "n_folds": n_folds,
+        "validation_method": "Repeated double cross-validation",
         "classes": [str(c) for c in class_names],
-        "outer_splits": outer_splits,
+        "class_counts": {
+            str(class_names[int(code)]): int(count)
+            for code, count in sorted(class_counts.items())
+        },
+        "outer_splits_requested": outer_splits,
+        "outer_splits": actual_outer_splits,
         "outer_repeats": outer_repeats,
         "inner_splits": inner_splits,
-        "select_metric": select_metric,
+        "select_metric": selection_metric,
+        "random_state": random_state,
+        "sklearn_scale": False,
         "n_components_final": n_comp,
         "LV_selection_counts": lv_counts_dict,
-        "LV_selection_mode": lv_mode,
+        "LV_selection_mode": n_comp,
         "NMC": nmc,
+        "NMC_std": float(np.std(repeat_nmc, ddof=1)) if outer_repeats > 1 else 0.0,
+        "NMC_per_repeat": repeat_nmc,
         "AUROC": auc,
+        "AUROC_std": float(np.nanstd(repeat_auc, ddof=1)) if outer_repeats > 1 else 0.0,
+        "AUROC_per_repeat": [float(value) for value in repeat_auc],
         "CV_accuracy": cv_accuracy,
+        "CV_accuracy_std": (
+            float(np.std(repeat_accuracy, ddof=1)) if outer_repeats > 1 else 0.0
+        ),
+        "CV_accuracy_per_repeat": repeat_accuracy,
+        "consensus_NMC": consensus_nmc,
+        "consensus_AUROC": consensus_auc,
+        "consensus_CV_accuracy": consensus_accuracy,
         "R2_macro": r2_macro,
         "Q2_macro": q2_macro,
-        "R2_per_class": {str(k): float(v) for k, v in r2_per_class.items()},
-        "Q2_per_class": {str(k): float(v) for k, v in q2_per_class.items()},
+        "R2_per_class": r2_per_class,
+        "Q2_per_class": q2_per_class,
         "R2_global_flat": r2_global_flat,
         "Q2_global_flat": q2_global_flat,
     }
 
     print("PLS-DA Double CV results:")
-    print(f"  NMC: {nmc}")
-    print(f"  AUROC: {auc}")
-    print(f"  CV accuracy: {cv_accuracy:.4f}")
-    print(f"  R2_macro: {r2_macro:.4f}")
-    print(f"  Q2_macro: {q2_macro:.4f}")
+    print(f"  NMC (repeat mean): {nmc:.2f}")
+    print(f"  AUROC (repeat mean): {auc:.4f}")
+    print(f"  CV accuracy (repeat mean): {cv_accuracy:.4f}")
+    print(f"  R2_macro (final-model fit): {r2_macro:.4f}")
+    print(f"  Q2_macro (outer-CV prediction): {q2_macro:.4f}")
     print("")
 
     state.plsda_response_column = response_column_names
     state.plsda_model = model
     state.plsda = model
+    state.plsda_scores = scores_df
+    state.plsda_class_names = [str(name) for name in class_names]
+    state.plsda_feature_ids = feature_ids
+    state.plsda_score_columns = score_columns
 
     main_folder, statistics_folder = _ensure_statistics_folder(state)
     output_file_prefix = _get_output_file_prefix(state)
@@ -998,15 +1305,49 @@ def statistics_PLSDA(
             statistics_folder, output_file_prefix + "_candidates_after_PLSDA.csv"
         )
     )
+    model_path = _unique_path(
+        os.path.join(statistics_folder, output_file_prefix + "_PLSDA_model.joblib")
+    )
+    scores_path = _unique_path(
+        os.path.join(statistics_folder, output_file_prefix + "_PLSDA_scores.csv")
+    )
+    cv_predictions_path = _unique_path(
+        os.path.join(
+            statistics_folder,
+            output_file_prefix + "_PLSDA_CV_predictions.csv",
+        )
+    )
 
-    state.plsda_vip_scores.reset_index().rename(
-        columns={"index": "cpdID", 0: "VIP_score"}
-    ).to_csv(vip_path, index=False, sep=";")
+    state.plsda_vip_scores.rename_axis("cpdID").reset_index().to_csv(
+        vip_path, index=False, sep=";"
+    )
     pd.DataFrame([state.plsda_stats]).to_csv(stats_path, index=False, sep=";")
     state.candidates.to_csv(candidates_path, index=False, sep=";")
+    scores_df.to_csv(scores_path, index=False, sep=";")
+    cv_predictions_df.to_csv(cv_predictions_path, index=False, sep=";")
+    dump(
+        {
+            "model": model,
+            "class_names": state.plsda_class_names,
+            "feature_ids": feature_ids,
+            "response_columns": response_columns,
+            "sklearn_scale": False,
+        },
+        model_path,
+    )
+
+    state.plsda_model_path = model_path
+    state.plsda_scores_path = scores_path
+    state.plsda_vip_scores_path = vip_path
+    state.plsda_cv_predictions_path = cv_predictions_path
 
     _add_artifact_if_available(state, vip_path, "table", "PLS-DA VIP scores")
     _add_artifact_if_available(state, stats_path, "table", "PLS-DA statistics")
+    _add_artifact_if_available(state, scores_path, "table", "PLS-DA scores")
+    _add_artifact_if_available(
+        state, cv_predictions_path, "table", "PLS-DA cross-validated predictions"
+    )
+    _add_artifact_if_available(state, model_path, "model", "Fitted PLS-DA model")
     _add_artifact_if_available(
         state, candidates_path, "table", "Candidate features after PLS-DA"
     )
@@ -1018,9 +1359,10 @@ def statistics_PLSDA(
         )
         text1 = (
             "Double cross-validation was used for model validation "
-            f"(outer splits: {outer_splits}, outer repeats: {outer_repeats}, "
-            f"inner splits: {inner_splits}). LV selection metric: {select_metric}. "
-            f"Final number of components: {n_comp}. AUROC: {auc:.4f}, NMC: {nmc}, "
+            f"(outer splits: {actual_outer_splits}, outer repeats: {outer_repeats}, "
+            f"inner splits: {inner_splits}). LV selection metric: {selection_metric}. "
+            f"Final number of components: {n_comp}. Mean AUROC: {auc:.4f}, "
+            f"mean NMC: {nmc:.2f}, "
             f"CV accuracy: {cv_accuracy:.4f}, R2_macro: {r2_macro:.4f}, "
             f"Q2_macro: {q2_macro:.4f}."
         )
@@ -1033,6 +1375,260 @@ def statistics_PLSDA(
         "vip_path": vip_path,
         "stats_path": stats_path,
         "candidates_path": candidates_path,
+        "model_path": model_path,
+        "scores_path": scores_path,
+        "cv_predictions_path": cv_predictions_path,
+    }
+
+
+@register_operation(
+    id="visualizer_PLSDA",
+    label="Visualize PLS-DA Scores",
+    description="Create a latent-variable score plot from the fitted PLS-DA model.",
+    citation="",
+    category_tags=[OperationTag.STATISTICS, OperationTag.VISUALIZATION],
+    parameter_schema=[
+        ParameterDef(
+            name="component_x",
+            type="int",
+            required=False,
+            default=1,
+            label="X latent variable",
+        ),
+        ParameterDef(
+            name="component_y",
+            type="int",
+            required=False,
+            default=2,
+            label="Y latent variable",
+        ),
+        ParameterDef(
+            name="color_by",
+            type="str",
+            required=False,
+            default="PLSDA response",
+            label="Color by",
+            help="PLSDA response or another metadata column.",
+        ),
+        ParameterDef(
+            name="annotate_samples",
+            type="bool",
+            required=False,
+            default=False,
+            label="Annotate samples",
+        ),
+        ParameterDef(
+            name="plt_name_suffix",
+            type="str",
+            required=False,
+            default="",
+            label="Plot name suffix",
+        ),
+    ],
+    requires=["plsda_scores"],
+    produces=["figures"],
+)
+def visualizer_PLSDA(
+    state: WorkflowState,
+    component_x=1,
+    component_y=2,
+    color_by="PLSDA response",
+    annotate_samples=False,
+    plt_name_suffix="",
+):
+    plt, _ = _load_plotting()
+    scores = state.plsda_scores.copy()
+    component_x = int(component_x)
+    component_y = int(component_y)
+    if component_x < 1 or component_y < 1 or component_x == component_y:
+        raise ValueError("Choose two different positive latent-variable numbers.")
+
+    x_column = f"LV{component_x}"
+    y_column = f"LV{component_y}"
+    missing_components = [
+        column for column in (x_column, y_column) if column not in scores.columns
+    ]
+    if missing_components:
+        available = ", ".join(state.plsda_score_columns or [])
+        raise ValueError(
+            f"PLS-DA component(s) not available: {', '.join(missing_components)}. "
+            f"Available components: {available}."
+        )
+
+    color_by = str(color_by or "").strip()
+    if color_by and color_by not in scores.columns:
+        metadata = getattr(state, "plsda_metadata", None)
+
+        if metadata is None:
+            metadata = state.metadata
+
+        if metadata is None or color_by not in metadata.columns:
+            raise ValueError(
+                f"Color column '{color_by}' was not found in PLS-DA metadata."
+            )
+
+        if "Sample File" not in metadata.columns:
+            raise ValueError(
+                "Expected 'Sample File' in metadata to align PLS-DA samples."
+            )
+
+        color_values = metadata[["Sample File", color_by]].copy()
+        color_values["Sample File"] = color_values["Sample File"].astype(str)
+
+        if color_values["Sample File"].duplicated().any():
+            raise ValueError(
+                "Metadata contains duplicate 'Sample File' values; "
+                "PLS-DA scores cannot be aligned unambiguously."
+            )
+
+        scores = scores.merge(
+            color_values,
+            on="Sample File",
+            how="left",
+            validate="one_to_one",
+        )
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    if color_by:
+        groups = scores[color_by].astype(object).where(
+            scores[color_by].notna(), "Missing"
+        )
+        for group in sorted(groups.unique(), key=_natural_sort_key):
+            subset = scores.loc[groups == group]
+            ax.scatter(
+                subset[x_column],
+                subset[y_column],
+                label=str(group),
+                alpha=0.8,
+            )
+        ax.legend(title=color_by, bbox_to_anchor=(1.05, 1), loc="upper left")
+    else:
+        ax.scatter(scores[x_column], scores[y_column], alpha=0.8)
+
+    if annotate_samples:
+        for _, row in scores.iterrows():
+            ax.annotate(
+                str(row["Sample File"]),
+                (row[x_column], row[y_column]),
+                fontsize=7,
+                alpha=0.7,
+            )
+
+    ax.axhline(0, color="grey", linewidth=0.7, alpha=0.5)
+    ax.axvline(0, color="grey", linewidth=0.7, alpha=0.5)
+    ax.set_xlabel(x_column)
+    ax.set_ylabel(y_column)
+    ax.set_title("PLS-DA score plot")
+    fig.tight_layout()
+
+    _, statistics_folder = _ensure_statistics_folder(state)
+    output_file_prefix = _get_output_file_prefix(state)
+    suffixes = _get_suffixes(state)
+    base_path = os.path.join(
+        statistics_folder,
+        f"{output_file_prefix}_PLSDA_scores_{x_column}_vs_{y_column}_{plt_name_suffix}",
+    )
+    saved_paths = []
+    for suffix in suffixes:
+        out_path = _unique_path(base_path + suffix)
+        fig.savefig(out_path, dpi=300, bbox_inches="tight")
+        saved_paths.append(out_path)
+    plt.close(fig)
+
+    if saved_paths:
+        _add_artifact_if_available(
+            state, saved_paths[0], "figure", "PLS-DA score plot"
+        )
+    if state.report is not None and saved_paths:
+        state.report.add_together(
+            [("text", "PLS-DA score plot was created."), ("image", saved_paths[0]), "line"]
+        )
+
+    return {
+        "message": "PLS-DA score plot was created.",
+        "saved_paths": saved_paths,
+        "component_x": x_column,
+        "component_y": y_column,
+        "color_by": color_by,
+    }
+
+
+@register_operation(
+    id="visualizer_PLSDA_vips",
+    label="Visualize PLS-DA VIP Scores",
+    description="Plot the highest variable-importance-in-projection (VIP) scores.",
+    citation="",
+    category_tags=[OperationTag.STATISTICS, OperationTag.VISUALIZATION],
+    parameter_schema=[
+        ParameterDef(
+            name="top_n",
+            type="int",
+            required=False,
+            default=30,
+            label="Number of features",
+        ),
+        ParameterDef(
+            name="plt_name_suffix",
+            type="str",
+            required=False,
+            default="",
+            label="Plot name suffix",
+        ),
+    ],
+    requires=["plsda_vip_scores"],
+    produces=["figures"],
+)
+def visualizer_PLSDA_vips(state: WorkflowState, top_n=30, plt_name_suffix=""):
+    plt, _ = _load_plotting()
+    top_n = int(top_n)
+    if top_n < 1:
+        raise ValueError("top_n must be at least 1.")
+
+    vip_scores = pd.to_numeric(
+        state.plsda_vip_scores, errors="coerce"
+    ).dropna().sort_values(ascending=False).head(top_n)
+    if vip_scores.empty:
+        raise ValueError("No finite PLS-DA VIP scores are available to plot.")
+
+    plot_values = vip_scores.sort_values()
+    fig_height = max(5, 0.28 * len(plot_values))
+    fig, ax = plt.subplots(figsize=(9, fig_height))
+    colors = ["#8b4513" if value >= 1 else "#c9a27e" for value in plot_values]
+    ax.barh(plot_values.index.astype(str), plot_values.values, color=colors)
+    ax.axvline(1.0, color="black", linestyle="--", linewidth=1, label="VIP = 1")
+    ax.set_xlabel("VIP score")
+    ax.set_ylabel("cpdID")
+    ax.set_title(f"Top {len(plot_values)} PLS-DA VIP scores")
+    ax.legend(frameon=False)
+    fig.tight_layout()
+
+    _, statistics_folder = _ensure_statistics_folder(state)
+    output_file_prefix = _get_output_file_prefix(state)
+    suffixes = _get_suffixes(state)
+    base_path = os.path.join(
+        statistics_folder,
+        f"{output_file_prefix}_PLSDA_VIP_top_{top_n}_{plt_name_suffix}",
+    )
+    saved_paths = []
+    for suffix in suffixes:
+        out_path = _unique_path(base_path + suffix)
+        fig.savefig(out_path, dpi=300, bbox_inches="tight")
+        saved_paths.append(out_path)
+    plt.close(fig)
+
+    if saved_paths:
+        _add_artifact_if_available(
+            state, saved_paths[0], "figure", "PLS-DA VIP score plot"
+        )
+    if state.report is not None and saved_paths:
+        state.report.add_together(
+            [("text", "PLS-DA VIP score plot was created."), ("image", saved_paths[0]), "line"]
+        )
+
+    return {
+        "message": "PLS-DA VIP score plot was created.",
+        "saved_paths": saved_paths,
+        "feature_count": int(len(plot_values)),
     }
 
 
@@ -1071,7 +1667,7 @@ def statistics_PLSDA(
             required=False,
             default=None,
             label="P-value correction method",
-            help="Accepted for compatibility with old PySPRESSO. Old statistics_ttest did not apply the correction.",
+            help="Use 'fdr_bh' (Benjamini-Hochberg), 'bonferroni', or leave empty for none.",
         ),
         ParameterDef(
             name="table_name_suffix",
@@ -1092,6 +1688,11 @@ def statistics_ttest(
     p_value_correction_method=None,
     table_name_suffix="ttest_results",
 ):
+    if state.data is None:
+        raise ValueError("No data loaded in state.data.")
+    if state.metadata is None:
+        raise ValueError("No metadata loaded in state.metadata.")
+
     data = state.data.copy()
     metadata = state.metadata.copy()
     report = state.report
@@ -1110,28 +1711,91 @@ def statistics_ttest(
 
     if was_scaled:
         raise ValueError(
-            "Running t-test cannot on scaled data; Please use unscaled data. Scaling affects variance and invalidates t-test assumptions."
+            "A t-test cannot be run on scaled data. Use unscaled data because "
+            "scaling changes feature variances and invalidates the test."
         )
 
     if groups_column_name not in metadata.columns:
         raise ValueError(f"Column '{groups_column_name}' was not found in metadata.")
+    if "Sample File" not in metadata.columns:
+        raise ValueError("Expected 'Sample File' in metadata to align samples.")
+    if "cpdID" not in data.columns:
+        raise ValueError("Expected a 'cpdID' feature identifier column in data.")
 
-    group1_mask = metadata[metadata[groups_column_name] == group1].index.tolist()
-    group2_mask = metadata[metadata[groups_column_name] == group2].index.tolist()
+    normalized_groups = metadata[groups_column_name].astype(str)
+    group1 = str(group1)
+    group2 = str(group2)
+    available_groups = normalized_groups.loc[
+        metadata[groups_column_name].notna()
+    ].unique().tolist()
+    if group1 not in available_groups:
+        raise ValueError(f"Group '{group1}' was not found in '{groups_column_name}'.")
+    if group2 not in available_groups:
+        raise ValueError(f"Group '{group2}' was not found in '{groups_column_name}'.")
+    if group1 == group2:
+        raise ValueError("group1 and group2 must be different groups.")
 
-    group1_data = data.iloc[:, 1:].iloc[:, group1_mask]
-    group2_data = data.iloc[:, 1:].iloc[:, group2_mask]
+    group1_samples = metadata.loc[
+        normalized_groups == group1, "Sample File"
+    ].astype(str).tolist()
+    group2_samples = metadata.loc[
+        normalized_groups == group2, "Sample File"
+    ].astype(str).tolist()
+    if len(group1_samples) < 2 or len(group2_samples) < 2:
+        raise ValueError("Each compared group must contain at least two samples.")
+
+    data.columns = [str(column) for column in data.columns]
+    missing_samples = [
+        sample
+        for sample in group1_samples + group2_samples
+        if sample not in data.columns
+    ]
+    if missing_samples:
+        raise ValueError(
+            "Metadata sample(s) missing from data: "
+            + ", ".join(dict.fromkeys(missing_samples))
+        )
+
+    try:
+        group1_data = data[group1_samples].apply(pd.to_numeric, errors="raise")
+        group2_data = data[group2_samples].apply(pd.to_numeric, errors="raise")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Statistical test input contains non-numeric values.") from exc
 
     g1_mean = group1_data.mean(axis=1)
     g2_mean = group2_data.mean(axis=1)
-    if (g1_mean == 0).any() or (g2_mean == 0).any():
-        group1_data += 1e-9
-        group2_data += 1e-9
-
     if was_log_transformed:
-        fold_change = log_base ** (g2_mean - g1_mean)
+        if log_base is None or float(log_base) <= 0 or float(log_base) == 1:
+            raise ValueError(
+                "A valid log_base is required for log-transformed data."
+            )
+
+        # Difference between means in log space corresponds to fold change
+        # in the original scale.
+        fold_change = float(log_base) ** (g2_mean - g1_mean)
+
+    elif was_centered:
+        # Ratios cannot be reconstructed from centered non-log data.
+        fold_change = pd.Series(
+            np.nan,
+            index=data.index,
+            dtype=float,
+        )
+
+        msg = (
+            "Fold change was not calculated because the data are centered "
+            "but not log-transformed. The original group means are required "
+            "for a meaningful ratio."
+        )
+        warnings.warn(msg, UserWarning)
+        warning_messages.append(msg)
+
     else:
-        fold_change = g2_mean / g1_mean
+        # Do not invent a pseudocount. A zero denominator means that the
+        # fold-change ratio is undefined.
+        fold_change = g2_mean.div(
+            g1_mean.replace(0, np.nan)
+        )
 
     normality_group1 = []
     normality_group2 = []
@@ -1161,9 +1825,13 @@ def statistics_ttest(
                 tests_used.append("Mann-Whitney U")
             except ValueError:
                 p = np.nan
+                tests_used.append("not calculated")
 
         p_values.append(p)
     p_values = pd.Series(p_values)
+    adjusted_p_values, correction_method = _adjust_pvalues(
+        p_values, p_value_correction_method
+    )
 
     both_normal = []
     for g1, g2 in zip(normality_group1, normality_group2):
@@ -1180,14 +1848,18 @@ def statistics_ttest(
             "cpdID": data["cpdID"],
             "Fold Change": fold_change,
             "p-value": p_values,
+            "adjusted p-value": adjusted_p_values,
             "both groups normal": both_normal,
             "used test": tests_used,
             "group": [f"{group1} vs {group2}"] * len(data),
         }
     )
 
+    sort_column = (
+        "adjusted p-value" if correction_method != "none" else "p-value"
+    )
     p_values_table = p_values_table.sort_values(
-        by="p-value", ascending=True
+        by=sort_column, ascending=True
     ).reset_index(drop=True)
 
     state.fold_change = p_values_table
@@ -1224,14 +1896,14 @@ def statistics_ttest(
         "warnings": warning_messages,
         "group1": group1,
         "group2": group2,
-        "group1_n": len(group1_mask),
-        "group2_n": len(group2_mask),
-        "p_value_correction_method_parameter": p_value_correction_method,
+        "group1_n": len(group1_samples),
+        "group2_n": len(group2_samples),
+        "p_value_correction_method": correction_method,
         "table_path": csv_name,
     }
 
 
-register_operation(
+@register_operation(
     id="visualize_PCA_scores",
     label="Visualize PCA Scores",
     description="Create a PCA score plot from previously calculated PCA results.",
@@ -1337,12 +2009,32 @@ def visualize_PCA_scores(
             raise ValueError("Expected 'Sample File' column in metadata.")
 
         metadata = metadata[["Sample File", color_by]].copy()
-        pca_df = pca_df.merge(metadata, on="Sample File", how="left")
+        metadata["Sample File"] = metadata["Sample File"].astype(str)
 
-        groups = pca_df[color_by].astype(str).fillna("Missing").unique()
+        if metadata["Sample File"].duplicated().any():
+            duplicates = metadata.loc[
+                metadata["Sample File"].duplicated(keep=False),
+                "Sample File",
+            ].unique()
+
+            raise ValueError(
+                "Metadata contains duplicate 'Sample File' values: "
+                + ", ".join(map(str, duplicates[:10]))
+            )
+
+        pca_df = pca_df.merge(
+            metadata,
+            on="Sample File",
+            how="left",
+            validate="one_to_one",
+        )
+
+        group_values = pca_df[color_by].astype(object).where(pca_df[color_by].notna(),"Missing",)
+
+        groups = group_values.unique()
 
         for group in groups:
-            subset = pca_df[pca_df[color_by].astype(str).fillna("Missing") == group]
+            subset = pca_df.loc[group_values == group]
 
             ax.scatter(
                 subset[pcx],
@@ -1551,12 +2243,6 @@ def visualizer_PCA_grouped(
     Port of old Workflow.visualizer_PCA_grouped() into GUI operation style.
     """
 
-    print("TEST PRINT", flush=True)
-    print("TEST PRINT", flush=True)
-    print("TEST PRINT", flush=True)
-    print("TEST PRINT", flush=True)
-    print("TEST PRINT", flush=True)
-
     plt, sns = _load_plotting()
 
     import matplotlib as mpl
@@ -1750,15 +2436,6 @@ def visualizer_PCA_grouped(
 
             lambda_, v = np.linalg.eig(covmat)
             lambda_ = np.sqrt(lambda_)
-
-            print(type(v))
-            print(v.dtype if hasattr(v, "dtype") else "no dtype")
-
-            print(v)
-            print(type(v[0, 0]))
-            print(type(v[1, 0]))
-            print(v[0, 0])
-            print(v[1, 0])
 
             ell = Ellipse(
                 xy=(np.mean(df_samples["PC1"]), np.mean(df_samples["PC2"])),

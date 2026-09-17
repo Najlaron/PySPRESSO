@@ -11,3 +11,6 @@ combat>=0.3.3
 PyPDF2>=3.0.0
 reportlab>=4.0.0
 scikit-learn==1.7.0
+joblib>=1.2.0
+openpyxl>=3.1.0
+xlrd>=2.0.1
