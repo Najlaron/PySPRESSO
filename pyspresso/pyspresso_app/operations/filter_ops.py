@@ -1,3 +1,4 @@
+import ast
 import os
 import re
 
@@ -9,6 +10,12 @@ from pyspresso_app.core.registry import register_operation
 from pyspresso_app.core.operation_models import OperationTag, ParameterDef
 from pyspresso_app.core.workflow_models import WorkflowState
 
+from pyspresso_app.core.html_reporter import (
+    add_text,
+    add_table,
+    add_figure,
+)
+
 # ------------------------------------------------------------
 # Helper functions
 # ------------------------------------------------------------
@@ -18,8 +25,7 @@ def _write_versioned_txt(folder, base_name, lines, digits=3):
     """
     Helper function to write a versioned text file.
 
-    This is used by filter operations to save lists of removed features,
-    especially when the list is too long for the report.
+    This is used by filter operations to save lists of removed features.
     """
     os.makedirs(folder, exist_ok=True)
 
@@ -123,6 +129,54 @@ def _unique_path(path: str):
         i += 1
 
 
+def _parse_blank_setting(setting):
+    """
+    Parse blank-reference setting.
+
+    This keeps compatibility with the module behaviour:
+        - 'median', 'min', 'mean', 'first', 'last'
+        - [x], where x is one integer index among blank samples
+
+    In the App, a list value may arrive either as an actual list or as a
+    string typed in the parameter field, e.g. '[0]' or '[-1]'.
+    """
+    if isinstance(setting, str):
+        stripped = setting.strip()
+
+        if stripped.startswith("[") and stripped.endswith("]"):
+            try:
+                setting = ast.literal_eval(stripped)
+            except Exception as exc:
+                raise ValueError(
+                    "If setting is a list, use exactly one integer index, "
+                    "for example [0], [1], or [-1]."
+                ) from exc
+        else:
+            return stripped.lower()
+
+    if isinstance(setting, tuple):
+        setting = list(setting)
+
+    if isinstance(setting, list):
+        if len(setting) != 1:
+            raise ValueError(
+                "If setting is a list, use exactly one index, "
+                "for example [0], [1], or [-1]."
+            )
+
+        blank_index = setting[0]
+
+        if isinstance(blank_index, bool) or not isinstance(blank_index, (int, np.integer)):
+            raise ValueError(
+                "Blank index inside setting list must be an integer, "
+                "for example [0], [1], or [-1]."
+            )
+
+        return [int(blank_index)]
+
+    return setting
+
+
 # ------------------------------------------------------------
 # Filter operations
 # ------------------------------------------------------------
@@ -181,7 +235,6 @@ def filter_missing_values(
         2. Across all samples
     """
     data = state.data
-    report = state.report
     QC_samples = state.QC_samples
 
     if data is None:
@@ -272,7 +325,6 @@ def filter_missing_values(
     data = data.loc[~removed_mask_all, :].reset_index(drop=True)
 
     # REPORTING ---------------------------------------------------------
-
     dropped_features_folder = _get_dropped_features_folder(state)
 
     txt_path = _write_versioned_txt(
@@ -308,48 +360,27 @@ def filter_missing_values(
         artifact_type="dropped_features",
         description="Features removed by missing-values sample threshold.",
     )
-
-    text0 = (
-        "Features with missing values over the threshold ("
-        + str(qc_threshold * 100)
-        + "%) within QC samples were removed. Number of features removed: "
-        + str(removed_count)
+    # html reporting
+    add_text(
+        state,
+        f"Number of features removed on QC threshold: {removed_count}",
+        title="Dropped features QC threshold",
+    )
+    add_text(
+        state,
+        f"The list of removed features:\n{removed_ids}",
+    )
+    add_text(
+        state,
+        f"Number of features removed on all sample threshold: {removed_count_all}",
+        title="Dropped features all sample threshold",
     )
 
-    if removed_count > 0 and removed_count < 25:
-        text1 = " ;being: " + str(removed_ids)
-    elif removed_count >= 25:
-        text1 = "The list of removed features is long and saved in: " + txt_path
-    else:
-        text1 = ""
-
-    text2 = (
-        "Features with missing values over the threshold ("
-        + str(sample_threshold * 100)
-        + "%) across all samples were removed. Number of features removed: "
-        + str(removed_count_all)
+    add_text(
+        state,
+        f"The list of removed features:\n{removed_ids_all}",
     )
-
-    if removed_count_all > 0 and removed_count_all < 25:
-        text3 = " ;being: " + str(removed_ids_all)
-    elif removed_count_all >= 25:
-        text3 = "The list of removed features is long and saved in: " + txt_path_all
-    else:
-        text3 = ""
-
-    if report is not None:
-        report.add_together(
-            [
-                ("text", text0),
-                ("text", text1),
-                ("text", text2),
-                ("text", text3),
-                "line",
-            ]
-        )
-        report.add_pagebreak()
-
-    # Update state ------------------------------------------------------
+  # Update state ------------------------------------------------------
 
     state.data = data
     state.data.reset_index(drop=True, inplace=True)
@@ -394,14 +425,16 @@ def filter_missing_values(
         ),
         ParameterDef(
             name="setting",
-            type="str",
+            type="list_or_str",
             required=False,
             default="first",
             label="Blank setting",
             help=(
-                "How to calculate blank intensity. "
-                "Choose from: median, min, mean, first, last."
+                "How to calculate blank intensity. Choose from: median, min, mean, "
+                "first, last, or use [x] where x is the blank index among blank "
+                "samples, e.g. [0], [1], [-1]."
             ),
+            example="first or [0]",
         ),
     ],
     requires=["data", "variable_metadata", "QC_samples", "blank_samples"],
@@ -410,7 +443,7 @@ def filter_missing_values(
 def filter_blank_intensity_ratio(
     state: WorkflowState,
     ratio: float = 20,
-    setting: str = "first",
+    setting="first",
 ):
     """
     Filter out features with intensity sample/blank < ratio.
@@ -422,10 +455,10 @@ def filter_blank_intensity_ratio(
         - mean
         - first
         - last
+        - [x], where x is the blank index among blank samples
     """
     data = state.data
     variable_metadata = state.variable_metadata
-    report = state.report
     QC_samples = state.QC_samples
     blank_samples = state.blank_samples
 
@@ -481,22 +514,52 @@ def filter_blank_intensity_ratio(
         )
 
     # Different approaches for blank intensity.
+    setting = _parse_blank_setting(setting)
+
     if setting == "median":
         blank_intensities = data[blank_cols].median(axis=1)
+        blank_used_text = "median of all blank samples"
     elif setting == "min":
         blank_intensities = data[blank_cols].min(axis=1)
+        blank_used_text = "minimum of all blank samples"
     elif setting == "mean":
         blank_intensities = data[blank_cols].mean(axis=1)
+        blank_used_text = "mean of all blank samples"
     elif setting == "first":
-        blank_intensities = data[blank_cols].iloc[:, 0]
+        selected_blank = blank_cols[0]
+        blank_intensities = data[selected_blank]
+        blank_used_text = str(selected_blank)
     elif setting == "last":
-        blank_intensities = data[blank_cols].iloc[:, -1]
+        selected_blank = blank_cols[-1]
+        blank_intensities = data[selected_blank]
+        blank_used_text = str(selected_blank)
+    elif isinstance(setting, list):
+        blank_index = setting[0]
+
+        if blank_index >= len(blank_cols) or blank_index < -len(blank_cols):
+            raise ValueError(
+                "Blank index "
+                + str(blank_index)
+                + " is out of range. Number of blank samples found: "
+                + str(len(blank_cols))
+                + "."
+            )
+
+        selected_blank = blank_cols[blank_index]
+        blank_intensities = data[selected_blank]
+        blank_used_text = str(selected_blank)
     else:
         raise ValueError(
-            "Setting not recognized. Choose from: "
-            "'median', 'min', 'mean', 'first' or 'last'. "
-            "(Chooses blank to use as reference value.)"
+            "Setting not recognized. Choose from: 'median', 'min', 'mean', "
+            "'first', 'last', or use [x] where x is the blank index, "
+            "e.g. [0], [1], [-1]."
         )
+
+    print(
+        "Blank intensity ratio filter used blank reference: "
+        + blank_used_text,
+        flush=True,
+    )
 
     intensity_sample_blank = data[qc_cols].median(axis=1) / blank_intensities
 
@@ -544,33 +607,40 @@ def filter_blank_intensity_ratio(
     )
 
     # REPORTING ---------------------------------------------------------
-
-    text0 = (
-        "Features with intensity sample/blank < "
-        + str(blank_threshold)
-        + " were removed. Number of features removed: "
-        + str(removed_count)
+    add_text(
+        state,
+        f"Number of features removed: {removed_count}",
+        title="Dropped features",
     )
 
-    if removed_count > 0 and removed_count < 25:
-        text1 = " ;being: " + str(removed_ids)
-    elif removed_count >= 25:
-        text1 = "The list of removed features is long and saved in: " + txt_path
-    else:
-        text1 = ""
-
-    if report is not None:
-        elements = [("text", text0), ("text", text1)]
-        elements.append("line")
-        report.add_together(elements)
+    add_text(
+        state,
+        f"The list of removed features:\n{removed_ids}",
+    )
 
     return {
         "features_after": int(state.data.shape[0]),
         "removed_count": removed_count,
         "ratio": ratio,
         "setting": setting,
+        "blank_reference": blank_used_text,
         "removed_features_file": txt_path,
         "skipped": False,
+        "report": {
+            "title": "Blank intensity ratio filter",
+            "summary": [
+                f"Sample/blank ratio threshold: {ratio}",
+                f"Blank reference used: {blank_used_text}",
+                f"Features removed: {removed_count}",
+            ],
+            "artifacts": [
+                {
+                    "type": "file",
+                    "label": "Removed features by blank intensity ratio",
+                    "path": txt_path,
+                }
+            ],
+        },
     }
 
 
@@ -637,7 +707,6 @@ def filter_relative_standard_deviation(
     min_qc_n: int = 3,
 ):
     data = state.data
-    report = state.report
     QC_samples = state.QC_samples
 
     if data is None:
@@ -846,29 +915,16 @@ def filter_relative_standard_deviation(
     print("Number of features removed: " + str(removed_count))
 
     # REPORTING ---------------------------------------------------------
-
-    text0 = (
-        "Features with RSD% over the threshold ("
-        + str(rsd_threshold)
-        + ") were removed. Number of features removed: "
-        + str(removed_count)
+    add_text(
+        state,
+        f"Number of features removed on RSD% threshold: {removed_count}",
+        title="Dropped features RSD% threshold",
     )
 
-    if removed_count > 0 and removed_count < 25:
-        text1 = " ;being: " + str(removed_ids)
-    elif removed_count >= 25:
-        text1 = "The list of removed features is long and saved in: " + txt_path
-    else:
-        text1 = ""
-
-    if report is not None:
-        report.add_together(
-            [
-                ("text", text0),
-                ("text", text1),
-                "line",
-            ]
-        )
+    add_text(
+        state,
+        f"The list of removed features:\n{removed_ids}",
+    )
 
     return {
         "features_after": int(state.data.shape[0]),
@@ -922,7 +978,10 @@ def filter_relative_standard_deviation(
             required=False,
             default=False,
             label="Concentrations",
-            help="False uses sample order. Otherwise provide concentrations as a list.",
+            help=(
+                "False uses sample order. True uses dilution concentrations saved during "
+                "initialization. You may also provide a list directly."
+            ),
         ),
         ParameterDef(
             name="to_plot",
@@ -946,7 +1005,6 @@ def filter_dilution_series_linearity(
 ):
     data = state.data
     variable_metadata = state.variable_metadata
-    report = state.report
     dilution_series_samples = state.dilution_series_samples
 
     if data is None:
@@ -1203,30 +1261,17 @@ def filter_dilution_series_linearity(
     print(f"Number of features removed: {removed_count}")
 
     # REPORTING ---------------------------------------------------------
-
-    text0 = (
-        "Features with dilution series linearity (R2) under the threshold ("
-        + str(threshold)
-        + ") were removed. Number of features removed: "
-        + str(removed_count)
+    add_text(
+        state,
+        f"Number of features removed on dilution series linearity R2 threshold: {removed_count}",
+        title="Dropped features dilQC linearity",
     )
 
-    if removed_count > 0 and removed_count < 25:
-        text1 = " ;being: " + str(removed_ids)
-    elif removed_count >= 25:
-        text1 = "The list of removed features is long and saved in: " + txt_path
-    else:
-        text1 = ""
-
-    if report is not None:
-        report.add_together(
-            [
-                ("text", text0),
-                ("text", text1),
-                "line",
-            ]
-        )
-
+    add_text(
+        state,
+        f"The list of removed features:\n{removed_ids}",
+    )
+    
     return {
         "features_after": int(state.data.shape[0]),
         "removed_count": removed_count,
@@ -1235,7 +1280,6 @@ def filter_dilution_series_linearity(
         "removed_features_file": txt_path,
         "images": images,
     }
-
 
 @register_operation(
     id="filter_number_of_corrected_batches",
@@ -1267,7 +1311,6 @@ def filter_number_of_corrected_batches(
 ):
     data = state.data
     variable_metadata = state.variable_metadata
-    report = state.report
     batch_info = state.batch_info
 
     if data is None:
@@ -1311,7 +1354,7 @@ def filter_number_of_corrected_batches(
 
     keep_mask = data["cpdID"].map(corrected_batches_dict).fillna(0) >= threshold_used
 
-    removed = data.loc[~keep_mask, "cpdID"].tolist()
+    removed_ids = data.loc[~keep_mask, "cpdID"].tolist()
 
     data = data.loc[keep_mask].copy()
     data.reset_index(drop=True, inplace=True)
@@ -1324,7 +1367,7 @@ def filter_number_of_corrected_batches(
         folder=dropped_features_folder,
         base_name="removed_features_number_of_corrected_batches_"
         + str(int(threshold_used)),
-        lines=removed,
+        lines=removed_ids,
     )
 
     _add_artifact_if_available(
@@ -1345,35 +1388,17 @@ def filter_number_of_corrected_batches(
     print(f"Number of features removed: {removed_count}")
 
     # REPORTING ---------------------------------------------------------
-
-    text0 = (
-        "Features that were corrected in less than the threshold number of batches ("
-        + str(threshold_used)
-        + (
-            " (" + str(int(threshold_used / nm_of_batches * 100)) + "%)"
-            if percentage
-            else ""
-        )
-        + ") were removed. Number of features removed: "
-        + str(removed_count)
+    add_text(
+        state,
+        f"Number of features that were corrected in less than the threshold number of batches: {removed_count}",
+        title="Dropped features not corrected in enough batches",
     )
 
-    if removed_count > 0 and removed_count < 25:
-        text1 = " ;being: " + str(removed)
-    elif removed_count >= 25:
-        text1 = "The list of removed features is long and saved in: " + txt_path
-    else:
-        text1 = ""
-
-    if report is not None:
-        report.add_together(
-            [
-                ("text", text0),
-                ("text", text1),
-                "line",
-            ]
-        )
-
+    add_text(
+        state,
+        f"The list of removed features:\n{removed_ids}",
+    )
+    
     return {
         "features_after": int(state.data.shape[0]),
         "removed_count": removed_count,
@@ -1417,7 +1442,6 @@ def drop_samples(
     cpdID_as_zero: bool = True,
 ):
     data = state.data
-    report = state.report
 
     if data is None:
         raise ValueError("No data loaded in state.data.")
@@ -1470,28 +1494,12 @@ def drop_samples(
 
     removed_count = len(column_indexes_to_drop)
 
-    print(
-        "Specified samples: "
-        + str(column_indexes_to_drop)
-        + " were removed from the data."
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        f"Number of removed samples: {removed_count}\nSpecified samples were removed from the data: {dropped_column_names}",
+        title="Removing specified samples",
     )
-
-    text0 = "Specified samples were removed from the data: " + str(dropped_column_names)
-
-    if report is not None:
-        report.add_together(
-            [
-                ("text", text0),
-                "line",
-            ]
-        )
-
-    return {
-        "dropped_sample_indexes": column_indexes_to_drop,
-        "dropped_sample_names": dropped_column_names,
-        "removed_count": removed_count,
-    }
-
 
 @register_operation(
     id="drop_features",
@@ -1527,7 +1535,6 @@ def drop_features(
     note: str = "",
 ):
     data = state.data
-    report = state.report
 
     if data is None:
         raise ValueError("No data loaded in state.data.")
@@ -1554,34 +1561,26 @@ def drop_features(
     state.variable_metadata = variable_metadata
 
     note = str(note)
+    removed_count = len(row_indexes_to_drop)
 
-    print(
-        "Specified features with indexes: "
-        + str(row_indexes_to_drop)
-        + " were removed from the data."
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        f"Number of removed features: {removed_count}\nSpecified features were removed from the data: {removed_ids}",
+        title="Removing specified features",
     )
-    print("Note: " + note)
 
-    text0 = (
-        "Specified features with indexes: "
-        + str(row_indexes_to_drop)
-        + " were removed from the data."
-    )
-    text1 = note
-
-    if report is not None:
-        report.add_together(
-            [
-                ("text", text0),
-                ("text", text1),
-                "line",
-            ]
+    if note != "":
+        add_text(
+                state,
+                note,
+                title="Note"
         )
 
     return {
         "dropped_feature_indexes": row_indexes_to_drop,
         "dropped_feature_ids": removed_ids,
-        "removed_count": len(row_indexes_to_drop),
+        "removed_count": removed_count,
         "note": note,
     }
 
@@ -1620,7 +1619,6 @@ def drop_features_by_cpdID(
     note: str = "",
 ):
     data = state.data
-    report = state.report
 
     if data is None:
         raise ValueError("No data loaded in state.data.")
@@ -1643,28 +1641,24 @@ def drop_features_by_cpdID(
     state.variable_metadata = variable_metadata
 
     note = str(note)
-
-    print("Specified features: " + str(cpdIDs_to_drop) + " were removed from the data.")
-    print("Note: " + note)
-
-    text0 = (
-        "Specified features: " + str(cpdIDs_to_drop) + " were removed from the data."
+    removed_count = len(removed_ids)
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        f"Number of removed features: {removed_count}\nSpecified features were removed from the data: {removed_ids}",
+        title="Removing specified cpdID features",
     )
-    text1 = note
-
-    if report is not None:
-        report.add_together(
-            [
-                ("text", text0),
-                ("text", text1),
-                "line",
-            ]
+    if note != "":
+        add_text(
+                state,
+                note,
+                title="Note"
         )
 
     return {
         "requested_cpdIDs": cpdIDs_to_drop,
         "dropped_feature_ids": removed_ids,
-        "removed_count": len(removed_ids),
+        "removed_count": removed_count,
         "note": note,
     }
 
@@ -1767,16 +1761,13 @@ def drop_blank_samples(state: WorkflowState):
 
     state.blank_samples = False
 
-    print("Blank samples were removed from the data.")
-
-    if state.report is not None:
-        state.report.add_together(
-            [
-                ("text", "Blank samples were removed from the data."),
-                "line",
-            ]
-        )
-
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        "Blank samples were removed from the data.",
+        title="Dropping blank samples"
+    )
+    
     result["dropped_group"] = "blank_samples"
     return result
 
@@ -1836,16 +1827,13 @@ def drop_dilution_series_samples(state: WorkflowState):
 
     state.dilution_series_samples = False
 
-    print("Dilution series samples were removed from the data.")
-
-    if state.report is not None:
-        state.report.add_together(
-            [
-                ("text", "Dilution series samples were removed from the data."),
-                "line",
-            ]
-        )
-
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        "Dilution series samples were removed from the data.",
+        title="Dropping dilution series samples"
+    )
+     
     result["dropped_group"] = "dilution_series_samples"
     return result
 
@@ -1905,15 +1893,12 @@ def drop_standard_samples(state: WorkflowState):
 
     state.standard_samples = False
 
-    print("Standards were removed from the data.")
-
-    if state.report is not None:
-        state.report.add_together(
-            [
-                ("text", "Standards were removed from the data."),
-                "line",
-            ]
-        )
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        "Standards were removed from the data.",
+        title="Dropping standards"
+    )
 
     result["dropped_group"] = "standard_samples"
     return result
@@ -2094,7 +2079,6 @@ def filter_sparse_spike_features(
         state.variable_metadata.copy() if state.variable_metadata is not None else None
     )
     metadata = state.metadata.copy() if state.metadata is not None else None
-    report = state.report
 
     if data is None:
         raise ValueError("No data loaded in state.data.")
@@ -2389,40 +2373,17 @@ def filter_sparse_spike_features(
             description="Features removed by sparse/spike diagnostic filter.",
         )
 
-        if report is not None:
-            report.add_together(
-                [
-                    (
-                        "text",
-                        (
-                            "Features flagged as sparse/spiky were removed. "
-                            f"Number removed: {removed_count}."
-                        ),
-                    ),
-                    ("text", f"Removal note: {note}"),
-                    ("text", f"Removed feature list saved to: {txt_path}"),
-                    "line",
-                ]
-            )
-
-    else:
-        state.data = data
-        state.variable_metadata = variable_metadata
-
-        if report is not None:
-            report.add_together(
-                [
-                    (
-                        "text",
-                        (
-                            "Sparse/spike diagnostics were calculated. "
-                            f"Number flagged: {removed_count}. "
-                            "No features were removed."
-                        ),
-                    ),
-                    ("text", f"Diagnostic note: {note}"),
-                    "line",
-                ]
+        # REPORTING ---------------------------------------------------------
+        add_text(
+            state,
+            f"Sparse/spiky features were removed from the data. \nNumber removed: {removed_count}.\nRemoved features ids:{removed_ids}",
+            title="Removing features flagged as sparse/spiky",
+        )
+        if note != "":
+            add_text(
+                state,
+                note,
+                title="Diagnostic Note"
             )
 
     return {
