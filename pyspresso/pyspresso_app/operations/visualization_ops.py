@@ -11,6 +11,11 @@ from scipy.stats import gaussian_kde
 from pyspresso_app.core.registry import register_operation
 from pyspresso_app.core.operation_models import OperationTag, ParameterDef
 from pyspresso_app.core.workflow_models import WorkflowState
+from pyspresso_app.core.html_reporter import (
+    add_text,
+    add_table,
+    add_figure,
+)
 
 # ------------------------------------------------------------
 # Helper functions
@@ -330,8 +335,6 @@ def visualize_boxplot(
     if data.shape[1] <= 1:
         raise ValueError("Data must contain cpdID plus at least one sample column.")
 
-    report = state.report
-
     main_folder, figures_folder = _ensure_main_folders(state)
     suffixes = _get_suffixes(state)
 
@@ -496,20 +499,23 @@ def visualize_boxplot(
         fig.savefig(out_path, bbox_inches="tight", dpi=300)
         saved_paths.append(out_path)
 
-    plt.close(fig)
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        (
+            f"Boxplot of sample intensity distributions was created for "
+            f"{len(kept_names)} samples. "
+            f"QC, blank, dilution-series, standard, and regular samples "
+            f"are distinguished by color."
+        ),
+        title="Sample intensity boxplot",
+    )
 
-    if report is not None:
-        text0 = "The initial visualization of the data was created."
-        text1 = "The boxplot of all samples was created and saved to: " + plt_name
-
-        report.add_together(
-            [
-                ("text", text0),
-                ("text", text1),
-                ("image", plt_name + ".png"),
-                "line",
-            ]
-        )
+    add_figure(
+        state,
+        fig,
+        title="Boxplot of all samples",
+    )
 
     # Figure base path should reflect the actual saved filename (without extension)
     if len(saved_paths) > 0:
@@ -518,6 +524,7 @@ def visualize_boxplot(
     else:
         figure_base = plt_name
 
+    plt.close(fig)
     return {
         "figure_base_path": figure_base,
         "saved_paths": saved_paths,
@@ -590,8 +597,6 @@ def visualize_samples_by_batch(
     if data.shape[1] <= 1:
         raise ValueError("Data must contain cpdID plus at least one sample column.")
 
-    report = state.report
-
     main_folder, figures_folder = _ensure_main_folders(state)
     suffixes = _get_suffixes(state)
 
@@ -628,27 +633,24 @@ def visualize_samples_by_batch(
         [col in standard_set for col in sample_cols], dtype=bool
     )
 
+    show = _parse_show_value(show)
     feature_indices = _resolve_feature_indices(show, data)
 
     saved_paths = []
 
+    # REPORTING ---- part 1 ---------------------------------------------
     if len(feature_indices) == 0:
-        if report is not None:
-            report.add_together(
-                [
-                    (
-                        "text",
-                        "Samples-by-batch visualization was requested, but no features were selected.",
-                    ),
-                    "line",
-                ]
-            )
-
+        add_text(
+            state,
+            "Samples-by-batch visualization was requested, but no valid features were selected.",
+            title="Samples by batch",
+        )
         return {
             "saved_paths": [],
             "features_plotted": [],
             "n_features_plotted": 0,
         }
+    # ------------------------------------------------------------------
 
     for feature_idx in feature_indices:
         row_values = pd.to_numeric(
@@ -906,18 +908,24 @@ def visualize_samples_by_batch(
             fig.savefig(out_path, dpi=300, bbox_inches="tight")
             saved_paths.append(out_path)
 
-        plt.close(fig)
-
-    if report is not None:
-        text = "View of samples for selected compounds with highlighted QC samples was created."
-        report.add_text(text)
-
-        for image in saved_paths:
-            if image.endswith(".png"):
-                report.add_image(image)
-
-        report.add_pagebreak()
-
+    # REPORTING ---- part 2 ---------------------------------------------
+    add_text(
+        state,
+        (
+            f"Samples-by-batch visualization was created for "
+            f"{len(feature_indices)} feature(s). "
+            f"Samples were displayed in acquisition order and colored according "
+            f"to batch and sample type. QC samples were highlighted and connected."
+        ),
+        title="Samples by batch",
+    )
+    add_figure(
+        state,
+        fig,
+        title=f"Samples by batch — {cpd_id}",
+    )
+        
+    plt.close(fig)
     return {
         "saved_paths": saved_paths,
         "features_plotted": feature_indices,
@@ -925,43 +933,49 @@ def visualize_samples_by_batch(
         "cmap": cmap,
     }
 
-
 @register_operation(
     id="visualizer_violin_plots",
     label="Violin Plots",
-    description="Create violin plots for features grouped by one or more metadata columns.",
+    description=(
+        "Create violin plots for selected features grouped by one or more "
+        "metadata columns and save them into a searchable HTML gallery."
+    ),
     citation="",
     category_tags=[OperationTag.VISUALIZATION],
     parameter_schema=[
         ParameterDef(
             name="column_names",
-            type="str",
+            type="str_or_list",
             required=True,
             default="",
             label="Grouping column(s)",
             help=(
-                "Metadata column used for grouping. This must be provided by the user, "
-                "for example: Diagnosis, Type, Type 2, or ['Diagnosis', 'Sex']."
+                "Metadata column used for grouping, for example Diagnosis, "
+                "Type, or ['Diagnosis', 'Sex']."
             ),
         ),
         ParameterDef(
             name="indexes",
-            type="str",
+            type="str_or_list",
             required=False,
             default="all",
             label="Feature indexes",
             help=(
-                "Feature indexes to plot. Use 'all', one index such as 5, one cpdID, "
-                "or a list such as [1, 2, 3]."
+                "Features to plot. Use 'all', 'default', one feature index, "
+                "one cpdID, or a list of indexes/cpdIDs."
             ),
         ),
         ParameterDef(
-            name="save_into_pdf",
-            type="bool",
+            name="gallery_name",
+            type="str",
             required=False,
-            default=True,
-            label="Save into PDF",
-            help="If True, save all selected violin plots into one multipage PDF file.",
+            default="",
+            label="Gallery name",
+            help=(
+                "Name of the output gallery. If empty, a name is generated "
+                "from the grouping column(s). If the name already exists, "
+                "a numeric suffix is added automatically."
+            ),
         ),
         ParameterDef(
             name="cmap",
@@ -969,15 +983,7 @@ def visualize_samples_by_batch(
             required=False,
             default="nipy_spectral",
             label="Colormap",
-            help="Matplotlib colormap name.",
-        ),
-        ParameterDef(
-            name="plt_name_suffix",
-            type="str",
-            required=False,
-            default="",
-            label="Plot name suffix",
-            help="Suffix added to output file names.",
+            help="Matplotlib colormap used for groups.",
         ),
         ParameterDef(
             name="bw",
@@ -985,7 +991,7 @@ def visualize_samples_by_batch(
             required=False,
             default=0.2,
             label="Bandwidth",
-            help="Bandwidth parameter for violin plot kernel density estimation.",
+            help="Bandwidth used for violin kernel-density estimation.",
         ),
         ParameterDef(
             name="jitter",
@@ -993,7 +999,7 @@ def visualize_samples_by_batch(
             required=False,
             default=True,
             label="Jitter points",
-            help="If True, individual points are jittered on the x-axis.",
+            help="If True, individual observations are horizontally jittered.",
         ),
         ParameterDef(
             name="label_rotation",
@@ -1003,14 +1009,6 @@ def visualize_samples_by_batch(
             label="Label rotation",
             help="Rotation of x-axis group labels.",
         ),
-        ParameterDef(
-            name="show_all",
-            type="bool",
-            required=False,
-            default=False,
-            label="Show all",
-            help="Compatibility parameter from the original module. In the App backend plots are saved, not displayed interactively.",
-        ),
     ],
     requires=["data", "metadata"],
     produces=["figures"],
@@ -1019,96 +1017,70 @@ def visualizer_violin_plots(
     state: WorkflowState,
     column_names="",
     indexes="all",
-    save_into_pdf=True,
+    gallery_name="",
     cmap="nipy_spectral",
-    plt_name_suffix="",
     bw=0.2,
     jitter=True,
     label_rotation=0,
-    show_all=False,
 ):
     """
-    Port of the original PySPRESSO visualizer_violin_plots() method.
+    Create violin plots for selected features.
 
-    Differences required by the App architecture:
-    - no live PDF Report object is used;
-    - plots are saved headlessly;
-    - if save_into_pdf=True, selected plots are written directly into one
-      multipage PDF using PdfPages instead of creating temporary PDFs and
-      merging them through the old report object;
-    - metadata is aligned to the current data sample columns using
-      metadata['Sample File'] when available, so extra metadata rows or old
-      restored columns do not break plotting.
+    Every successfully generated feature plot is stored as an individual PNG
+    inside a dedicated gallery directory. A searchable HTML gallery and a CSV
+    index are generated so plots can later be located by cpdID or feature index.
+
+    Only one example figure is embedded in the main PySPRESSO workflow report
+    to prevent report.html from becoming excessively large.
     """
-
-    import os
-    import re
-    import ast
-
-    import numpy as np
-    import pandas as pd
 
     plt, mpl, _ = _load_plotting()
 
-    try:
-        from matplotlib.backends.backend_pdf import PdfPages
-    except ImportError as exc:
-        raise ImportError("matplotlib PdfPages is required for violin PDF output.") from exc
-
-    try:
-        from scipy.stats import gaussian_kde
-    except ImportError as exc:
-        raise ImportError(
-            "scipy is required for violin plot jitter density. "
-            "Install it with: python -m pip install scipy"
-        ) from exc
-
+    # Validate inputs
     if state.data is None:
-        raise ValueError("No data found. Run dataset initialization first.")
-
+        raise ValueError(
+            "No data found. Run dataset initialization first."
+        )
     if state.metadata is None:
-        raise ValueError("No metadata found. Run dataset initialization first.")
-
+        raise ValueError(
+            "No metadata found. Run dataset initialization first."
+        )
     if column_names is None or str(column_names).strip() == "":
         raise ValueError(
             "No grouping metadata column was provided. "
-            "Please set column_names, for example 'Type', 'Diagnosis', or ['Type', 'Type 2']."
+            "Set column_names, for example 'Diagnosis', "
+            "'Type', or ['Diagnosis', 'Sex']."
         )
+    try:
+        bw = float(bw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "Violin bandwidth must be numeric."
+        ) from exc
+
+    if not np.isfinite(bw) or bw <= 0:
+        raise ValueError(
+            "Violin bandwidth must be greater than zero."
+        )
+
+    try:
+        label_rotation = int(label_rotation)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "label_rotation must be an integer."
+        ) from exc
 
     data = state.data.copy()
     metadata = state.metadata.copy()
-    QC_samples = getattr(state, "QC_samples", None)
-    suffixes = _get_suffixes(state)
-    main_folder, figures_folder = _ensure_main_folders(state)
-    statistics_folder = os.path.join(main_folder, "statistics")
-    os.makedirs(statistics_folder, exist_ok=True)
 
-    output_file_prefix = getattr(state, "output_file_prefix", None)
-    if not output_file_prefix:
-        output_file_prefix = getattr(state, "name", None) or "PySPRESSO"
+    _, figures_folder = _ensure_main_folders(state)
 
-    # ------------------------------------------------------------------
+    
     # Local helpers
-    # ------------------------------------------------------------------
-
-    def _natural_sort_key_local(value):
-        if isinstance(value, tuple):
-            value = "-".join(map(str, value))
-        return [
-            int(text) if text.isdigit() else text.lower()
-            for text in re.split(r"(\d+)", str(value))
-        ]
-
-    def _safe_filename_local(value):
-        value = str(value)
-        value = re.sub(r'[<>:"/\\\\|?*]+', "_", value)
-        value = re.sub(r"\s+", "_", value)
-        value = value.strip("_")
-        return value or "value"
-
     def _is_generated_extra_column(col):
         text = str(col).strip()
         lowered = text.lower()
+
         return (
             text == ""
             or lowered.startswith("extra_")
@@ -1117,96 +1089,85 @@ def visualizer_violin_plots(
             or "additional items" in lowered
         )
 
-    def _parse_metadata_columns(value):
-        """
-        Accept:
-            "Diagnosis"
-            "Diagnosis, Sex"
-            "['Diagnosis', 'Sex']"
-            ["Diagnosis", "Sex"]
-        """
-        if isinstance(value, list):
-            return value
-
-        if isinstance(value, str):
-            value = value.strip()
-
-            if value.startswith("[") and value.endswith("]"):
-                parsed = ast.literal_eval(value)
-                if not isinstance(parsed, list):
-                    raise ValueError(
-                        "column_names must be a metadata column name or a list of names."
-                    )
-                return parsed
-
-            if "," in value:
-                return [v.strip() for v in value.split(",") if v.strip()]
-
-            return value
-
-        return value
-
-    def _parse_indexes_value(value):
-        if isinstance(value, str):
-            value = value.strip()
-
-            if value.lower() in {"all", "default", "none"}:
-                return value.lower()
-
-            if value.startswith("[") and value.endswith("]"):
-                parsed = ast.literal_eval(value)
-                if not isinstance(parsed, list):
-                    raise ValueError(
-                        "indexes must be 'all', 'default', an integer, a cpdID, or a list."
-                    )
-                return parsed
-
-            if "," in value:
-                return [v.strip() for v in value.split(",") if v.strip()]
-
-        return value
-
     def _extract_study_id_from_sample_column(sample_name):
         text = str(sample_name)
-        matches = re.findall(r"\(([^()]*)\)", text)
+
+        matches = re.findall(
+            r"\(([^()]*)\)",
+            text,
+        )
+
         if matches:
             return matches[-1]
+
         return text
 
-    def _align_metadata_to_sample_columns(metadata_df, sample_columns):
+    def _align_metadata_to_sample_columns(
+        metadata_df,
+        sample_columns,
+    ):
         """
         Align metadata rows to current data sample columns.
 
-        This intentionally tolerates metadata having more rows than data columns,
-        which can happen after sample deletion or after restoring older workflow
-        states. When Sample File is available, it is the source of truth.
+        Sample File is preferred. Other common identifier columns are used
+        as fallbacks. Positional matching is used only when row and sample
+        counts match exactly.
         """
-        sample_columns = list(sample_columns)
-        meta = metadata_df.copy().reset_index(drop=True)
 
-        # Best case: exact Sample File alignment.
+        sample_columns = list(sample_columns)
+
+        meta = (
+            metadata_df
+            .copy()
+            .reset_index(drop=True)
+        )
+
+        # Best case: exact Sample File matching
         if "Sample File" in meta.columns:
             temp = meta.copy()
-            temp["__sample_key__"] = temp["Sample File"].astype(str).str.strip()
 
+            temp["__sample_key__"] = (
+                temp["Sample File"]
+                .astype(str)
+                .str.strip()
+            )
             duplicate_keys = temp.loc[
-                temp["__sample_key__"].duplicated(keep=False),
+                temp["__sample_key__"].duplicated(
+                    keep=False
+                ),
                 "__sample_key__",
             ].unique()
 
             if len(duplicate_keys):
                 raise ValueError(
-                    "Metadata contains duplicate 'Sample File' values: "
-                    + ", ".join(map(str, duplicate_keys[:10]))
+                    "Metadata contains duplicate "
+                    "'Sample File' values: "
+                    + ", ".join(
+                        map(
+                            str,
+                            duplicate_keys[:10],
+                        )
+                    )
+                )
+            temp = temp.set_index(
+                "__sample_key__"
+            )
+
+            keys = [
+                str(col).strip()
+                for col in sample_columns
+            ]
+            if all(
+                key in temp.index
+                for key in keys
+            ):
+                return (
+                    temp
+                    .loc[keys]
+                    .reset_index(drop=True)
                 )
 
-            temp = temp.set_index("__sample_key__")
-
-            keys = [str(col).strip() for col in sample_columns]
-            if all(key in temp.index for key in keys):
-                return temp.loc[keys].drop(columns=["__sample_key__"], errors="ignore").reset_index(drop=True)
-
-        # Fallback: match common metadata ID columns to sample column text or bracket ID.
+        # Fallback matching
         candidate_cols = [
             "Study File ID",
             "Sample File",
@@ -1217,22 +1178,43 @@ def visualizer_violin_plots(
         ]
 
         for candidate_col in candidate_cols:
+
             if candidate_col not in meta.columns:
                 continue
 
-            values = meta[candidate_col].astype(str).str.strip()
+            values = (
+                meta[candidate_col]
+                .astype(str)
+                .str.strip()
+            )
+
             used = set()
             rows = []
 
             for sample_col in sample_columns:
-                sample_text = str(sample_col).strip()
-                study_id = _extract_study_id_from_sample_column(sample_text)
+
+                sample_text = (
+                    str(sample_col)
+                    .strip()
+                )
+
+                study_id = (
+                    _extract_study_id_from_sample_column(
+                        sample_text
+                    )
+                )
 
                 match_idx = None
+
                 for idx, value in values.items():
+
                     if idx in used:
                         continue
-                    if value == sample_text or value == study_id:
+
+                    if (
+                        value == sample_text
+                        or value == study_id
+                    ):
                         match_idx = idx
                         break
 
@@ -1241,403 +1223,1199 @@ def visualizer_violin_plots(
                     break
 
                 used.add(match_idx)
-                rows.append(meta.loc[match_idx])
+
+                rows.append(
+                    meta.loc[match_idx]
+                )
 
             if len(rows) == len(sample_columns):
-                return pd.DataFrame(rows).reset_index(drop=True)
+                return (
+                    pd.DataFrame(rows)
+                    .reset_index(drop=True)
+                )
 
-        # Positional fallback only if it is exactly safe.
+        # Positional fallback only when unambiguous
         if len(meta) == len(sample_columns):
-            return meta.reset_index(drop=True)
-
-        raise ValueError(
-            "Metadata could not be aligned to the current data sample columns. "
-            f"Metadata rows: {len(meta)}; sample columns: {len(sample_columns)}. "
-            "Expected metadata['Sample File'] to match data sample columns, or a matching Study File ID / Sample Name column."
-        )
-
-    # ------------------------------------------------------------------
-    # Clean current data sample columns
-    # ------------------------------------------------------------------
-
-    if "cpdID" not in data.columns:
-        raise ValueError("Expected 'cpdID' column in state.data.")
-
-    original_columns = list(data.columns)
-    sample_columns = [col for col in data.columns[1:] if not _is_generated_extra_column(col)]
-    removed_generated_columns = [col for col in data.columns[1:] if _is_generated_extra_column(col)]
-
-    if removed_generated_columns:
-        print(
-            "[violin] Ignoring generated/non-sample columns: "
-            + str([str(c) for c in removed_generated_columns])
-        )
-        data = data[["cpdID"] + sample_columns].copy()
-
-    if len(data) == 0:
-        raise ValueError("Data table is empty; no violin plots can be created.")
-
-    if len(sample_columns) == 0:
-        raise ValueError("No sample columns found in state.data.")
-
-    aligned_metadata = _align_metadata_to_sample_columns(metadata, sample_columns)
-
-    # ------------------------------------------------------------------
-    # Resolve metadata grouping
-    # ------------------------------------------------------------------
-
-    original_column_names = column_names
-    column_names = _parse_metadata_columns(column_names)
-    grouping_label_for_axis = column_names
-
-    if isinstance(column_names, list):
-        for col in column_names:
-            if col not in aligned_metadata.columns:
-                raise ValueError(f"Metadata column '{col}' was not found.")
-
-        grouping_column = str(column_names)
-        aligned_metadata[grouping_column] = aligned_metadata[column_names].apply(
-            lambda row: "_".join(row.map(str)),
-            axis=1,
-        )
-        column_names = grouping_column
-    else:
-        if column_names not in aligned_metadata.columns:
-            available = ", ".join(map(str, aligned_metadata.columns))
-            raise ValueError(
-                f"Metadata column '{column_names}' was not found. Available columns: {available}"
+            return meta.reset_index(
+                drop=True
             )
 
-    # ------------------------------------------------------------------
-    # Resolve feature indexes
-    # ------------------------------------------------------------------
-
-    indexes = _parse_indexes_value(indexes)
-
-    if isinstance(indexes, str) and indexes == "default":
-        resolved_indexes = np.linspace(
-            0,
-            len(data) - 1,
-            min(5, len(data)),
-            dtype=int,
-        ).tolist()
-    else:
-        resolved_indexes = _resolve_feature_indices(indexes, data)
-
-    if not resolved_indexes:
-        raise ValueError("No valid feature indexes were resolved from the indexes parameter.")
-
-    resolved_indexes = list(dict.fromkeys(resolved_indexes))
-    bad_indexes = [idx for idx in resolved_indexes if idx < 0 or idx >= len(data)]
-    if bad_indexes:
-        raise ValueError(f"Some feature indexes are out of range: {bad_indexes}")
-
-    if indexes == "all":
-        all_indexes = True
-    else:
-        all_indexes = False
-
-    if all_indexes and save_into_pdf is False:
         raise ValueError(
-            "Showing all violin plots without saving them into a PDF file is not recommended. "
-            "Set save_into_pdf=True or provide selected indexes."
+            "Metadata could not be aligned to the current "
+            "data sample columns. "
+            f"Metadata rows: {len(meta)}; "
+            f"sample columns: {len(sample_columns)}. "
+            "Expected metadata['Sample File'] or another "
+            "sample identifier to match the data columns."
         )
 
-    # ------------------------------------------------------------------
-    # Prepare grouped data exactly in sample-column order
-    # ------------------------------------------------------------------
+    def _unique_directory(path):
+        """
+        Return a new directory name without overwriting an existing gallery.
+        """
 
-    data_for_plot = data[["cpdID"] + sample_columns].copy()
-    data_transposed = data_for_plot.T.copy()
+        if not os.path.exists(path):
+            return path
 
-    grouping_values = aligned_metadata[column_names].to_list()
-    grouping_values.insert(0, None)
+        i = 1
 
-    if len(grouping_values) != len(data_transposed):
+        while True:
+            candidate = f"{path}_{i}"
+
+            if not os.path.exists(candidate):
+                return candidate
+
+            i += 1
+
+    def _write_gallery(
+        gallery_path,
+        plot_items,
+        grouping_label,
+        gallery_title,
+        skipped_count,
+    ):
+        """
+        Create a lightweight searchable HTML gallery.
+
+        Images remain separate PNG files and are lazy-loaded by the browser.
+        """
+
+        from html import escape
+
+        cards = []
+
+        for item in plot_items:
+
+            image_name = item["image"]
+            cpd_id = str(item["cpdID"])
+            feature_index = int(
+                item["feature_index"]
+            )
+
+            search_text = (
+                f"{feature_index} {cpd_id}"
+                .lower()
+            )
+
+            cards.append(
+                f"""
+                <article
+                    class="violin-card"
+                    data-search="{escape(search_text, quote=True)}"
+                >
+                    <div class="violin-caption">
+                        <strong>{escape(cpd_id)}</strong>
+                        <span>
+                            feature index: {feature_index}
+                        </span>
+                    </div>
+
+                    <a
+                        href="{escape(image_name, quote=True)}"
+                        target="_blank"
+                    >
+                        <img
+                            src="{escape(image_name, quote=True)}"
+                            loading="lazy"
+                            decoding="async"
+                            alt="{escape(cpd_id, quote=True)}"
+                        >
+                    </a>
+                </article>
+                """
+            )
+
+        html = f"""<!doctype html>
+<html lang="en">
+
+<head>
+
+<meta charset="utf-8">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+>
+
+<title>{escape(gallery_title)}</title>
+
+<style>
+
+body {{
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+
+    margin: 24px;
+
+    background: #fafafa;
+}}
+
+.gallery-header {{
+    position: sticky;
+
+    top: 0;
+
+    z-index: 10;
+
+    background: #fafafa;
+
+    padding:
+        10px
+        0
+        18px
+        0;
+
+    border-bottom:
+        1px solid
+        #ddd;
+}}
+
+.gallery-header h1 {{
+    margin-bottom: 8px;
+}}
+
+.gallery-meta {{
+    margin:
+        4px
+        0
+        14px
+        0;
+
+    color: #555;
+}}
+
+#violin-search {{
+    width:
+        min(
+            600px,
+            95%
+        );
+
+    box-sizing:
+        border-box;
+
+    padding: 10px;
+
+    font-size: 16px;
+}}
+
+.violin-grid {{
+    display: grid;
+
+    grid-template-columns:
+        repeat(
+            auto-fill,
+            minmax(
+                340px,
+                1fr
+            )
+        );
+
+    gap: 20px;
+
+    margin-top: 20px;
+}}
+
+.violin-card {{
+    background: white;
+
+    border:
+        1px solid
+        #ddd;
+
+    border-radius: 8px;
+
+    padding: 10px;
+}}
+
+.violin-card img {{
+    display: block;
+
+    width: 100%;
+
+    height: auto;
+}}
+
+.violin-caption {{
+    display: flex;
+
+    justify-content:
+        space-between;
+
+    gap: 10px;
+
+    margin-bottom: 8px;
+}}
+
+.violin-caption span {{
+    color: #666;
+
+    font-size: 0.9em;
+}}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="gallery-header">
+
+    <h1>
+        {escape(gallery_title)}
+    </h1>
+
+    <p class="gallery-meta">
+        Grouping:
+        {escape(str(grouping_label))}
+        &nbsp;|&nbsp;
+        Plots:
+        {len(plot_items)}
+        &nbsp;|&nbsp;
+        Skipped:
+        {int(skipped_count)}
+    </p>
+
+    <input
+        id="violin-search"
+        type="search"
+        placeholder="Search by cpdID or feature index..."
+    >
+
+</div>
+
+<div class="violin-grid">
+
+    {''.join(cards)}
+
+</div>
+
+<script>
+
+const search =
+    document.getElementById(
+        "violin-search"
+    );
+
+const cards =
+    document.querySelectorAll(
+        ".violin-card"
+    );
+
+search.addEventListener(
+    "input",
+    () => {{
+
+        const query =
+            search
+                .value
+                .trim()
+                .toLowerCase();
+
+        cards.forEach(
+            card => {{
+
+                card.hidden =
+                    query.length > 0
+                    &&
+                    !card.dataset.search.includes(
+                        query
+                    );
+
+            }}
+        );
+
+    }}
+);
+
+</script>
+
+</body>
+
+</html>
+"""
+        with open(
+            gallery_path,
+            "w",
+            encoding="utf-8",
+        ) as file:
+            file.write(html)
+
+    
+    # Clean and identify current sample columns
+    if "cpdID" not in data.columns:
         raise ValueError(
-            "Metadata alignment failed after matching metadata to sample columns. "
-            f"Grouping values including cpdID row: {len(grouping_values)}; transposed data rows: {len(data_transposed)}."
+            "Expected 'cpdID' column in state.data."
         )
 
-    data_transposed[column_names] = grouping_values
-    data_transposed[column_names] = data_transposed[column_names].where(
-        pd.notnull(data_transposed[column_names]),
-        "None",
+    sample_columns = [
+        col
+        for col in data.columns
+        if (
+            col != "cpdID"
+            and not _is_generated_extra_column(
+                col
+            )
+        )
+    ]
+
+    removed_generated_columns = [
+        col
+        for col in data.columns
+        if (
+            col != "cpdID"
+            and _is_generated_extra_column(
+                col
+            )
+        )
+    ]
+    if removed_generated_columns:
+        print(
+            "[violin] Ignoring generated/non-sample "
+            "columns: "
+            + str(
+                [
+                    str(c)
+                    for c
+                    in removed_generated_columns
+                ]
+            )
+        )
+
+    if len(data) == 0:
+        raise ValueError(
+            "Data table is empty; no violin "
+            "plots can be created."
+        )
+    if len(sample_columns) == 0:
+        raise ValueError(
+            "No sample columns found in state.data."
+        )
+
+    data = data[
+        ["cpdID"] + sample_columns
+    ].copy()
+
+    aligned_metadata = (
+        _align_metadata_to_sample_columns(
+            metadata,
+            sample_columns,
+        )
     )
 
-    samples_only = data_transposed.iloc[1:, :].copy()
-    grouped = samples_only.groupby(column_names, sort=False)
+    # Resolve metadata grouping
+    parsed_columns = (
+        _parse_metadata_columns(
+            column_names
+        )
+    )
+    if isinstance(
+        parsed_columns,
+        (list, tuple),
+    ):
+        grouping_columns = [
+            str(col).strip()
+            for col in parsed_columns
+            if str(col).strip()
+        ]
+    else:
+        grouping_columns = [
+            str(parsed_columns).strip()
+        ]
+    if not grouping_columns:
+        raise ValueError(
+            "No valid grouping metadata "
+            "columns were provided."
+        )
 
-    group_order = sorted(list(grouped.groups.keys()), key=_natural_sort_key_local)
+    missing_grouping_columns = [
+        col
+        for col in grouping_columns
+        if col not in aligned_metadata.columns
+    ]
+    if missing_grouping_columns:
+        raise ValueError(
+            "Metadata grouping column(s) "
+            "were not found: "
+            + ", ".join(
+                missing_grouping_columns
+            )
+        )
+    grouping_label_for_axis = (
+        ", ".join(
+            grouping_columns
+        )
+    )
+    grouping_frame = (
+        aligned_metadata[
+            grouping_columns
+        ]
+        .copy()
+    )
 
-    # Move QC group to the end, if it can be detected by sample-name overlap.
+    for col in grouping_columns:
+        grouping_frame[col] = (
+            grouping_frame[col]
+            .astype(object)
+            .where(
+                grouping_frame[col]
+                .notna(),
+                "None",
+            )
+            .astype(str)
+        )
+
+    if len(grouping_columns) == 1:
+        grouping_values = (
+            grouping_frame[
+                grouping_columns[0]
+            ]
+            .to_numpy()
+        )
+
+    else:
+        grouping_values = (
+            grouping_frame
+            .agg(
+                " | ".join,
+                axis=1,
+            )
+            .to_numpy()
+        )
+
+    # Resolve requested features
+    indexes = _parse_show_value(
+        indexes
+    )
+    resolved_indexes = (
+        _resolve_feature_indices(
+            indexes,
+            data,
+        )
+    )
+    if not resolved_indexes:
+        raise ValueError(
+            "No valid feature indexes were "
+            "resolved from the indexes parameter."
+        )
+    resolved_indexes = list(
+        dict.fromkeys(
+            resolved_indexes
+        )
+    )
+    bad_indexes = [
+        idx
+        for idx in resolved_indexes
+        if (
+            idx < 0
+            or idx >= len(data)
+        )
+    ]
+    if bad_indexes:
+        raise ValueError(
+            "Some feature indexes are "
+            f"out of range: {bad_indexes}"
+        )
+
+    # Prepare numeric matrix once
+    numeric_matrix = (
+        data[sample_columns]
+        .apply(
+            pd.to_numeric,
+            errors="coerce",
+        )
+        .T
+        .to_numpy(
+            dtype=float
+        )
+    )
+
+    feature_ids = (
+        data["cpdID"]
+        .astype(str)
+        .tolist()
+    )
+
+    
+    # Prepare grouping indexes
+    group_order = sorted(
+        pd.unique(
+            grouping_values
+        ).tolist(),
+        key=_natural_sort_key,
+    )
+    if len(group_order) == 0:
+        raise ValueError(
+            "No non-empty metadata groups "
+            "were found."
+        )
+    group_indices = {
+        group:
+            np.flatnonzero(
+                grouping_values
+                == group
+            )
+        for group in group_order
+    }
+
+    # Move QC-containing group to the end
+    QC_samples = getattr(
+        state,
+        "QC_samples",
+        None,
+    )
     qc_key = None
+
     if QC_samples:
-        qc_set = set(map(str, QC_samples))
+        qc_set = set(
+            map(
+                str,
+                QC_samples,
+            )
+        )
         best_key = None
         best_overlap = 0
+        for group in group_order:
 
-        for key in group_order:
-            group_ids = set(map(str, grouped.get_group(key).index))
-            overlap = len(group_ids & qc_set)
-
+            sample_indexes = (
+                group_indices[group]
+            )
+            group_sample_names = {
+                str(
+                    sample_columns[i]
+                )
+                for i
+                in sample_indexes
+            }
+            overlap = len(
+                group_sample_names
+                & qc_set
+            )
             if overlap > best_overlap:
                 best_overlap = overlap
-                best_key = key
+                best_key = group
 
         if best_overlap > 0:
             qc_key = best_key
 
-    if qc_key is not None and qc_key in group_order:
-        group_order.append(group_order.pop(group_order.index(qc_key)))
+    if (
+        qc_key is not None
+        and qc_key in group_order
+    ):
+        group_order.append(
+            group_order.pop(
+                group_order.index(
+                    qc_key
+                )
+            )
+        )
 
-    print("Group order:", group_order, "| QC detected as:", qc_key)
+    # Group colors and labels
+    try:
+        cmap_obj = (
+            mpl.colormaps
+            .get_cmap(cmap)
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"Unknown matplotlib colormap: {cmap}"
+        ) from exc
 
-    x_labels = [f"{key} ({len(grouped.get_group(key))})" for key in group_order]
-
-    cmap_obj = mpl.colormaps.get_cmap(cmap)
     if len(group_order) == 1:
         color_indices = [0.5]
     else:
-        color_indices = np.linspace(0.05, 0.95, len(group_order))
-    colors = [cmap_obj(i) for i in color_indices]
+        color_indices = (
+            np.linspace(
+                0.05,
+                0.95,
+                len(group_order),
+            )
+        )
+    group_colors = {
+        group:
+            cmap_obj(
+                color_indices[i]
+            )
+        for i, group
+        in enumerate(
+            group_order
+        )
+    }
+    x_labels = [
+        (
+            f"{group} "
+            f"({len(group_indices[group])})"
+        )
+        for group in group_order
+    ]
 
-    data_transposed = data_transposed.drop([column_names], axis=1)
-
-    safe_grouping_name = _safe_filename_local(column_names)
-
-    safe_suffix = (
-        _safe_filename_local(plt_name_suffix)
-        if str(plt_name_suffix).strip()
-        else ""
+    # Create uniquely named gallery
+    requested_gallery_name = (
+        str(
+            gallery_name
+            or ""
+        )
+        .strip()
     )
 
-    if safe_suffix:
-        base_name = f"{output_file_prefix}-{safe_grouping_name}_{safe_suffix}"
-    else:
-        base_name = f"{output_file_prefix}-{safe_grouping_name}"
-
-    pdf_path = None
-    if save_into_pdf:
-        pdf_base = os.path.join(statistics_folder, f"{base_name}-violin_plots.pdf")
-        pdf_path = _unique_path(pdf_base)
-        pdf_pages = PdfPages(pdf_path)
-    else:
-        pdf_pages = None
-
-    example_path = None
-    individual_paths = []
-    plotted_features = []
-    first_plot = True
-    returning_message = None
-
-    def _create_violin_figure(feature_index):
-        values_by_group = []
-
-        for group_position, group_name in enumerate(group_order, start=1):
-            group = grouped.get_group(group_name)
-            raw_values = group.iloc[:, feature_index]
-
-            numeric_values = (
-                pd.to_numeric(raw_values, errors="coerce")
-                .dropna()
-                .to_numpy(dtype=float)
+    if requested_gallery_name:
+        gallery_stem = (
+            _safe_filename(
+                requested_gallery_name
             )
+        )
+    else:
+        safe_grouping_name = (
+            _safe_filename(
+                grouping_label_for_axis
+            )
+        )
+        gallery_stem = (
+            f"violin_{safe_grouping_name}"
+        )
 
-            if numeric_values.size == 0:
+    gallery_dir = (
+        _unique_directory(
+            os.path.join(
+                figures_folder,
+                gallery_stem,
+            )
+        )
+    )
+
+    os.makedirs(
+        gallery_dir,
+        exist_ok=False,
+    )
+
+    actual_gallery_name = (
+        os.path.basename(
+            gallery_dir
+        )
+    )
+
+    gallery_path = os.path.join(
+        gallery_dir,
+        f"{actual_gallery_name}.html",
+    )
+
+    index_path = os.path.join(
+        gallery_dir,
+        f"{actual_gallery_name}_index.csv",
+    )
+
+    # Plot helper
+    def _create_violin_figure(
+        feature_index,
+    ):
+        cpd_title = feature_ids[
+            feature_index
+        ]
+        values_by_group = []
+        for (
+            position,
+            group_name,
+        ) in enumerate(
+            group_order,
+            start=1,
+        ):
+            sample_indexes = (
+                group_indices[
+                    group_name
+                ]
+            )
+            values = (
+                numeric_matrix[
+                    sample_indexes,
+                    feature_index,
+                ]
+            )
+            values = values[
+                np.isfinite(
+                    values
+                )
+            ]
+
+            if values.size == 0:
                 continue
-
             values_by_group.append(
                 {
-                    "position": group_position,
-                    "group": group_name,
-                    "values": numeric_values,
-                    "color": colors[group_position - 1],
+                    "position":
+                        position,
+                    "group":
+                        group_name,
+                    "values":
+                        values,
+                    "color":
+                        group_colors[
+                            group_name
+                        ],
                 }
             )
-
-        cpd_title = data_transposed.loc["cpdID", feature_index]
-
         if not values_by_group:
             return None, cpd_title
 
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(
+            figsize=(8, 6)
+        )
+        rng = (
+            np.random
+            .default_rng(
+                42
+                + int(
+                    feature_index
+                )
+            )
+        )
 
-        # Deterministic jitter: rerunning the same workflow produces the same figure.
-        rng = np.random.default_rng(42 + int(feature_index))
-
-        for entry in values_by_group:
-            position = entry["position"]
-            value_group = entry["values"]
-            color = entry["color"]
-
-            # A violin/KDE is meaningful only when there is enough variation.
-            if len(value_group) >= 2 and not np.allclose(value_group, value_group[0]):
-                violin = ax.violinplot(
-                    [value_group],
-                    positions=[position],
+        # Draw all meaningful violins in one matplotlib call
+        violin_entries = [
+            entry
+            for entry
+            in values_by_group
+            if (
+                len(
+                    entry["values"]
+                ) >= 2
+                and not np.allclose(
+                    entry["values"],
+                    entry["values"][0],
+                )
+            )
+        ]
+        if violin_entries:
+            violin = (
+                ax.violinplot(
+                    [
+                        entry["values"]
+                        for entry
+                        in violin_entries
+                    ],
+                    positions=[
+                        entry["position"]
+                        for entry
+                        in violin_entries
+                    ],
                     widths=0.8,
                     showmeans=False,
                     showmedians=False,
                     showextrema=False,
                     bw_method=bw,
                 )
-
-                for body in violin["bodies"]:
-                    body.set_facecolor(color)
-                    body.set_edgecolor(color)
-                    body.set_linewidth(1)
-                    body.set_alpha(0.75)
-
-            # Mean
-            ax.plot(
-                [position - 0.2, position + 0.2],
-                [np.mean(value_group)] * 2,
-                color=color,
-                linewidth=0.5,
             )
+            for (
+                body,
+                entry,
+            ) in zip(
+                violin["bodies"],
+                violin_entries,
+            ):
+                body.set_facecolor(
+                    entry["color"]
+                )
+                body.set_edgecolor(
+                    entry["color"]
+                )
+                body.set_linewidth(
+                    1
+                )
+                body.set_alpha(
+                    0.75
+                )
 
-            # Median
-            ax.plot(
-                [position - 0.2, position + 0.2],
-                [np.median(value_group)] * 2,
-                color=color,
-                linewidth=0.5,
+        # Means, medians and observations
+        for entry in values_by_group:
+            position = (
+                entry["position"]
             )
-
-            # Individual observations
-            if jitter and len(value_group) > 1:
-                try:
-                    kde = gaussian_kde(value_group)
-                    densities = kde(value_group)
-                    max_density = np.nanmax(densities)
-
-                    if np.isfinite(max_density) and max_density > 0:
-                        jitter_width = 0.05 * densities / max_density
-                    else:
-                        jitter_width = np.repeat(0.03, len(value_group))
-
-                    x_values = rng.normal(
-                        position,
-                        jitter_width,
-                        size=len(value_group),
+            values = (
+                entry["values"]
+            )
+            color = (
+                entry["color"]
+            )
+            mean_value = float(
+                np.mean(values)
+            )
+            median_value = float(
+                np.median(values)
+            )
+            ax.plot(
+                [
+                    position - 0.20,
+                    position + 0.20,
+                ],
+                [
+                    mean_value,
+                    mean_value,
+                ],
+                color=color,
+                linewidth=0.7,
+            )
+            ax.plot(
+                [
+                    position - 0.12,
+                    position + 0.12,
+                ],
+                [
+                    median_value,
+                    median_value,
+                ],
+                color=color,
+                linewidth=1.5,
+            )
+            if (
+                jitter
+                and len(values) > 1
+            ):
+                x_values = (
+                    position
+                    + rng.uniform(
+                        -0.06,
+                        0.06,
+                        size=len(values),
                     )
-
-                except Exception:
-                    x_values = rng.normal(
-                        position,
-                        0.03,
-                        size=len(value_group),
-                    )
+                )
 
             else:
-                x_values = np.full(len(value_group), position)
+                x_values = (
+                    np.full(
+                        len(values),
+                        position,
+                    )
+                )
 
             ax.scatter(
                 x_values,
-                value_group,
+                values,
                 color=color,
-                s=5,
-                alpha=1,
+                s=6,
+                alpha=0.9,
             )
+        ax.set_xticks(
+            np.arange(
+                1,
+                len(group_order) + 1,
+            )
+        )
+        ax.set_xticklabels(
+            x_labels,
+            rotation=label_rotation,
+        )
+        ax.set_title(
+            str(cpd_title)
+        )
+        ax.set_xlabel(
+            grouping_label_for_axis
+        )
+        ax.set_ylabel(
+            "Intensity"
+        )
 
-        ax.set_xticks(np.arange(1, len(group_order) + 1))
-        ax.set_xticklabels(x_labels, rotation=int(label_rotation))
-        ax.set_title(str(cpd_title))
-        ax.set_xlabel(str(grouping_label_for_axis))
-        ax.set_ylabel("Intensity")
         fig.tight_layout()
 
         return fig, cpd_title
 
-    try:
-        skipped_features = []
-        for idx_position, feature_index in enumerate(resolved_indexes):
-            fig, cpd_title = _create_violin_figure(feature_index)
 
-            if fig is None:
-                skipped_features.append(
-                    {
-                        "feature_index": int(feature_index),
-                        "cpdID": str(cpd_title),
-                        "reason": "No finite values available in any group",
-                    }
-                )
-                continue
+    # Create all requested plots
+    plotted_features = []
+    skipped_features = []
 
-            if save_into_pdf and pdf_pages is not None:
-                pdf_pages.savefig(fig, bbox_inches="tight")
-            else:
-                png_base = os.path.join(
-                    figures_folder,
-                    _safe_filename_local(f"{base_name}-violin_plot_{feature_index}.png"),
+    example_path = None
+    for (
+        idx_position,
+        feature_index,
+    ) in enumerate(
+        resolved_indexes
+    ):
+        fig, cpd_title = (
+            _create_violin_figure(
+                feature_index
+            )
+        )
+        if fig is None:
+            skipped_features.append(
+                {
+                    "feature_index":
+                        int(
+                            feature_index
+                        ),
+                    "cpdID":
+                        str(
+                            cpd_title
+                        ),
+                    "reason":
+                        (
+                            "No finite values "
+                            "available in any group"
+                        ),
+                }
+            )
+            continue
+        safe_cpd = (
+            _safe_filename(
+                str(
+                    cpd_title
                 )
-                png_path = _unique_path(png_base)
-                fig.savefig(png_path, bbox_inches="tight", dpi=300)
-                individual_paths.append(png_path)
-
-            if first_plot:
-                example_base = os.path.join(
-                    statistics_folder,
-                    _safe_filename_local(f"{safe_grouping_name}-violin_plots-example-{safe_suffix}{feature_index}"),
-                )
-                example_png = _unique_path(example_base + ".png")
-                fig.savefig(example_png, bbox_inches="tight", dpi=300)
-                example_path = example_png
-                first_plot = False
+            )[:100]
+        )
+        png_name = (
+            f"{int(feature_index):06d}_"
+            f"{safe_cpd}.png"
+        )
+        png_path = (
+            os.path.join(
+                gallery_dir,
+                png_name,
+            )
+        )
+        try:
+            fig.savefig(
+                png_path,
+                dpi=140,
+            )
+        finally:
 
             plt.close(fig)
+        if example_path is None:
+            example_path = (
+                png_path
+            )
+        plotted_features.append(
+            {
+                "feature_index":
+                    int(
+                        feature_index
+                    ),
+                "cpdID":
+                    str(
+                        cpd_title
+                    ),
+                "image":
+                    png_name,
+                "image_path":
+                    png_path,
+            }
+        )
+        print(
+            (
+                "Violin plots created: "
+                f"{((idx_position + 1) / len(resolved_indexes)) * 100:.2f}%"
+            ),
+            end=(
+                "\n"
+                if (
+                    idx_position
+                    == len(
+                        resolved_indexes
+                    ) - 1
+                )
+                else "\r"
+            ),
+        )
 
-            plotted_features.append(
+    # Ensure something was actually generated
+    if not plotted_features:
+        try:
+            os.rmdir(
+                gallery_dir
+            )
+        except OSError:
+            pass
+        raise ValueError(
+            "No violin plots could be created because "
+            "none of the selected features contained "
+            "finite values in any group."
+        )
+
+    # Create CSV index
+    index_rows = []
+    for item in plotted_features:
+        index_rows.append(
+            {
+                "feature_index":
+                    item[
+                        "feature_index"
+                    ],
+                "cpdID":
+                    item[
+                        "cpdID"
+                    ],
+                "status":
+                    "plotted",
+                "image":
+                    item[
+                        "image"
+                    ],
+                "reason":
+                    "",
+            }
+        )
+
+    for item in skipped_features:
+        index_rows.append(
+            {
+                "feature_index":
+                    item[
+                        "feature_index"
+                    ],
+                "cpdID":
+                    item[
+                        "cpdID"
+                    ],
+                "status":
+                    "skipped",
+                "image":
+                    "",
+                "reason":
+                    item[
+                        "reason"
+                    ],
+            }
+        )
+    index_table = (
+        pd.DataFrame(
+            index_rows
+        )
+        .sort_values(
+            "feature_index"
+        )
+        .reset_index(
+            drop=True
+        )
+    )
+    index_table.to_csv(
+        index_path,
+        index=False,
+        sep=";",
+    )
+
+    # Create searchable HTML gallery
+    _write_gallery(
+        gallery_path=gallery_path,
+        plot_items=plotted_features,
+        grouping_label=grouping_label_for_axis,
+        gallery_title=actual_gallery_name,
+        skipped_count=len(
+            skipped_features
+        ),
+    )
+
+    # Register compact artifacts only
+    artifacts = getattr(
+        state,
+        "artifacts",
+        None,
+    )
+
+    if artifacts is not None:
+        artifacts.append(
+            {
+                "type":
+                    "html",
+                "path":
+                    gallery_path,
+                "description":
+                    (
+                        "Searchable violin "
+                        "plot gallery"
+                    ),
+            }
+        )
+        artifacts.append(
+            {
+                "type":
+                    "table",
+                "path":
+                    index_path,
+                "description":
+                    "Violin plot index",
+            }
+        )
+
+        if example_path is not None:
+            artifacts.append(
                 {
-                    "feature_index": int(feature_index),
-                    "cpdID": str(cpd_title),
+                    "type":
+                        "figure",
+                    "path":
+                        example_path,
+                    "description":
+                        (
+                            "Example violin "
+                            "plot"
+                        ),
                 }
             )
 
-            ending = "\n" if idx_position == len(resolved_indexes) - 1 else "\r"
-            print(
-                f"Violin plots created: {((idx_position + 1) / len(resolved_indexes)) * 100:.2f}%",
-                end=ending,
-            )
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        (
+            f"Violin plots were created for "
+            f"{len(plotted_features)} of "
+            f"{len(resolved_indexes)} requested features. "
+            f"Features were grouped by "
+            f"'{grouping_label_for_axis}'. "
+            f"The plots were saved into the searchable "
+            f"gallery '{actual_gallery_name}'."
+        ),
+        title="Violin plots",
+    )
 
-    finally:
-        if pdf_pages is not None:
-            pdf_pages.close()
+    add_text(
+        state,
+        f"Gallery: {gallery_path}",
+        title="Violin plot gallery",
+    )
 
-    artifacts = []
-    if pdf_path:
-        artifacts.append({"type": "pdf", "label": "Violin plots PDF", "path": pdf_path})
-    if example_path:
-        artifacts.append({"type": "image", "label": "Example violin plot", "path": example_path})
-    for path in individual_paths:
-        artifacts.append({"type": "image", "label": os.path.basename(path), "path": path})
+    if example_path is not None:
 
-    if hasattr(state, "artifacts") and state.artifacts is not None:
-        for artifact in artifacts:
-            state.artifacts.append(
-                {
-                    "type": artifact["type"],
-                    "path": artifact["path"],
-                    "description": artifact["label"],
-                }
-            )
+        add_figure(
+            state,
+            example_path,
+            title="Example violin plot",
+        )
 
-    if all_indexes:
-        summary_text = f"Violin plots of all features grouped by {column_names} column(s) were created."
-    else:
-        summary_text = f"Violin plots of selected features grouped by {column_names} column(s) were created."
+    if skipped_features:
 
-    if pdf_path:
-        summary_text += f" The selected plots were saved into: {pdf_path}"
+        add_table(
+            state,
+            pd.DataFrame(
+                skipped_features
+            ),
+            title="Skipped violin plots",
+            include_index=False,
+            max_rows=50,
+        )
+
+    # ------------------------------------------------------------------
+    # Return compact operation result
+    # ------------------------------------------------------------------
 
     return {
-        "indexes": [int(i) for i in resolved_indexes],
-        "n_requested": len(resolved_indexes),
-        "n_plots": len(plotted_features),
-        "pdf_path": pdf_path,
-        "example_path": example_path,
-        "saved_paths": individual_paths,
-        "plotted_features": plotted_features,
-        "skipped_features": skipped_features,
+        "gallery_name":
+            actual_gallery_name,
+        "gallery_path":
+            gallery_path,
+        "gallery_directory":
+            gallery_dir,
+        "index_path":
+            index_path,
+        "n_requested":
+            len(
+                resolved_indexes
+            ),
+        "n_plots":
+            len(
+                plotted_features
+            ),
+        "n_skipped":
+            len(
+                skipped_features
+            ),
+        "example_path":
+            example_path,
     }

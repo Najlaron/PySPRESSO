@@ -10,6 +10,11 @@ import pandas as pd
 from pyspresso_app.core.registry import register_operation
 from pyspresso_app.core.operation_models import OperationTag, ParameterDef
 from pyspresso_app.core.workflow_models import WorkflowState
+from pyspresso_app.core.html_reporter import (
+    add_text,
+    add_table,
+    add_figure,
+)
 
 @register_operation(
     id="initializer_compound_discoverer",
@@ -143,7 +148,6 @@ from pyspresso_app.core.workflow_models import WorkflowState
         "dilution_series_samples",
         "dil_concentrations",
         "standard_samples",
-        "report",
         "main_folder",
     ],
 )
@@ -154,7 +158,7 @@ def initializer_compound_discoverer(
     cpdID_from_column=False,
     cpdID_columns=None,
     more_batches=False,
-    datetime_format="%d/%m/%Y %H:%M:%S",
+    datetime_format="%d.%m.%Y %H:%M",
     qc_samples_distinguisher="Quality Control",
     blank_samples_distinguisher="Blank",
     standard_samples_distinguisher="Standard",
@@ -171,18 +175,20 @@ def initializer_compound_discoverer(
         )
 
     data_input_file_name = state.files.get("data")
+
+    if not data_input_file_name:
+        raise ValueError("No data file found in state.files['data'].")
+    
     data_input_file_name = Path.cwd().parent / data_input_file_name
     # print("data_input_file_name =", data_input_file_name)
     # print("cwd =", Path.cwd())
 
     batch_info_input_file_name = state.files.get("batch_info")
-    batch_info_input_file_name = Path.cwd().parent / batch_info_input_file_name
 
-    if data_input_file_name is None:
-        raise ValueError("No data file found in state.files['data'].")
-
-    if batch_info_input_file_name is None:
+    if not batch_info_input_file_name:
         raise ValueError("No batch info file found in state.files['batch_info'].")
+
+    batch_info_input_file_name = Path.cwd().parent / batch_info_input_file_name
 
     # Initialize folders first, then report.
     _initializer_folders(state)
@@ -266,23 +272,22 @@ def initializer_compound_discoverer(
         dilution_concentrations=dilution_concentrations,
     )
 
-    if state.report is not None:
-        state.report.add_together(
-            [
-                (
-                    "text",
-                    "Compound Discoverer dataset initialization completed.",
-                    "bold",
-                ),
-                ("text", f"Number of features: {state.data.shape[0]}"),
-                ("text", f"Number of samples: {state.data.shape[1] - 1}"),
-                ("text", f"Data load info: {data_load_info}", "italic"),
-                ("text", f"Batch info load info: {batch_info_load_info}", "italic"),
-                "line",
-            ]
-        )
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        "Compound Discoverer dataset initialization completed.",
+        title="Dataset initialization",
+    )
 
-    print("všechno proběhlo")
+    add_text(
+        state,
+        f"Number of features: {state.data.shape[0]}"
+    )
+
+    add_text(
+        state,
+        f"Number of samples: {state.data.shape[1] - 1}"
+    )
 
     return {
         "initialized": True,
@@ -419,7 +424,6 @@ def _add_cpdID(
     round_rt_col=3,
 ):
     data = state.data
-    report = state.report
 
     if data is None:
         raise ValueError("No data loaded in state.data.")
@@ -457,14 +461,18 @@ def _add_cpdID(
 
     state.data = data
 
+    # REPORTING ---------------------------------------------------------
     print("Compound ID was added to the data.")
-
-    if report is not None:
-        text = (
-            "cpdID column was added to the data calculated from m/z and RT. "
-            'Matching IDs were distinguished by adding "_1", "_2", etc.'
-        )
-        report.add_together([("text", text), "line"])
+    add_text(
+        state,
+        (
+            f"Compound IDs were generated from '{mz_col}' and '{rt_col}'. "
+            f"m/z was rounded to {round_mz_col} decimals and retention time "
+            f"to {round_rt_col} decimals. "
+            f"Duplicate IDs requiring an additional suffix: {int(is_duplicate.sum())}."
+        ),
+        title="Compound ID generation",
+    )
 
     return state.data
 
@@ -474,7 +482,6 @@ def _add_cpdID_from_column(
     cpdID_col,
 ):
     data = state.data
-    report = state.report
 
     if data is None:
         raise ValueError("No data loaded in state.data.")
@@ -494,13 +501,16 @@ def _add_cpdID_from_column(
     )
 
     state.data = data
-
-    print("Compound ID was added to the data from column: " + str(cpdID_col))
-
-    if report is not None:
-        text = "cpdID column was added from existing column: " + str(cpdID_col) + "."
-        report.add_together([("text", text), "line"])
-
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        (
+            f"Compound IDs were taken directly from column '{cpdID_col}'. "
+            f"Duplicate IDs requiring an additional suffix: {int(is_duplicate.sum())}."
+        ),
+        title="Compound ID generation",
+    )
+        
     return state.data
 
 
@@ -513,7 +523,6 @@ def _extracter_variable_metadata(
     Extract variable metadata from state.data.
     """
     data = state.data
-    report = state.report
 
     if data is None:
         raise ValueError("No data loaded in state.data.")
@@ -576,16 +585,17 @@ def _extracter_variable_metadata(
 
     state.variable_metadata = variable_metadata.reset_index(drop=True)
 
+    # REPORTING ---------------------------------------------------------
     print("Variable metadata was extracted from the data.")
-
-    if report is not None:
-        report.add_together(
-            [
-                ("text", "variable-metadata matrix was created."),
-                "line",
-            ]
-        )
-
+    add_text(
+        state,
+        (
+            f"Variable metadata were extracted for "
+            f"{state.variable_metadata.shape[0]} features. "
+            f"Columns retained: {state.variable_metadata.columns.tolist()}."
+        ),
+        title="Variable metadata",
+    )
     return state.variable_metadata
 
 
@@ -597,7 +607,6 @@ def _extracter_data(
     Extract intensity matrix from the full loaded data.
     """
     data = state.data
-    report = state.report
 
     if data is None:
         raise ValueError("No data loaded in state.data.")
@@ -622,15 +631,18 @@ def _extracter_data(
 
     state.data = extracted_data
 
-    print("Important columns were kept in the data and rest filtered out.")
-
-    if report is not None:
-        report.add_together(
-            [
-                ("text", "data matrix was created."),
-                "line",
-            ]
-        )
+    # REPORTING ---------------------------------------------------------
+    print("Important columns were kept in the data and rest filtered out. Data matrix was created.")
+    add_text(
+        state,
+        (
+            f"Intensity columns beginning with '{prefix}' were extracted. "
+            f"The resulting data matrix contains {state.data.shape[0]} features "
+            f"and {state.data.shape[1] - 1} sample columns. "
+            f"Non-numeric or missing intensity values were converted to zero."
+        ),
+        title="Intensity matrix",
+    )
 
     return state.data
 
@@ -640,7 +652,7 @@ def _batch_by_name_reorder(
     distinguisher="Batch",
     distinguisher_col="File Name",
     datetime_col="Creation Date",
-    datetime_format="%d/%m/%Y %H:%M:%S",
+    datetime_format="%d.%m.%Y %H:%M",
     sample_id_col="Study File ID",
     sample_type_col="Sample Type",
 ):
@@ -649,7 +661,6 @@ def _batch_by_name_reorder(
     Also creates batch_info['Batch'] and state.batch.
     """
     data = state.data
-    report = state.report
     batch_info = state.batch_info
 
     if data is None:
@@ -696,14 +707,6 @@ def _batch_by_name_reorder(
 
     if distinguisher is None:
         batch_info["Batch"] = ["all_one_batch" for _ in range(len(batch_info.index))]
-
-        if report is not None:
-            report.add_together(
-                [
-                    ("text", "All samples are in one batch."),
-                    "line",
-                ]
-            )
 
     else:
         if distinguisher_col not in batch_info.columns:
@@ -772,6 +775,7 @@ def _batch_by_name_reorder(
             "Check Study File ID and data column names."
         )
 
+    # REPORTING ---------------------------------------------------------
     print("New data order based on batch info:")
     print(new_data_order)
     print("Data reordered based on creation date from batch info.")
@@ -792,35 +796,46 @@ def _batch_by_name_reorder(
     state.data = data
     state.batch = batch_info["Batch"].tolist()
 
-    if report is not None:
-        text0 = "Batch information was used to reorder samples."
-
-        if distinguisher is None:
-            text1 = 'All samples are in one batch. Thus "all_one_batch" was used.'
-        else:
-            text1 = "Batches were distinguished in the File Name using: " + str(
-                distinguisher
-            )
-
-        text2 = "Not found: " + str(len(not_found)) + " ; being: " + str(not_found)
-        text3 = (
-            "Names not identified: "
-            + str(len(remaining_names))
-            + " ; being: "
-            + str(remaining_names)
+    add_text(
+        state,
+        (
+            f"Samples were matched to the batch information and reordered. "
+            f"Successfully matched samples: {len(new_data_order)}. "
+            f"Batch-info entries not found in the data: {len(not_found)}. "
+            f"Data columns not identified in the batch-info file: {len(remaining_names)}."
+        ),
+        title="Sample matching and reordering",
+    )
+    if not_found:
+        add_text(
+            state,
+            f"Batch-info entries not found in the data: {not_found}",
+            title="Unmatched batch-info samples",
         )
 
-        report.add_together(
-            [
-                ("text", text0),
-                ("text", text1, "italic"),
-                ("text", text2, "italic"),
-                ("text", text3, "italic"),
-                ("table", batch_info),
-                "line",
-            ]
+    if remaining_names:
+        add_text(
+            state,
+            f"Data columns not identified in the batch-info file: {remaining_names}",
+            title="Unmatched data columns",
         )
-
+    if distinguisher is None:
+        add_text(
+            state,
+            'All samples were assigned to one batch named "all_one_batch".',
+            title="Batch assignment",
+        )
+    else:
+        add_text(
+            state,
+            (
+                f"Batches were identified using '{distinguisher}' "
+                f"from column '{distinguisher_col}'. "
+                f"Number of batches detected: {len(set(state.batch))}."
+            ),
+            title="Batch assignment",
+        )
+  
     return state.data, state.batch_info
 
 
@@ -833,7 +848,6 @@ def _extracter_metadata(
     Extract metadata from batch_info.
     """
     data = state.data
-    report = state.report
     batch_info = state.batch_info
 
     if data is None:
@@ -887,13 +901,16 @@ def _extracter_metadata(
 
     state.metadata = metadata
 
-    if report is not None:
-        text = (
-            "metadata matrix was created from batch_info by choosing columns: "
-            + str(columns_to_keep)
-            + "."
-        )
-        report.add_together([("text", text), "line"])
+    # REPORTING ---------------------------------------------------------
+    print(f"Metadata matrix was created from batch_info by choosing columns: {str(columns_to_keep)}.")
+    add_text(
+        state,
+        (
+            f"Sample metadata matrix created for {state.metadata.shape[0]} samples. "
+            f"Metadata columns retained: {state.metadata.columns.tolist()}."
+        ),
+        title="Sample metadata",
+    )
 
     return state.metadata
 
@@ -1089,7 +1106,6 @@ def _load_table_auto(file_path, min_columns=2):
 
 
 def _loader_data(state: WorkflowState, data_input_file_name):
-    report = state.report
 
     data, load_info = _load_table_auto(
         data_input_file_name,
@@ -1098,32 +1114,28 @@ def _loader_data(state: WorkflowState, data_input_file_name):
 
     state.data = data
 
-    print("Data loaded.")
+    # REPORTING ---------------------------------------------------------
+    print("(Compound Discoverer) Data loaded.")
     print("Load info:", load_info)
 
-    if report is not None:
-        text = (
-            "Data were loaded from: "
-            + str(data_input_file_name)
-            + " (Compound Discoverer data). "
-            + "Detected loading settings: "
-            + str(load_info)
-            + "."
-        )
-
-        report.add_together(
-            [
-                ("text", text),
-                ("table", state.data),
-                "line",
-            ]
-        )
+    add_text(
+        state,
+        (
+            f"Raw data table loaded successfully. "
+            f"Rows: {state.data.shape[0]}. "
+            f"Columns: {state.data.shape[1]}. "
+            f"Detected file type: {load_info.get('file_type')}. "
+            f"Sheet: {load_info.get('sheet_name')}. "
+            f"Separator: {load_info.get('separator')}. "
+            f"Encoding: {load_info.get('encoding')}."
+        ),
+        title="Data loading",
+    )
 
     return state.data, load_info
 
 
 def _loader_batch_info(state: WorkflowState, batch_info_input_file_name):
-    report = state.report
 
     batch_info, load_info = _load_table_auto(
         batch_info_input_file_name,
@@ -1132,24 +1144,22 @@ def _loader_batch_info(state: WorkflowState, batch_info_input_file_name):
 
     state.batch_info = batch_info
 
+    # REPORTING ---------------------------------------------------------
     print("Batch info loaded.")
     print("Load info:", load_info)
-
-    if report is not None:
-        text = (
-            "Batch info matrix was loaded from: "
-            + str(batch_info_input_file_name)
-            + ". Detected loading settings: "
-            + str(load_info)
-            + "."
-        )
-
-        report.add_together(
-            [
-                ("text", text),
-                "line",
-            ]
-        )
+    add_text(
+        state,
+        (
+            f"Batch information loaded successfully. "
+            f"Rows: {state.batch_info.shape[0]}. "
+            f"Columns: {state.batch_info.shape[1]}. "
+            f"Detected file type: {load_info.get('file_type')}. "
+            f"Sheet: {load_info.get('sheet_name')}. "
+            f"Separator: {load_info.get('separator')}. "
+            f"Encoding: {load_info.get('encoding')}."
+        ),
+        title="Batch information loading",
+    )
 
     return state.batch_info, load_info
 
@@ -1340,20 +1350,52 @@ def _initialize_sample_type_lists(
     if len(state.dilution_series_samples) > 0 and state.dil_concentrations is None:
         state.dil_concentrations = []
 
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        (
+            f"QC samples detected: {len(state.QC_samples)}. "
+            f"Blank samples detected: {len(state.blank_samples)}. "
+            f"Dilution-series samples detected: {len(state.dilution_series_samples)}. "
+            f"Standard samples detected: {len(state.standard_samples)}."
+        ),
+        title="Detected sample types",
+    )
+    add_text(
+        state,
+        (
+            f"Dilution-series identifier: '{dil_distinguisher}'. "
+            f"Dilution concentration source: {concentration_source}. "
+            f"Dilution concentrations: {state.dil_concentrations}."
+        ),
+        title="Dilution series",
+    )
+    add_text(
+        state,
+        (
+            f"QC samples: {state.QC_samples}\n"
+            f"Blank samples: {state.blank_samples}\n"
+            f"Dilution-series samples: {state.dilution_series_samples}\n"
+            f"Standard samples: {state.standard_samples}"
+        ),
+        title="Detected sample lists",
+        preformatted=True,
+    )
     if len(state.dilution_series_samples) > 0 and state.dil_concentrations:
         n_dil = len(state.dilution_series_samples)
         n_conc = len(state.dil_concentrations)
-        if n_conc != n_dil and n_dil % n_conc != 0:
-            print(
-                "Warning: dilution_concentrations length ("
-                + str(n_conc)
-                + ") does not match dilution-series sample count ("
-                + str(n_dil)
-                + ") and is not an even per-series divisor. "
-                "This can still be valid for some workflows, but check the "
-                "number_of_series parameter in dilution linearity filtering."
-            )
 
+        if n_conc != n_dil and n_dil % n_conc != 0:
+            add_text(
+                state,
+                (
+                    f"Warning: {n_conc} dilution concentration values were found for "
+                    f"{n_dil} dilution-series samples. The concentration count is neither "
+                    f"equal to the sample count nor an even divisor of it. "
+                    f"Check the dilution-series definition and number_of_series setting."
+                ),
+                title="Dilution-series warning",
+            )
     print("Sample type lists initialized.")
     print(f"QC samples: {len(state.QC_samples)}")
     print(f"Blank samples: {len(state.blank_samples)}")
@@ -1361,34 +1403,6 @@ def _initialize_sample_type_lists(
     print(f"Dilution concentrations: {state.dil_concentrations}")
     print(f"Dilution concentrations source: {concentration_source}")
     print(f"Standard samples: {len(state.standard_samples)}")
-
-    if state.report is not None:
-        state.report.add_together(
-            [
-                ("text", "Sample type lists were initialized.", "bold"),
-                (
-                    "text",
-                    f"QC samples distinguished by Sample Type == {qc_samples_distinguisher!r}: {len(state.QC_samples)}",
-                ),
-                (
-                    "text",
-                    f"Blank samples distinguished by Sample Type == {blank_samples_distinguisher!r}: {len(state.blank_samples)}",
-                ),
-                (
-                    "text",
-                    f"Standard samples distinguished by Sample Type == {standard_samples_distinguisher!r}: {len(state.standard_samples)}",
-                ),
-                (
-                    "text",
-                    f"Dilution-series samples distinguished by sample name containing {dil_distinguisher!r}: {len(state.dilution_series_samples)}",
-                ),
-                (
-                    "text",
-                    f"Dilution concentrations ({concentration_source}): {state.dil_concentrations}",
-                ),
-                "line",
-            ]
-        )
 
     return {
         "QC_samples": state.QC_samples,

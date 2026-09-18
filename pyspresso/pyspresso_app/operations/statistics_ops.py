@@ -7,8 +7,9 @@ import warnings
 import numpy as np
 import pandas as pd
 from joblib import dump
+from itertools import cycle
 
-from scipy.stats import shapiro, ttest_ind, mannwhitneyu
+from scipy.stats import shapiro, ttest_ind, mannwhitneyu, zscore
 from sklearn.model_selection import StratifiedKFold
 from sklearn.decomposition import PCA
 from sklearn.cross_decomposition import PLSRegression
@@ -17,6 +18,12 @@ from sklearn.metrics import r2_score, roc_auc_score
 from pyspresso_app.core.registry import register_operation
 from pyspresso_app.core.operation_models import OperationTag, ParameterDef
 from pyspresso_app.core.workflow_models import WorkflowState
+from pyspresso_app.core.html_reporter import (
+    add_text,
+    add_table,
+    add_figure,
+)
+
 
 # ---------------------------------------------------------------------
 # Helper functions
@@ -605,7 +612,6 @@ def statistics_correlation_means(
 
     data = state.data
     metadata = state.metadata
-    report = state.report
     output_file_prefix = _get_output_file_prefix(state)
     main_folder, statistics_folder = _ensure_statistics_folder(state)
     suffixes = _get_suffixes(state)
@@ -700,13 +706,31 @@ def statistics_correlation_means(
             "figure",
             "Group mean correlation matrix heatmap",
         )
+        
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        (
+            f"Correlation of group mean feature profiles was calculated using "
+            f"the '{method}' correlation method. "
+            f"Samples were grouped according to metadata column '{column_name}'."
+        ),
+        title="Correlation of group means",
+    )
 
-    if report is not None:
-        text = (
-            "Group correlation matrix heatmap was created. Grouping is based on: "
-            + column_name
+    add_table(
+        state,
+        correlation_matrix,
+        title="Group correlation matrix",
+        include_index=True,
+    )
+
+    if image_for_report is not None:
+        add_figure(
+            state,
+            image_for_report,
+            title="Group correlation matrix heatmap",
         )
-        report.add_together([("text", text), ("image", image_for_report), "pagebreak"])
 
     return {
         "message": "Group correlation matrix heatmap was created.",
@@ -738,7 +762,6 @@ def statistics_correlation_means(
 )
 def statistics_PCA(state: WorkflowState, n_components_for_candidates=2):
     data = state.data
-    report = state.report
 
     if data is None:
         raise ValueError("No data loaded in state.data.")
@@ -835,8 +858,47 @@ def statistics_PCA(state: WorkflowState, n_components_for_candidates=2):
         state, candidates_path, "table", "Candidate features after PCA"
     )
 
-    if report is not None:
-        report.add_text("<b>PCA (" + str(state.pca_count) + ") was performed. </b>")
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        (
+            f"PCA analysis {state.pca_count} was performed on "
+            f"{data.shape[0]} features and {data.shape[1] - 1} samples. "
+            f"{len(candidate_loadings)} candidate features were identified "
+            f"from the first {n_components_for_candidates} principal components."
+        ),
+        title=f"PCA analysis {state.pca_count}",
+    )
+
+    explained_variance_table = pd.DataFrame(
+    {
+        "Component": labels,
+        "Explained variance (%)": per_var,
+    }
+    )
+
+    add_table(
+        state,
+        explained_variance_table,
+        title="Explained variance",
+        include_index=False,
+        max_rows=20,
+    )
+    if len(candidate_loadings) > 0:
+        candidate_table = pd.DataFrame(
+            {
+                "cpdID": candidate_loadings.to_list(),
+                "Loading distance": candidate_loadings_scores.to_list(),
+            }
+        )
+
+        add_table(
+            state,
+            candidate_table,
+            title="PCA candidate features",
+            include_index=False,
+            max_rows=50,
+        )
 
     return {
         "message": "PCA was performed.",
@@ -947,7 +1009,6 @@ def statistics_PLSDA(
 
     data = state.data.copy()
     metadata = state.metadata.copy()
-    report = state.report
 
     was_centered = state.was_centered
     was_scaled = state.was_scaled
@@ -1352,22 +1413,71 @@ def statistics_PLSDA(
         state, candidates_path, "table", "Candidate features after PLS-DA"
     )
 
-    if report is not None:
-        text0 = (
-            f"<b>PLS-DA</b> was performed with the {str(response_column_names)} "
-            "column(s) as the response."
-        )
-        text1 = (
-            "Double cross-validation was used for model validation "
-            f"(outer splits: {actual_outer_splits}, outer repeats: {outer_repeats}, "
-            f"inner splits: {inner_splits}). LV selection metric: {selection_metric}. "
-            f"Final number of components: {n_comp}. Mean AUROC: {auc:.4f}, "
-            f"mean NMC: {nmc:.2f}, "
-            f"CV accuracy: {cv_accuracy:.4f}, R2_macro: {r2_macro:.4f}, "
-            f"Q2_macro: {q2_macro:.4f}."
-        )
-        report.add_together([("text", text0), ("text", text1), "line"])
+    # REPORTING ---------------------------------------------------------
 
+    add_text(
+        state,
+        (
+            f"PLS-DA was performed using the following response column(s): "
+            f"{response_columns}. "
+            f"The final model contains {n_comp} latent variable(s)."
+        ),
+        title="PLS-DA",
+    )
+    add_text(
+        state,
+        (
+            f"Repeated double cross-validation was used. "
+            f"Outer folds: {actual_outer_splits}; "
+            f"outer repeats: {outer_repeats}; "
+            f"inner folds: {inner_splits}. "
+            f"Latent-variable selection metric: {selection_metric}. "
+            f"Random seed: {random_state}."
+        ),
+        title="Model validation",
+    )
+    plsda_metrics_table = pd.DataFrame({
+        "Metric": ["Mean AUROC", "Mean NMC", "Mean CV accuracy", "R2 macro", "Q2 macro",],
+        "Value": [auc, nmc, cv_accuracy, r2_macro, q2_macro,],}
+    )
+    add_table(
+        state,
+        plsda_metrics_table,
+        title="PLS-DA performance",
+        include_index=False,
+    )
+
+    add_text(
+        state,
+        (
+            "R2 describes the goodness of fit of the final PLS-DA model fitted "
+            "to the complete dataset. Q2 describes predictive performance estimated "
+            "from held-out predictions in repeated outer cross-validation."
+        ),
+        title="R2 and Q2 interpretation",
+    )
+    per_class_metrics = pd.DataFrame({
+        "Class": [str(name) for name in class_names],
+        "R2": [r2_per_class[str(name)] for name in class_names],
+        "Q2": [q2_per_class[str(name)] for name in class_names],}
+    )
+    add_table(
+        state,
+        per_class_metrics,
+        title="Per-class R2 and Q2",
+        include_index=False,
+    )
+    class_count_table = pd.DataFrame({
+        "Class": [str(name) for name in class_names],
+        "Samples": [int(class_counts.get(i, 0)) for i in range(len(class_names))],}
+    )
+    add_table(
+        state,
+        class_count_table,
+        title="PLS-DA classes",
+        include_index=False,
+    )
+    
     return {
         "message": "PLS-DA was performed.",
         "warnings": warning_messages,
@@ -1533,16 +1643,31 @@ def visualizer_PLSDA(
         out_path = _unique_path(base_path + suffix)
         fig.savefig(out_path, dpi=300, bbox_inches="tight")
         saved_paths.append(out_path)
-    plt.close(fig)
-
+    
     if saved_paths:
         _add_artifact_if_available(
             state, saved_paths[0], "figure", "PLS-DA score plot"
         )
-    if state.report is not None and saved_paths:
-        state.report.add_together(
-            [("text", "PLS-DA score plot was created."), ("image", saved_paths[0]), "line"]
-        )
+
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        (
+            f"PLS-DA score plot created for {x_column} versus {y_column}. "
+            f"Samples were colored by '{color_by}'."
+            if color_by
+            else
+            f"PLS-DA score plot created for {x_column} versus {y_column}."
+        ),
+        title="PLS-DA score plot",
+    )
+
+    add_figure(
+        state,
+        fig,
+        title=f"{x_column} vs {y_column}",
+    )
+    plt.close(fig)
 
     return {
         "message": "PLS-DA score plot was created.",
@@ -1614,17 +1739,29 @@ def visualizer_PLSDA_vips(state: WorkflowState, top_n=30, plt_name_suffix=""):
         out_path = _unique_path(base_path + suffix)
         fig.savefig(out_path, dpi=300, bbox_inches="tight")
         saved_paths.append(out_path)
-    plt.close(fig)
 
     if saved_paths:
         _add_artifact_if_available(
             state, saved_paths[0], "figure", "PLS-DA VIP score plot"
         )
-    if state.report is not None and saved_paths:
-        state.report.add_together(
-            [("text", "PLS-DA VIP score plot was created."), ("image", saved_paths[0]), "line"]
-        )
 
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        (
+            f"The {len(plot_values)} highest PLS-DA VIP scores are shown below. "
+            f"The dashed reference line indicates VIP = 1."
+        ),
+        title="PLS-DA VIP scores",
+    )
+
+    add_figure(
+        state,
+        fig,
+        title=f"Top {len(plot_values)} PLS-DA VIP scores",
+    )
+
+    plt.close(fig)
     return {
         "message": "PLS-DA VIP score plot was created.",
         "saved_paths": saved_paths,
@@ -1695,7 +1832,6 @@ def statistics_ttest(
 
     data = state.data.copy()
     metadata = state.metadata.copy()
-    report = state.report
     output_file_prefix = _get_output_file_prefix(state)
     was_centered = state.was_centered
     was_scaled = state.was_scaled
@@ -1883,13 +2019,40 @@ def statistics_ttest(
         state, csv_name, "table", "t-test / Mann-Whitney results"
     )
 
-    if report is not None:
-        text0 = f"<b>t-test</b> was performed for the groups: {group1} vs {group2}."
-        text1 = "The results are shown in the table below."
-        report.add_together(
-            [("text", text0), ("text", text1), ("table", p_values_table), "line"]
-        )
-        report.add_text(f"The t-test results were saved to: {csv_name}")
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        (
+            f"Feature-by-feature statistical comparison was performed between "
+            f"'{group1}' (n={len(group1_samples)}) and "
+            f"'{group2}' (n={len(group2_samples)}). "
+            f"Grouping was based on metadata column '{groups_column_name}'."
+        ),
+        title="t-test / Mann-Whitney U",
+    )
+    add_text(
+        state,
+        (
+            f"Welch's t-test was used when both groups passed the normality check; "
+            f"otherwise the Mann-Whitney U test was used. "
+            f"P-value correction method: {correction_method}. "
+            f"Fold change is expressed as {group2} / {group1}."
+        ),
+        title="Statistical testing",
+    )
+    add_table(
+        state,
+        p_values_table,
+        title="Statistical results",
+        include_index=False,
+        max_rows=100,
+    )
+
+    add_text(
+        state,
+        f"Full statistical results were saved to: {csv_name}",
+        title="Saved results",
+    )
 
     return {
         "message": "t-test / Mann-Whitney U was performed.",
@@ -2000,9 +2163,19 @@ def visualize_PCA_scores(
 
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    color_by = str(color_by).strip()
+    color_by = "" if color_by is None else str(color_by).strip()
 
-    if color_by and state.metadata is not None and color_by in state.metadata.columns:
+    if color_by:
+        if state.metadata is None:
+            raise ValueError(
+                f"Cannot color PCA scores by '{color_by}' because metadata are missing."
+            )
+
+        if color_by not in state.metadata.columns:
+            raise ValueError(
+                f"Color column '{color_by}' was not found in metadata."
+            )
+
         metadata = state.metadata.copy()
 
         if "Sample File" not in metadata.columns:
@@ -2100,23 +2273,31 @@ def visualize_PCA_scores(
         fig.savefig(out_path, dpi=300, bbox_inches="tight")
         saved_paths.append(out_path)
 
-    plt.close(fig)
-
     if len(saved_paths) > 0:
         figure_base_path = os.path.splitext(saved_paths[0])[0]
     else:
         figure_base_path = base_path
 
-    if state.report is not None:
-        png_paths = [path for path in saved_paths if path.endswith(".png")]
-
-        state.report.add_together(
-            [
-                ("text", "PCA score plot was created."),
-                ("image", png_paths[0] if png_paths else saved_paths[0]),
-                "line",
-            ]
+    # REPORTING ---------------------------------------------------------
+    add_text(
+        state,
+        (
+            f"PCA score plot created for {pcx} versus {pcy}. "
+            f"{pcx} explains {per_var[component_x - 1]}% and "
+            f"{pcy} explains {per_var[component_y - 1]}% of the variance."
+        ),
+        title="PCA score plot",
+    )
+    if color_by:
+        add_text(
+            state,
+            f"Samples were colored according to metadata column '{color_by}'.",
         )
+    add_figure(
+        state,
+        fig,
+        title=f"{pcx} vs {pcy}",
+    )
 
     _add_artifact_if_available(
         state,
@@ -2125,6 +2306,7 @@ def visualize_PCA_scores(
         "PCA score plot",
     )
 
+    plt.close(fig)
     return {
         "message": "PCA score plot was created.",
         "figure_base_path": figure_base_path,
@@ -2240,16 +2422,14 @@ def visualizer_PCA_grouped(
     ignore_nans_in_groups=True,
 ):
     """
-    Port of old Workflow.visualizer_PCA_grouped() into GUI operation style.
+    Reworked version for PySPRESSO-APP
     """
 
     plt, sns = _load_plotting()
 
     import matplotlib as mpl
     from matplotlib.patches import Ellipse
-    from scipy.stats import zscore
     from adjustText import adjust_text
-    from itertools import cycle
 
     # GUI may pass "None" as a string, so normalize it to real None.
     if color_column in ["", "None", "none", "null", "NULL"]:
@@ -2263,7 +2443,6 @@ def visualizer_PCA_grouped(
 
     metadata = state.metadata.copy()
     original_metadata = state.metadata.copy()
-    report = state.report
 
     output_file_prefix = _get_output_file_prefix(state)
     main_folder, statistics_folder = _ensure_statistics_folder(state)
@@ -2503,48 +2682,42 @@ def visualizer_PCA_grouped(
         fig.savefig(out_path, bbox_inches="tight", dpi=300)
         saved_paths.append(out_path)
 
-    plt.close(fig)
-
     if len(saved_paths) > 0:
         figure_base_path = os.path.splitext(saved_paths[0])[0]
     else:
         figure_base_path = plt_name
 
-    if column_name is not None and second_column_name is not None:
-        text = (
-            "Detailed PCA plot based on "
-            + column_name
-            + "(colors) and "
-            + second_column_name
-            + "(markers) was created and added into: "
-            + figure_base_path
-        )
-    elif column_name is not None:
-        text = (
-            "Detailed PCA plot based on "
-            + column_name
-            + "(colors) was created and added into: "
-            + figure_base_path
-        )
-    elif second_column_name is not None:
-        text = (
-            "Detailed PCA plot based on "
-            + second_column_name
-            + "(markers) was created and added into: "
-            + figure_base_path
+    # REPORTING ---------------------------------------------------------
+    grouping_description = []
+
+    if color_column is not None:
+        grouping_description.append(
+            f"colors represent '{color_column}'"
         )
 
-    if report is not None:
-        png_paths = [path for path in saved_paths if path.endswith(".png")]
-        image_path = png_paths[0] if png_paths else saved_paths[0]
-
-        report.add_together(
-            [
-                ("text", text),
-                ("image", image_path),
-            ]
+    if marker_column is not None:
+        grouping_description.append(
+            f"marker shapes represent '{marker_column}'"
         )
 
+    add_text(
+        state,
+        (
+            f"Grouped PCA score plot was created; "
+            f"{' and '.join(grouping_description)}. "
+            f"Outlier crossing enabled: {crossout_outliers}. "
+            f"Zoomed group: {zoom_in_group if zoom_in_group is not None else 'none'}."
+        ),
+        title="Grouped PCA plot",
+    )
+
+    add_figure(
+        state,
+        fig,
+        title=graph_title,
+    )
+
+    plt.close(fig)
     return {
         "figure_base_path": figure_base_path,
         "saved_paths": saved_paths,
