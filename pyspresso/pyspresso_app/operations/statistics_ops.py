@@ -917,7 +917,7 @@ def statistics_PCA(state: WorkflowState, n_components_for_candidates=2):
     label="PLS-DA",
     description="Perform PLS-DA with double cross-validation and VIP-based candidate selection.",
     citation="",
-    category_tags=[OperationTag.STATISTICS],
+    category_tags=[OperationTag.STATISTICS, OperationTag.VISUALIZATION],
     parameter_schema=[
         ParameterDef(
             name="response_column_names",
@@ -988,6 +988,7 @@ def statistics_PCA(state: WorkflowState, n_components_for_candidates=2):
         "plsda_metadata",
         "plsda_scores",
         "plsda_vip_scores",
+        "figures",
         "candidates",
     ],
 )
@@ -1218,6 +1219,13 @@ def statistics_PLSDA(
         select_metric=selection_metric,
         rng=random_state,
     )
+    if not chosen_lvs:
+        raise RuntimeError(
+            "PLS-DA cross-validation did not select any valid latent variables. "
+            "No final PLS-DA model could be created. "
+            "This is not an expected model result. Check the number of samples "
+            "in each class, the cross-validation settings, and the input data."
+        )
 
     lv_counts = pd.Series(chosen_lvs).value_counts().sort_index()
     modal_lvs = lv_counts.loc[lv_counts == lv_counts.max()].index
@@ -1413,6 +1421,148 @@ def statistics_PLSDA(
         state, candidates_path, "table", "Candidate features after PLS-DA"
     )
 
+    # DEFAULT PLS-DA SCORE PLOT -----------------------------------------
+    score_plot_path = None
+    score_plot_title = None
+
+    plt, _ = _load_plotting()
+
+    groups = (
+        scores_df["PLSDA response"]
+        .astype(object)
+        .where(
+            scores_df["PLSDA response"].notna(),
+            "Missing",
+        )
+    )
+
+    # Standard 2D score plot: LV1 vs LV2
+    if n_comp >= 2:
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        for group in sorted(
+            groups.unique(),
+            key=_natural_sort_key,
+        ):
+            subset = scores_df.loc[groups == group]
+
+            ax.scatter(
+                subset["LV1"],
+                subset["LV2"],
+                label=str(group),
+                alpha=0.8,
+            )
+
+        ax.axhline(
+            0,
+            color="grey",
+            linewidth=0.7,
+            alpha=0.5,
+        )
+
+        ax.axvline(
+            0,
+            color="grey",
+            linewidth=0.7,
+            alpha=0.5,
+        )
+
+        ax.set_xlabel("LV1")
+        ax.set_ylabel("LV2")
+        ax.set_title("PLS-DA score plot")
+
+        score_plot_title = "PLS-DA score plot — LV1 vs LV2"
+
+        score_plot_path = _unique_path(
+            os.path.join(
+                statistics_folder,
+                output_file_prefix
+                + "_PLSDA_scores_LV1_vs_LV2.png",
+            )
+        )
+
+    # One-dimensional score plot when final model contains only LV1
+    else:
+        fig, ax = plt.subplots(figsize=(9, 3.5))
+
+        rng = np.random.default_rng(random_state)
+
+        for group in sorted(
+            groups.unique(),
+            key=_natural_sort_key,
+        ):
+            subset = scores_df.loc[groups == group]
+
+            # Small vertical jitter is only for visual separation.
+            y_jitter = rng.uniform(
+                -0.08,
+                0.08,
+                size=len(subset),
+            )
+
+            ax.scatter(
+                subset["LV1"],
+                y_jitter,
+                label=str(group),
+                alpha=0.8,
+            )
+
+        ax.axvline(
+            0,
+            color="grey",
+            linewidth=0.7,
+            alpha=0.5,
+        )
+
+        ax.axhline(
+            0,
+            color="grey",
+            linewidth=0.5,
+            alpha=0.25,
+        )
+
+        ax.set_xlabel("LV1")
+
+        # Y-axis has no model meaning.
+        ax.set_yticks([])
+        ax.set_ylabel("")
+
+        ax.set_title("PLS-DA score plot — LV1")
+
+        score_plot_title = "PLS-DA score plot — LV1"
+
+        score_plot_path = _unique_path(
+            os.path.join(
+                statistics_folder,
+                output_file_prefix
+                + "_PLSDA_scores_LV1.png",
+            )
+        )
+
+    ax.legend(
+        title="PLS-DA response",
+        bbox_to_anchor=(1.05, 1),
+        loc="upper left",
+        frameon=False,
+    )
+
+    fig.tight_layout()
+
+    fig.savefig(
+        score_plot_path,
+        dpi=250,
+        bbox_inches="tight",
+    )
+
+    plt.close(fig)
+
+    _add_artifact_if_available(
+        state,
+        score_plot_path,
+        "figure",
+        "PLS-DA score plot colored by model response",
+    )
+
     # REPORTING ---------------------------------------------------------
 
     add_text(
@@ -1424,26 +1574,84 @@ def statistics_PLSDA(
         ),
         title="PLS-DA",
     )
-    add_text(
+    validation_setup_table = pd.DataFrame(
+        {
+            "Setting": [
+                "Response column(s)",
+                "Number of classes",
+                "Final latent variables",
+                "Outer CV folds",
+                "Outer CV repeats",
+                "Inner CV folds",
+                "LV selection metric",
+                "Random seed",
+            ],
+            "Value": [
+                ", ".join(response_columns),
+                len(class_names),
+                n_comp,
+                (
+                    f"{actual_outer_splits} "
+                    f"(requested {outer_splits})"
+                ),
+                outer_repeats,
+                inner_splits,
+                selection_metric,
+                random_state,
+            ],
+        }
+    )
+
+    add_table(
         state,
-        (
-            f"Repeated double cross-validation was used. "
-            f"Outer folds: {actual_outer_splits}; "
-            f"outer repeats: {outer_repeats}; "
-            f"inner folds: {inner_splits}. "
-            f"Latent-variable selection metric: {selection_metric}. "
-            f"Random seed: {random_state}."
-        ),
-        title="Model validation",
+        validation_setup_table,
+        title="PLS-DA validation setup",
+        include_index=False,
     )
-    plsda_metrics_table = pd.DataFrame({
-        "Metric": ["Mean AUROC", "Mean NMC", "Mean CV accuracy", "R2 macro", "Q2 macro",],
-        "Value": [auc, nmc, cv_accuracy, r2_macro, q2_macro,],}
+
+    plsda_metrics_table = pd.DataFrame(
+        {
+            "Metric": [
+                "Mean AUROC",
+                "Mean CV accuracy",
+                "Mean NMC",
+                "Consensus AUROC",
+                "Consensus CV accuracy",
+                "Consensus NMC",
+                "R2 macro",
+                "Q2 macro",
+            ],
+            "Value": [
+                f"{auc:.4f}",
+                f"{cv_accuracy:.4f}",
+                f"{nmc:.2f}",
+                (
+                    f"{consensus_auc:.4f}"
+                    if np.isfinite(consensus_auc)
+                    else "NA"
+                ),
+                f"{consensus_accuracy:.4f}",
+                str(consensus_nmc),
+                f"{r2_macro:.4f}",
+                f"{q2_macro:.4f}",
+            ],
+            "SD across repeats": [
+                f"{state.plsda_stats['AUROC_std']:.4f}",
+                f"{state.plsda_stats['CV_accuracy_std']:.4f}",
+                f"{state.plsda_stats['NMC_std']:.2f}",
+                "—",
+                "—",
+                "—",
+                "—",
+                "—",
+            ],
+        }
     )
+
     add_table(
         state,
         plsda_metrics_table,
-        title="PLS-DA performance",
+        title="PLS-DA validation performance",
         include_index=False,
     )
 
@@ -1461,6 +1669,27 @@ def statistics_PLSDA(
         "R2": [r2_per_class[str(name)] for name in class_names],
         "Q2": [q2_per_class[str(name)] for name in class_names],}
     )
+
+    lv_selection_table = pd.DataFrame(
+        {
+            "Latent variables": [
+                int(value)
+                for value in lv_counts.index
+            ],
+            "Times selected": [
+                int(value)
+                for value in lv_counts.values
+            ],
+        }
+    )
+
+    add_table(
+        state,
+        lv_selection_table,
+        title="Latent-variable selection during double CV",
+        include_index=False,
+    )
+
     add_table(
         state,
         per_class_metrics,
@@ -1477,6 +1706,53 @@ def statistics_PLSDA(
         title="PLS-DA classes",
         include_index=False,
     )
+
+    if score_plot_path is not None:
+        add_text(
+            state,
+            (
+                "The score plot shows the first two latent variables "
+                "of the final PLS-DA model fitted to the complete dataset. "
+                "Samples are colored according to the response classes "
+                "used to train the model."
+            ),
+            title="PLS-DA score plot",
+        )
+
+        add_figure(
+            state,
+            score_plot_path,
+            title="PLS-DA score plot — LV1 vs LV2",
+        )
+
+    else:
+            add_text(
+        state,
+        (
+            "The score plot shows the latent-variable scores of the final "
+            "PLS-DA model fitted to the complete dataset. "
+            "Samples are colored according to the response classes used "
+            "to train the model."
+        ),
+        title="PLS-DA score plot",
+    )
+
+    if n_comp == 1:
+        add_text(
+            state,
+            (
+                "The final model contains one latent variable. "
+                "Therefore, scores are displayed along LV1 only. "
+                "Small vertical jitter is used solely to prevent overlapping "
+                "points and does not represent an additional model dimension."
+            ),
+        )
+
+    add_figure(
+        state,
+        score_plot_path,
+        title=score_plot_title,
+    )
     
     return {
         "message": "PLS-DA was performed.",
@@ -1487,6 +1763,7 @@ def statistics_PLSDA(
         "candidates_path": candidates_path,
         "model_path": model_path,
         "scores_path": scores_path,
+        "score_plot_path": score_plot_path,
         "cv_predictions_path": cv_predictions_path,
     }
 

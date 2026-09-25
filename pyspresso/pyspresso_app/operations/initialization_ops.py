@@ -403,6 +403,10 @@ def _initializer_folders(state: WorkflowState):
             main_folder,
             "dropped_features",
         ),
+        os.path.join(
+            main_folder,
+            "data_checkpoints",
+        ),
     ]
 
     for folder in folders:

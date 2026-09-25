@@ -1768,8 +1768,9 @@ def drop_blank_samples(state: WorkflowState):
         title="Dropping blank samples"
     )
     
-    result["dropped_group"] = "blank_samples"
-    return result
+    return {
+        "dropped_sample_blank_indexes": blank_indexes
+    }
 
 
 @register_operation(
