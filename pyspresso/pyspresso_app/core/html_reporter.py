@@ -14,7 +14,6 @@ from typing import Any, Mapping, Sequence
 
 import pandas as pd
 
-
 REPORT_SCHEMA_VERSION = 1
 DEFAULT_REPORT_FILE_NAME = "report"
 
@@ -80,21 +79,13 @@ def configure_report(
         )
 
         if workflow_name:
-            manifest["workflow_name"] = str(
-                workflow_name
-            )
+            manifest["workflow_name"] = str(workflow_name)
 
         if subtitle is not None:
-            manifest["subtitle"] = str(
-                subtitle
-            )
+            manifest["subtitle"] = str(subtitle)
 
         if logo_path is not None:
-            manifest["logo"] = (
-                _image_data_uri_from_path(
-                    logo_path
-                )
-            )
+            manifest["logo"] = _image_data_uri_from_path(logo_path)
 
         _persist(
             paths,
@@ -106,9 +97,7 @@ def configure_report(
             paths,
         )
 
-        return str(
-            paths["html"]
-        )
+        return str(paths["html"])
 
 
 def begin_step(
@@ -130,15 +119,8 @@ def begin_step(
     Re-running the same step creates another independent report block.
     """
 
-    if (
-        not operation_name
-        or not str(
-            operation_name
-        ).strip()
-    ):
-        raise ValueError(
-            "operation_name must be a non-empty string."
-        )
+    if not operation_name or not str(operation_name).strip():
+        raise ValueError("operation_name must be a non-empty string.")
 
     with _REPORT_LOCK:
         paths = _report_paths(
@@ -154,16 +136,10 @@ def begin_step(
         )
 
         if workflow_name:
-            manifest["workflow_name"] = str(
-                workflow_name
-            )
+            manifest["workflow_name"] = str(workflow_name)
 
         if logo_path is not None:
-            manifest["logo"] = (
-                _image_data_uri_from_path(
-                    logo_path
-                )
-            )
+            manifest["logo"] = _image_data_uri_from_path(logo_path)
 
         block_id = uuid.uuid4().hex
 
@@ -171,34 +147,23 @@ def begin_step(
 
         if step_id is not None:
             previous_runs = sum(
-                1
-                for block in manifest["blocks"]
-                if block.get("step_id")
-                == step_id
+                1 for block in manifest["blocks"] if block.get("step_id") == step_id
             )
 
         block = {
             "id": block_id,
             "step_id": step_id,
             "operation_id": operation_id,
-            "operation_name": str(
-                operation_name
-            ),
+            "operation_name": str(operation_name),
             "run_number": previous_runs + 1,
-            "parameters": _json_safe(
-                dict(
-                    parameters or {}
-                )
-            ),
+            "parameters": _json_safe(dict(parameters or {})),
             "status": "running",
             "started_at": _utc_now_iso(),
             "finished_at": None,
             "items": [],
         }
 
-        manifest["blocks"].append(
-            block
-        )
+        manifest["blocks"].append(block)
 
         _persist(
             paths,
@@ -233,19 +198,9 @@ def add_text(
 
     item = {
         "type": "text",
-        "title": (
-            None
-            if title is None
-            else str(title)
-        ),
-        "text": (
-            ""
-            if text is None
-            else str(text)
-        ),
-        "preformatted": bool(
-            preformatted
-        ),
+        "title": (None if title is None else str(title)),
+        "text": ("" if text is None else str(text)),
+        "preformatted": bool(preformatted),
     }
 
     _append_item(
@@ -317,19 +272,9 @@ def add_figure(
 
     item = {
         "type": "figure",
-        "title": (
-            None
-            if title is None
-            else str(title)
-        ),
-        "caption": (
-            None
-            if caption is None
-            else str(caption)
-        ),
-        "alt": str(
-            alt or "Plot"
-        ),
+        "title": (None if title is None else str(title)),
+        "caption": (None if caption is None else str(caption)),
+        "alt": str(alt or "Plot"),
         "src": data_uri,
     }
 
@@ -348,11 +293,7 @@ def finish_step(
     Close the active operation block.
     """
 
-    normalized = (
-        str(status)
-        .strip()
-        .lower()
-    )
+    normalized = str(status).strip().lower()
 
     aliases = {
         "done": "success",
@@ -367,25 +308,15 @@ def finish_step(
     }
 
     if normalized not in aliases:
-        raise ValueError(
-            "status must be success, error, blocked or cancelled."
-        )
+        raise ValueError("status must be success, error, blocked or cancelled.")
 
-    normalized = aliases[
-        normalized
-    ]
+    normalized = aliases[normalized]
 
     with _REPORT_LOCK:
-        paths, manifest, block = (
-            _load_active_block(
-                state
-            )
-        )
+        paths, manifest, block = _load_active_block(state)
 
         block["status"] = normalized
-        block["finished_at"] = (
-            _utc_now_iso()
-        )
+        block["finished_at"] = _utc_now_iso()
 
         _persist(
             paths,
@@ -415,9 +346,7 @@ def get_report_path(
         report_file_name=report_file_name,
     )
 
-    return str(
-        paths["html"]
-    )
+    return str(paths["html"])
 
 
 # =============================================================================
@@ -431,9 +360,7 @@ def _render_time(
     if not value:
         return ""
 
-    value = str(
-        value
-    )
+    value = str(value)
 
     return (
         '<time class="local-time" '
@@ -444,28 +371,15 @@ def _render_time(
 
 
 def _utc_now_iso() -> str:
-    return (
-        datetime.now(
-            timezone.utc
-        )
-        .replace(
-            microsecond=0
-        )
-        .isoformat()
-    )
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _safe_stem(
     value: Any,
 ) -> str:
-    raw = str(
-        value
-        or DEFAULT_REPORT_FILE_NAME
-    ).strip()
+    raw = str(value or DEFAULT_REPORT_FILE_NAME).strip()
 
-    raw = Path(
-        raw
-    ).stem
+    raw = Path(raw).stem
 
     raw = re.sub(
         r"[^\w\-. ]+",
@@ -480,14 +394,9 @@ def _safe_stem(
         raw,
     )
 
-    raw = raw.strip(
-        "._"
-    )
+    raw = raw.strip("._")
 
-    return (
-        raw
-        or DEFAULT_REPORT_FILE_NAME
-    )
+    return raw or DEFAULT_REPORT_FILE_NAME
 
 
 def _report_paths(
@@ -507,13 +416,9 @@ def _report_paths(
             None,
         )
     ):
-        html_path = Path(
-            state._html_report_html_path
-        )
+        html_path = Path(state._html_report_html_path)
 
-        manifest_path = Path(
-            state._html_report_manifest_path
-        )
+        manifest_path = Path(state._html_report_manifest_path)
 
         return {
             "directory": html_path.parent,
@@ -521,9 +426,7 @@ def _report_paths(
             "manifest": manifest_path,
         }
 
-    directory_value = (
-        report_directory
-    )
+    directory_value = report_directory
 
     if directory_value is None:
         directory_value = getattr(
@@ -532,44 +435,28 @@ def _report_paths(
             None,
         )
 
-    if (
-        directory_value is None
-        or str(
-            directory_value
-        ).strip()
-        == ""
-    ):
+    if directory_value is None or str(directory_value).strip() == "":
         raise ValueError(
             "No HTML report directory is available. "
             "Set state.main_folder or pass report_directory."
         )
 
-    directory = Path(
-        directory_value
-    ).expanduser()
+    directory = Path(directory_value).expanduser()
 
     # Keep workflow paths compatible with the existing frontend.
     # "Demo Workflow" and "outputs/Demo Workflow" resolve to the same place.
     if not directory.is_absolute():
         parts = directory.parts
 
-        if (
-            not parts
-            or parts[0] != "outputs"
-        ):
-            directory = (
-                Path("outputs")
-                / directory
-            )
+        if not parts or parts[0] != "outputs":
+            directory = Path("outputs") / directory
 
     directory.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    configured_name = (
-        report_file_name
-    )
+    configured_name = report_file_name
 
     if configured_name is None:
         configured_name = getattr(
@@ -578,19 +465,11 @@ def _report_paths(
             None,
         )
 
-    stem = _safe_stem(
-        configured_name
-    )
+    stem = _safe_stem(configured_name)
 
-    html_path = (
-        directory
-        / f"{stem}.html"
-    )
+    html_path = directory / f"{stem}.html"
 
-    manifest_path = (
-        directory
-        / f"{stem}.report.json"
-    )
+    manifest_path = directory / f"{stem}.report.json"
 
     return {
         "directory": directory,
@@ -607,26 +486,13 @@ def _default_manifest(
     now = _utc_now_iso()
 
     return {
-        "schema_version":
-            REPORT_SCHEMA_VERSION,
-        "workflow_name":
-            str(
-                workflow_name
-                or "PySPRESSO workflow"
-            ),
-        "subtitle":
-            str(
-                subtitle
-                or ""
-            ),
-        "logo":
-            None,
-        "created_at":
-            now,
-        "updated_at":
-            now,
-        "blocks":
-            [],
+        "schema_version": REPORT_SCHEMA_VERSION,
+        "workflow_name": str(workflow_name or "PySPRESSO workflow"),
+        "subtitle": str(subtitle or ""),
+        "logo": None,
+        "created_at": now,
+        "updated_at": now,
+        "blocks": [],
     }
 
 
@@ -637,26 +503,20 @@ def _load_or_create_manifest(
     subtitle: str,
 ) -> dict[str, Any]:
 
-    manifest_path = paths[
-        "manifest"
-    ]
+    manifest_path = paths["manifest"]
 
     if manifest_path.is_file():
         with manifest_path.open(
             "r",
             encoding="utf-8",
         ) as handle:
-            manifest = json.load(
-                handle
-            )
+            manifest = json.load(handle)
 
         if not isinstance(
             manifest,
             dict,
         ):
-            raise ValueError(
-                "HTML report manifest is malformed."
-            )
+            raise ValueError("HTML report manifest is malformed.")
 
         manifest.setdefault(
             "schema_version",
@@ -665,8 +525,7 @@ def _load_or_create_manifest(
 
         manifest.setdefault(
             "workflow_name",
-            workflow_name
-            or "PySPRESSO workflow",
+            workflow_name or "PySPRESSO workflow",
         )
 
         manifest.setdefault(
@@ -707,22 +566,16 @@ def _persist(
     manifest: dict[str, Any],
 ) -> None:
 
-    manifest["updated_at"] = (
-        _utc_now_iso()
-    )
+    manifest["updated_at"] = _utc_now_iso()
 
     manifest_text = json.dumps(
-        _json_safe(
-            manifest
-        ),
+        _json_safe(manifest),
         ensure_ascii=False,
         indent=2,
         allow_nan=False,
     )
 
-    html_text = _render_html(
-        manifest
-    )
+    html_text = _render_html(manifest)
 
     _atomic_write_text(
         paths["manifest"],
@@ -745,20 +598,14 @@ def _atomic_write_text(
         exist_ok=True,
     )
 
-    temporary = (
-        path.with_name(
-            path.name + ".tmp"
-        )
-    )
+    temporary = path.with_name(path.name + ".tmp")
 
     temporary.write_text(
         text,
         encoding="utf-8",
     )
 
-    temporary.replace(
-        path
-    )
+    temporary.replace(path)
 
 
 def _store_paths_on_state(
@@ -770,17 +617,13 @@ def _store_paths_on_state(
     setattr(
         state,
         "_html_report_html_path",
-        str(
-            paths["html"]
-        ),
+        str(paths["html"]),
     )
 
     setattr(
         state,
         "_html_report_manifest_path",
-        str(
-            paths["manifest"]
-        ),
+        str(paths["manifest"]),
     )
 
     # Optional public paths.
@@ -788,17 +631,13 @@ def _store_paths_on_state(
         setattr(
             state,
             "report_html_path",
-            str(
-                paths["html"]
-            ),
+            str(paths["html"]),
         )
 
         setattr(
             state,
             "report_manifest_path",
-            str(
-                paths["manifest"]
-            ),
+            str(paths["manifest"]),
         )
 
     except Exception:
@@ -832,27 +671,18 @@ def _load_active_block(
             "or finish_step()."
         )
 
-    paths = _report_paths(
-        state
-    )
+    paths = _report_paths(state)
 
-    if not paths[
-        "manifest"
-    ].is_file():
+    if not paths["manifest"].is_file():
         raise RuntimeError(
-            "HTML report manifest does not exist: "
-            f"{paths['manifest']}"
+            "HTML report manifest does not exist: " f"{paths['manifest']}"
         )
 
-    with paths[
-        "manifest"
-    ].open(
+    with paths["manifest"].open(
         "r",
         encoding="utf-8",
     ) as handle:
-        manifest = json.load(
-            handle
-        )
+        manifest = json.load(handle)
 
     for block in reversed(
         manifest.get(
@@ -860,20 +690,14 @@ def _load_active_block(
             [],
         )
     ):
-        if (
-            block.get("id")
-            == block_id
-        ):
+        if block.get("id") == block_id:
             return (
                 paths,
                 manifest,
                 block,
             )
 
-    raise RuntimeError(
-        "Active HTML report block "
-        f"'{block_id}' was not found."
-    )
+    raise RuntimeError("Active HTML report block " f"'{block_id}' was not found.")
 
 
 def _append_item(
@@ -882,20 +706,12 @@ def _append_item(
 ) -> None:
 
     with _REPORT_LOCK:
-        paths, manifest, block = (
-            _load_active_block(
-                state
-            )
-        )
+        paths, manifest, block = _load_active_block(state)
 
         block.setdefault(
             "items",
             [],
-        ).append(
-            _json_safe(
-                item
-            )
-        )
+        ).append(_json_safe(item))
 
         _persist(
             paths,
@@ -925,9 +741,7 @@ def _json_safe(
         value,
         float,
     ):
-        if pd.isna(
-            value
-        ):
+        if pd.isna(value):
             return None
 
         if value in (
@@ -942,9 +756,7 @@ def _json_safe(
         value,
         Path,
     ):
-        return str(
-            value
-        )
+        return str(value)
 
     if isinstance(
         value,
@@ -956,27 +768,16 @@ def _json_safe(
         value,
         Mapping,
     ):
-        return {
-            str(key):
-                _json_safe(item)
-            for key, item
-            in value.items()
-        }
+        return {str(key): _json_safe(item) for key, item in value.items()}
 
     if isinstance(
         value,
         (list, tuple, set),
     ):
-        return [
-            _json_safe(item)
-            for item
-            in value
-        ]
+        return [_json_safe(item) for item in value]
 
     try:
-        if pd.isna(
-            value
-        ):
+        if pd.isna(value):
             return None
 
     except Exception:
@@ -987,9 +788,7 @@ def _json_safe(
         "item",
     ):
         try:
-            return _json_safe(
-                value.item()
-            )
+            return _json_safe(value.item())
 
         except Exception:
             pass
@@ -1004,9 +803,7 @@ def _json_safe(
         except Exception:
             pass
 
-    return str(
-        value
-    )
+    return str(value)
 
 
 def _table_to_item(
@@ -1034,34 +831,25 @@ def _table_to_item(
         Mapping,
     ):
         frame = pd.DataFrame(
-            [
-                (key, value)
-                for key, value
-                in table.items()
-            ],
+            [(key, value) for key, value in table.items()],
             columns=[
                 "Key",
                 "Value",
             ],
         )
 
-    elif (
-        isinstance(
-            table,
-            Sequence,
-        )
-        and not isinstance(
-            table,
-            (
-                str,
-                bytes,
-                bytearray,
-            ),
-        )
+    elif isinstance(
+        table,
+        Sequence,
+    ) and not isinstance(
+        table,
+        (
+            str,
+            bytes,
+            bytearray,
+        ),
     ):
-        frame = pd.DataFrame(
-            table
-        )
+        frame = pd.DataFrame(table)
 
     else:
         raise TypeError(
@@ -1069,43 +857,24 @@ def _table_to_item(
             "mapping or rectangular sequence."
         )
 
-    total_rows = len(
-        frame
-    )
+    total_rows = len(frame)
 
     if max_rows is not None:
-        max_rows = int(
-            max_rows
-        )
+        max_rows = int(max_rows)
 
         if max_rows < 1:
-            raise ValueError(
-                "max_rows must be at least 1 or None."
-            )
+            raise ValueError("max_rows must be at least 1 or None.")
 
-        frame = frame.head(
-            max_rows
-        )
+        frame = frame.head(max_rows)
 
     if include_index:
         frame = frame.reset_index()
 
-    columns = [
-        str(column)
-        for column
-        in frame.columns
-    ]
+    columns = [str(column) for column in frame.columns]
 
     rows = [
-        [
-            _json_safe(
-                value
-            )
-            for value
-            in row
-        ]
-        for row
-        in frame.itertuples(
+        [_json_safe(value) for value in row]
+        for row in frame.itertuples(
             index=False,
             name=None,
         )
@@ -1113,16 +882,10 @@ def _table_to_item(
 
     return {
         "type": "table",
-        "title": (
-            None
-            if title is None
-            else str(title)
-        ),
+        "title": (None if title is None else str(title)),
         "columns": columns,
         "rows": rows,
-        "shown_rows": len(
-            frame
-        ),
+        "shown_rows": len(frame),
         "total_rows": total_rows,
     }
 
@@ -1136,46 +899,19 @@ def _image_data_uri_from_path(
     path_value: str | Path,
 ) -> str:
 
-    path = Path(
-        path_value
-    ).expanduser()
+    path = Path(path_value).expanduser()
 
     if not path.is_file():
-        raise FileNotFoundError(
-            "Image file does not exist: "
-            f"{path}"
-        )
+        raise FileNotFoundError("Image file does not exist: " f"{path}")
 
-    mime_type, _ = (
-        mimetypes.guess_type(
-            path.name
-        )
-    )
+    mime_type, _ = mimetypes.guess_type(path.name)
 
-    if (
-        not mime_type
-        or not mime_type.startswith(
-            "image/"
-        )
-    ):
-        raise ValueError(
-            "Unsupported image type for HTML report: "
-            f"{path.suffix}"
-        )
+    if not mime_type or not mime_type.startswith("image/"):
+        raise ValueError("Unsupported image type for HTML report: " f"{path.suffix}")
 
-    encoded = (
-        base64.b64encode(
-            path.read_bytes()
-        )
-        .decode(
-            "ascii"
-        )
-    )
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
 
-    return (
-        f"data:{mime_type};base64,"
-        f"{encoded}"
-    )
+    return f"data:{mime_type};base64," f"{encoded}"
 
 
 def _figure_to_data_uri(
@@ -1189,32 +925,16 @@ def _figure_to_data_uri(
         figure,
         (str, Path),
     ):
-        return (
-            _image_data_uri_from_path(
-                figure
-            )
-        )
+        return _image_data_uri_from_path(figure)
 
     # Raw PNG bytes.
     if isinstance(
         figure,
         (bytes, bytearray),
     ):
-        encoded = (
-            base64.b64encode(
-                bytes(
-                    figure
-                )
-            )
-            .decode(
-                "ascii"
-            )
-        )
+        encoded = base64.b64encode(bytes(figure)).decode("ascii")
 
-        return (
-            "data:image/png;base64,"
-            + encoded
-        )
+        return "data:image/png;base64," + encoded
 
     # Matplotlib-like Figure.
     if hasattr(
@@ -1226,35 +946,23 @@ def _figure_to_data_uri(
         figure.savefig(
             buffer,
             format="png",
-            dpi=int(
-                dpi
-            ),
+            dpi=int(dpi),
             bbox_inches="tight",
         )
 
-        encoded = (
-            base64.b64encode(
-                buffer.getvalue()
-            )
-            .decode(
-                "ascii"
-            )
-        )
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
 
-        return (
-            "data:image/png;base64,"
-            + encoded
-        )
+        return "data:image/png;base64," + encoded
 
     raise TypeError(
-        "figure must be an image path, image bytes "
-        "or an object exposing savefig()."
+        "figure must be an image path, image bytes " "or an object exposing savefig()."
     )
 
 
 # =============================================================================
 # HTML RENDERING
 # =============================================================================
+
 
 def _render_report_script() -> str:
     return """
@@ -1525,31 +1233,16 @@ window.addEventListener(
 </script>
 """
 
+
 def _render_html(
     manifest: Mapping[str, Any],
 ) -> str:
 
-    workflow_name = escape(
-        str(
-            manifest.get(
-                "workflow_name"
-            )
-            or "PySPRESSO workflow"
-        )
-    )
+    workflow_name = escape(str(manifest.get("workflow_name") or "PySPRESSO workflow"))
 
-    subtitle = escape(
-        str(
-            manifest.get(
-                "subtitle"
-            )
-            or ""
-        )
-    )
+    subtitle = escape(str(manifest.get("subtitle") or ""))
 
-    logo = manifest.get(
-        "logo"
-    )
+    logo = manifest.get("logo")
 
     logo_html = ""
 
@@ -1565,8 +1258,7 @@ def _render_html(
 
     blocks = [
         block
-        for block
-        in manifest.get(
+        for block in manifest.get(
             "blocks",
             [],
         )
@@ -1581,8 +1273,7 @@ def _render_html(
             block,
             block_index=index,
         )
-        for index, block
-        in enumerate(
+        for index, block in enumerate(
             blocks,
             start=1,
         )
@@ -2822,36 +2513,22 @@ def _block_anchor(
     Return a safe, stable HTML anchor for a report block.
     """
 
-    raw_id = str(
-        block.get(
-            "id"
-        )
-        or f"step-{block_index}"
-    )
+    raw_id = str(block.get("id") or f"step-{block_index}")
 
     safe_id = re.sub(
         r"[^A-Za-z0-9_-]+",
         "-",
         raw_id,
-    ).strip(
-        "-"
-    )
+    ).strip("-")
 
     if not safe_id:
-        safe_id = (
-            f"step-{block_index}"
-        )
+        safe_id = f"step-{block_index}"
 
-    return (
-        "block-"
-        + safe_id
-    )
+    return "block-" + safe_id
 
 
 def _render_toc(
-    blocks: Sequence[
-        Mapping[str, Any]
-    ],
+    blocks: Sequence[Mapping[str, Any]],
 ) -> str:
     """
     Render the clickable report table of contents.
@@ -2877,12 +2554,8 @@ def _render_toc(
 
         operation_name = escape(
             str(
-                block.get(
-                    "operation_name"
-                )
-                or block.get(
-                    "operation_id"
-                )
+                block.get("operation_name")
+                or block.get("operation_id")
                 or f"Step {index}"
             )
         )
@@ -2896,15 +2569,9 @@ def _render_toc(
             )
         )
 
-        status = str(
-            block.get(
-                "status"
-            )
-            or "running"
-        ).lower()
+        status = str(block.get("status") or "running").lower()
 
-        entries.append(
-            f"""
+        entries.append(f"""
 <a
     class="toc-link"
     href="#{anchor}"
@@ -2930,12 +2597,9 @@ def _render_toc(
     </span>
 
 </a>
-"""
-        )
+""")
 
-    return "\n".join(
-        entries
-    )
+    return "\n".join(entries)
 
 
 def _render_block(
@@ -2943,12 +2607,7 @@ def _render_block(
     block_index: int,
 ) -> str:
 
-    status = str(
-        block.get(
-            "status"
-        )
-        or "running"
-    ).lower()
+    status = str(block.get("status") or "running").lower()
 
     status_class = (
         re.sub(
@@ -2959,81 +2618,36 @@ def _render_block(
         or "running"
     )
 
-    operation_name = escape(
-        str(
-            block.get(
-                "operation_name"
-            )
-            or "Operation"
-        )
-    )
+    operation_name = escape(str(block.get("operation_name") or "Operation"))
 
-    operation_id = block.get(
-        "operation_id"
-    )
+    operation_id = block.get("operation_id")
 
     run_number = block.get(
         "run_number",
         1,
     )
 
-    kicker_parts = [
-        "Run "
-        + escape(
-            str(
-                run_number
-            )
-        )
-    ]
+    kicker_parts = ["Run " + escape(str(run_number))]
 
     if operation_id:
-        kicker_parts.append(
-            escape(
-                str(
-                    operation_id
-                )
-            )
-        )
+        kicker_parts.append(escape(str(operation_id)))
 
-    kicker = " · ".join(
-        kicker_parts
-    )
+    kicker = " · ".join(kicker_parts)
 
-    started_at = block.get(
-        "started_at"
-    )
+    started_at = block.get("started_at")
 
-    finished_at = block.get(
-        "finished_at"
-    )
+    finished_at = block.get("finished_at")
 
-    time_text = _render_time(
-        started_at
-    )
+    time_text = _render_time(started_at)
 
     if finished_at:
-        time_text += (
-            " → "
-            + _render_time(
-                finished_at
-            )
-        )
+        time_text += " → " + _render_time(finished_at)
 
-    parameters_html = (
-        _render_parameters(
-            block.get(
-                "parameters"
-            )
-            or {}
-        )
-    )
+    parameters_html = _render_parameters(block.get("parameters") or {})
 
     items_html = "\n".join(
-        _render_item(
-            item
-        )
-        for item
-        in block.get(
+        _render_item(item)
+        for item in block.get(
             "items",
             [],
         )
@@ -3126,35 +2740,17 @@ def _render_parameters(
 
     cells = []
 
-    for key, value in (
-        parameters.items()
-    ):
-        cells.append(
-            '<div class="parameter-key">'
-            + escape(
-                str(key)
-            )
-            + "</div>"
-        )
+    for key, value in parameters.items():
+        cells.append('<div class="parameter-key">' + escape(str(key)) + "</div>")
 
-        cells.append(
-            '<div class="parameter-value">'
-            + _render_value(
-                value
-            )
-            + "</div>"
-        )
+        cells.append('<div class="parameter-value">' + _render_value(value) + "</div>")
 
     return (
         '<details class="parameters" open>'
         "<summary>"
         "Parameters"
         "</summary>"
-        '<div class="parameter-grid">'
-        + "".join(
-            cells
-        )
-        + "</div>"
+        '<div class="parameter-grid">' + "".join(cells) + "</div>"
         "</details>"
     )
 
@@ -3172,52 +2768,30 @@ def _render_value(
         ),
     ):
         text = json.dumps(
-            _json_safe(
-                value
-            ),
+            _json_safe(value),
             ensure_ascii=False,
             indent=2,
         )
 
-        return (
-            "<pre>"
-            + escape(
-                text
-            )
-            + "</pre>"
-        )
+        return "<pre>" + escape(text) + "</pre>"
 
-    return escape(
-        ""
-        if value is None
-        else str(
-            value
-        )
-    )
+    return escape("" if value is None else str(value))
 
 
 def _render_item(
     item: Mapping[str, Any],
 ) -> str:
 
-    item_type = item.get(
-        "type"
-    )
+    item_type = item.get("type")
 
     if item_type == "text":
-        return _render_text_item(
-            item
-        )
+        return _render_text_item(item)
 
     if item_type == "table":
-        return _render_table_item(
-            item
-        )
+        return _render_table_item(item)
 
     if item_type == "figure":
-        return _render_figure_item(
-            item
-        )
+        return _render_figure_item(item)
 
     return ""
 
@@ -3226,131 +2800,51 @@ def _render_item_title(
     title: Any,
 ) -> str:
 
-    if (
-        title is None
-        or str(
-            title
-        ).strip()
-        == ""
-    ):
+    if title is None or str(title).strip() == "":
         return ""
 
-    return (
-        "<h3>"
-        + escape(
-            str(
-                title
-            )
-        )
-        + "</h3>"
-    )
+    return "<h3>" + escape(str(title)) + "</h3>"
 
 
 def _render_text_item(
     item: Mapping[str, Any],
 ) -> str:
 
-    title = _render_item_title(
-        item.get(
-            "title"
-        )
-    )
+    title = _render_item_title(item.get("title"))
 
-    text = escape(
-        str(
-            item.get(
-                "text"
-            )
-            or ""
-        )
-    )
+    text = escape(str(item.get("text") or ""))
 
-    if item.get(
-        "preformatted"
-    ):
-        body = (
-            "<pre>"
-            + text
-            + "</pre>"
-        )
+    if item.get("preformatted"):
+        body = "<pre>" + text + "</pre>"
 
     else:
-        body = (
-            "<p>"
-            + text
-            + "</p>"
-        )
+        body = "<p>" + text + "</p>"
 
-    return (
-        '<div class="report-item text-item">'
-        + title
-        + body
-        + "</div>"
-    )
+    return '<div class="report-item text-item">' + title + body + "</div>"
 
 
 def _render_table_item(
     item: Mapping[str, Any],
 ) -> str:
 
-    title = _render_item_title(
-        item.get(
-            "title"
-        )
-    )
+    title = _render_item_title(item.get("title"))
 
-    columns = (
-        item.get(
-            "columns"
-        )
-        or []
-    )
+    columns = item.get("columns") or []
 
-    rows = (
-        item.get(
-            "rows"
-        )
-        or []
-    )
+    rows = item.get("rows") or []
 
-    header = "".join(
-        "<th>"
-        + escape(
-            str(
-                column
-            )
-        )
-        + "</th>"
-        for column
-        in columns
-    )
+    header = "".join("<th>" + escape(str(column)) + "</th>" for column in columns)
 
     body_rows = []
 
     for row in rows:
-        cells = "".join(
-            "<td>"
-            + _render_value(
-                value
-            )
-            + "</td>"
-            for value
-            in row
-        )
+        cells = "".join("<td>" + _render_value(value) + "</td>" for value in row)
 
-        body_rows.append(
-            "<tr>"
-            + cells
-            + "</tr>"
-        )
+        body_rows.append("<tr>" + cells + "</tr>")
 
-    shown_rows = item.get(
-        "shown_rows"
-    )
+    shown_rows = item.get("shown_rows")
 
-    total_rows = item.get(
-        "total_rows"
-    )
+    total_rows = item.get("total_rows")
 
     note = ""
 
@@ -3405,54 +2899,24 @@ def _render_figure_item(
     item: Mapping[str, Any],
 ) -> str:
 
-    title = _render_item_title(
-        item.get(
-            "title"
-        )
-    )
+    title = _render_item_title(item.get("title"))
 
     src = escape(
-        str(
-            item.get(
-                "src"
-            )
-            or ""
-        ),
+        str(item.get("src") or ""),
         quote=True,
     )
 
     alt = escape(
-        str(
-            item.get(
-                "alt"
-            )
-            or "Plot"
-        ),
+        str(item.get("alt") or "Plot"),
         quote=True,
     )
 
-    caption = item.get(
-        "caption"
-    )
+    caption = item.get("caption")
 
     caption_html = ""
 
-    if (
-        caption is not None
-        and str(
-            caption
-        ).strip()
-        != ""
-    ):
-        caption_html = (
-            "<figcaption>"
-            + escape(
-                str(
-                    caption
-                )
-            )
-            + "</figcaption>"
-        )
+    if caption is not None and str(caption).strip() != "":
+        caption_html = "<figcaption>" + escape(str(caption)) + "</figcaption>"
 
     return f"""
 <div class="report-item figure-item">

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from pyspresso_app.config import UPLOADS_BASE_DIR
 from pyspresso_app.core.registry import register_operation
 from pyspresso_app.core.operation_models import OperationTag, ParameterDef
 from pyspresso_app.core.workflow_models import WorkflowState
@@ -15,6 +16,7 @@ from pyspresso_app.core.html_reporter import (
     add_table,
     add_figure,
 )
+
 
 @register_operation(
     id="initializer_compound_discoverer",
@@ -178,17 +180,15 @@ def initializer_compound_discoverer(
 
     if not data_input_file_name:
         raise ValueError("No data file found in state.files['data'].")
-    
-    data_input_file_name = Path.cwd().parent / data_input_file_name
-    # print("data_input_file_name =", data_input_file_name)
-    # print("cwd =", Path.cwd())
+
+    data_input_file_name = UPLOADS_BASE_DIR / data_input_file_name
 
     batch_info_input_file_name = state.files.get("batch_info")
 
     if not batch_info_input_file_name:
         raise ValueError("No batch info file found in state.files['batch_info'].")
 
-    batch_info_input_file_name = Path.cwd().parent / batch_info_input_file_name
+    batch_info_input_file_name = UPLOADS_BASE_DIR / batch_info_input_file_name
 
     # Initialize folders first, then report.
     _initializer_folders(state)
@@ -279,15 +279,9 @@ def initializer_compound_discoverer(
         title="Dataset initialization",
     )
 
-    add_text(
-        state,
-        f"Number of features: {state.data.shape[0]}"
-    )
+    add_text(state, f"Number of features: {state.data.shape[0]}")
 
-    add_text(
-        state,
-        f"Number of samples: {state.data.shape[1] - 1}"
-    )
+    add_text(state, f"Number of samples: {state.data.shape[1] - 1}")
 
     return {
         "initialized": True,
@@ -315,9 +309,7 @@ def initializer_compound_discoverer(
         ),
         "dil_concentrations": state.dil_concentrations,
         "n_dil_concentrations": (
-            len(state.dil_concentrations)
-            if state.dil_concentrations is not None
-            else 0
+            len(state.dil_concentrations) if state.dil_concentrations is not None else 0
         ),
         "n_standard_samples": (
             len(state.standard_samples) if state.standard_samples is not None else 0
@@ -339,11 +331,27 @@ def initializer_compound_discoverer(
             "metrics": {
                 "n_features": int(state.data.shape[0]),
                 "n_samples": int(state.data.shape[1] - 1),
-                "n_qc_samples": len(state.QC_samples) if state.QC_samples is not None else 0,
-                "n_blank_samples": len(state.blank_samples) if state.blank_samples is not None else 0,
-                "n_dilution_series_samples": len(state.dilution_series_samples) if state.dilution_series_samples is not None else 0,
-                "n_dil_concentrations": len(state.dil_concentrations) if state.dil_concentrations is not None else 0,
-                "n_standard_samples": len(state.standard_samples) if state.standard_samples is not None else 0,
+                "n_qc_samples": (
+                    len(state.QC_samples) if state.QC_samples is not None else 0
+                ),
+                "n_blank_samples": (
+                    len(state.blank_samples) if state.blank_samples is not None else 0
+                ),
+                "n_dilution_series_samples": (
+                    len(state.dilution_series_samples)
+                    if state.dilution_series_samples is not None
+                    else 0
+                ),
+                "n_dil_concentrations": (
+                    len(state.dil_concentrations)
+                    if state.dil_concentrations is not None
+                    else 0
+                ),
+                "n_standard_samples": (
+                    len(state.standard_samples)
+                    if state.standard_samples is not None
+                    else 0
+                ),
             },
             "artifacts": [
                 {
@@ -510,7 +518,7 @@ def _add_cpdID_from_column(
         ),
         title="Compound ID generation",
     )
-        
+
     return state.data
 
 
@@ -632,7 +640,9 @@ def _extracter_data(
     state.data = extracted_data
 
     # REPORTING ---------------------------------------------------------
-    print("Important columns were kept in the data and rest filtered out. Data matrix was created.")
+    print(
+        "Important columns were kept in the data and rest filtered out. Data matrix was created."
+    )
     add_text(
         state,
         (
@@ -835,7 +845,7 @@ def _batch_by_name_reorder(
             ),
             title="Batch assignment",
         )
-  
+
     return state.data, state.batch_info
 
 
@@ -902,7 +912,9 @@ def _extracter_metadata(
     state.metadata = metadata
 
     # REPORTING ---------------------------------------------------------
-    print(f"Metadata matrix was created from batch_info by choosing columns: {str(columns_to_keep)}.")
+    print(
+        f"Metadata matrix was created from batch_info by choosing columns: {str(columns_to_keep)}."
+    )
     add_text(
         state,
         (
@@ -1299,7 +1311,11 @@ def _initialize_sample_type_lists(
     ].tolist()
 
     # Dilution-series samples by name
-    concentration_source = "manual" if not _is_empty_dilution_concentrations(dilution_concentrations) else "auto_from_sample_names"
+    concentration_source = (
+        "manual"
+        if not _is_empty_dilution_concentrations(dilution_concentrations)
+        else "auto_from_sample_names"
+    )
     manual_dil_concentrations = _parse_dilution_concentrations(dilution_concentrations)
 
     if dil_distinguisher is None or dil_distinguisher == "":

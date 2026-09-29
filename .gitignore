@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.log
+
+# PyInstaller desktop build artifacts (see build-desktop.bat)
+pyspresso/build/
+pyspresso/dist/
+pyspresso/pyspresso_app/frontend_dist/
+/PySPRESSO-app.zip
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Runtime data (uploaded files, generated outputs/reports, database)
+/uploads/
+pyspresso/outputs/
+pyspresso/instance/
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
