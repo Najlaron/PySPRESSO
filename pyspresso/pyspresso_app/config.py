@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -7,12 +8,16 @@ from flask_cors import CORS
 from pyspresso_app.bootstrap import initialize
 
 # When packaged as a standalone executable (PyInstaller), user data (database,
-# uploads, outputs) must live next to the .exe instead of inside the
-# temporary folder the app is unpacked into. In normal (non-frozen) runs this
-# resolves to the "pyspresso" project folder, matching the previous behaviour.
+# uploads, outputs) must NOT live inside the exe's own folder: rebuilding
+# with build-desktop.bat replaces the whole dist/PySPRESSO folder, which
+# would wipe that data. Instead it goes to the per-user app-data folder,
+# which survives rebuilds/reinstalls and is independent of where the exe is.
+# In normal (non-frozen) runs this still resolves to the "pyspresso" project
+# folder, matching the previous behaviour.
 if getattr(sys, "frozen", False):
-    APP_BASE_DIR = Path(sys.executable).resolve().parent
-    # Packaged exe is self-contained: uploads live right next to it too.
+    data_root = os.environ.get("LOCALAPPDATA") or str(Path.home())
+    APP_BASE_DIR = Path(data_root) / "PySPRESSO"
+    APP_BASE_DIR.mkdir(parents=True, exist_ok=True)
     UPLOADS_BASE_DIR = APP_BASE_DIR
 else:
     APP_BASE_DIR = Path(__file__).resolve().parent.parent
@@ -27,6 +32,7 @@ INSTANCE_DIR.mkdir(parents=True, exist_ok=True)
 # Pre-built frontend assets (produced by `npm run build`) served by Flask so
 # the whole app can run as a single process/executable without Node.js.
 FRONTEND_DIST_DIR = Path(__file__).resolve().parent / "frontend_dist"
+
 
 app = Flask(
     __name__,

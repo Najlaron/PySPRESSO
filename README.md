@@ -30,17 +30,26 @@ No Docker, Node.js or command line knowledge required.
 3. A console window opens (keep it open) and your browser opens automatically at `http://127.0.0.1:5000`.
 4. To stop the app, close the console window.
 
-Your data (uploaded files, generated outputs, database) is stored next to the `.exe`, so the whole `PySPRESSO` folder can be copied/backed up as-is.
+Your data (uploaded files, generated outputs, database) is stored in `%LOCALAPPDATA%\PySPRESSO`, separate from the app folder — this is what makes it safe to rebuild/replace `PySPRESSO.exe` (see below) without losing your data. Don't run the desktop app and Docker at the same time — both use port 5000, and whichever started first will silently receive all requests.
 
 #### Building the desktop app
 Requires Python and Node.js installed once, only for building:
 ```
 build-desktop.bat
 ```
-This builds the frontend and bundles the whole app with PyInstaller into `pyspresso\dist\PySPRESSO\`. Copy that folder wherever you like and share/run `PySPRESSO.exe` from inside it.
+This builds the frontend and bundles the whole app with PyInstaller into `pyspresso\dist\PySPRESSO\`. **Rebuilding replaces that entire folder** (old `.exe`/libraries are deleted and rewritten) — but since your data lives in `%LOCALAPPDATA%\PySPRESSO` instead, it's untouched by rebuilds. Copy the `dist\PySPRESSO` folder wherever you like and share/run `PySPRESSO.exe` from inside it.
 
 ### Option B: Docker (for development)
 ```
 docker compose up -d
 ```
 Then open `http://localhost:5173`. Use `start-app.bat` / `stop-app.bat` on Windows as shortcuts.
+
+### Backup and restore (Windows desktop app)
+Desktop app data is stored in `%LOCALAPPDATA%\PySPRESSO`.
+
+- Create backup zip: `backup-data.bat`
+- Restore from zip: `restore-data.bat "path-to-backup-zip"`
+
+The backup zip contains `instance`, `outputs`, and `uploads`.
+After rebuilding the `.exe`, restoring that zip will put those folders back into `%LOCALAPPDATA%\PySPRESSO`.

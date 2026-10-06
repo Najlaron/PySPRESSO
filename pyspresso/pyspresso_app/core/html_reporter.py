@@ -1230,6 +1230,73 @@ window.addEventListener(
     }
 );
 
+
+/* Auto-refresh report when backend rewrites it after a step run.
+   Polling endpoint: /workflow/<id>/report/freshness */
+(() => {
+
+    const reportPath =
+        window.location.pathname || "";
+
+    if (!reportPath.endsWith("/report")) {
+        return;
+    }
+
+    const freshnessUrl =
+        reportPath + "/freshness";
+
+    let lastToken = null;
+
+    const checkFreshness = async () => {
+
+        try {
+            const response = await fetch(
+                freshnessUrl,
+                {
+                    cache: "no-store"
+                }
+            );
+
+            if (!response.ok) {
+                return;
+            }
+
+            const payload = await response.json();
+
+            const token =
+                String(
+                    payload?.mtimeNs
+                    ?? payload?.updatedAt
+                    ?? ""
+                );
+
+            if (!token) {
+                return;
+            }
+
+            if (lastToken === null) {
+                lastToken = token;
+                return;
+            }
+
+            if (token !== lastToken) {
+                window.location.reload();
+            }
+        }
+        catch (_error) {
+            /* Keep report usable even when polling fails temporarily. */
+        }
+    };
+
+    checkFreshness();
+
+    window.setInterval(
+        checkFreshness,
+        2500
+    );
+
+})();
+
 </script>
 """
 

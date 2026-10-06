@@ -4,8 +4,9 @@ from pathlib import Path
 import json
 import math
 import copy
+from datetime import datetime, timezone
 
-from flask import request, jsonify, send_from_directory, abort
+from flask import request, jsonify, send_from_directory, send_file, abort
 from werkzeug.utils import secure_filename
 from pyspresso_app.config import app, db, APP_BASE_DIR, UPLOADS_BASE_DIR
 from pyspresso_app.core.workflow_models import (
@@ -749,6 +750,30 @@ def execute_step(workflow_id: str, step_id: str):
         return jsonify({"message": str(ex), "step": step.to_dict()}), 400
 
 
+def _resolve_report_html_path(workflow: Workflow) -> Path:
+    folder_value = getattr(workflow.state, "main_folder", None)
+    report_name = getattr(workflow.state, "report_file_name", None) or "report"
+    report_stem = Path(str(report_name)).stem or "report"
+
+    if not folder_value or str(folder_value).strip() == "":
+        raise ValueError("Workflow state.main_folder is missing.")
+
+    folder_parts = [
+        part for part in str(folder_value).replace("\\", "/").split("/") if part
+    ]
+
+    if folder_parts and folder_parts[0] == "outputs":
+        folder_parts = folder_parts[1:]
+
+    report_dir = OUTPUT_FOLDER.joinpath(*folder_parts)
+    report_path = (report_dir / f"{report_stem}.html").resolve()
+
+    output_root = OUTPUT_FOLDER.resolve()
+    report_path.relative_to(output_root)
+
+    return report_path
+
+
 # vrátí informaci o live HTML reportu workflow
 @app.route(
     "/workflow/<workflow_id>/report",
@@ -767,8 +792,7 @@ def get_workflow_report(workflow_id: str):
         )
 
     try:
-        report_path = Path(get_report_path(workflow.state))
-
+        report_path = _resolve_report_html_path(workflow)
     except Exception as exc:
         return (
             jsonify({"message": f"Could not resolve workflow report: {exc}"}),
@@ -777,13 +801,66 @@ def get_workflow_report(workflow_id: str):
 
     if not report_path.is_file():
         return (
-            jsonify({"message": "HTML report has not been created yet."}),
+            jsonify(
+                {
+                    "message": "HTML report has not been created yet.",
+                    "expectedPath": str(report_path),
+                }
+            ),
             404,
         )
 
-    return send_from_directory(
-        report_path.parent,
-        report_path.name,
+    return send_file(report_path, mimetype="text/html")
+
+
+@app.route(
+    "/workflow/<workflow_id>/report/freshness",
+    methods=["GET"],
+)
+def get_workflow_report_freshness(workflow_id: str):
+
+    workflow = load_workflow(workflow_id)
+
+    if not workflow:
+        return (
+            jsonify(
+                {"message": f"Workflow with ID:'{workflow_id}' " "does not exist."}
+            ),
+            404,
+        )
+
+    try:
+        report_path = _resolve_report_html_path(workflow)
+    except Exception as exc:
+        return (
+            jsonify({"message": f"Could not resolve workflow report: {exc}"}),
+            500,
+        )
+
+    if not report_path.is_file():
+        return (
+            jsonify(
+                {
+                    "exists": False,
+                    "message": "HTML report has not been created yet.",
+                    "expectedPath": str(report_path),
+                }
+            ),
+            404,
+        )
+
+    stat = report_path.stat()
+    modified_utc = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+
+    return (
+        jsonify(
+            {
+                "exists": True,
+                "mtimeNs": stat.st_mtime_ns,
+                "updatedAt": modified_utc,
+            }
+        ),
+        200,
     )
 
 
