@@ -2,7 +2,6 @@ import FeatureCard from '../components/molecules/HomePage/FeatureCard'
 import Step from '../components/molecules/HomePage/Step'
 import HowToCite from '../components/molecules/HomePage/HowToCite'
 import Footer from '../components/organisms/Layouts/Footer'
-import dataIconSrc from "../../media/icons/data-management-icon.svg"
 import logoLightSrc from "../../media/logo-light.png"
 import { Link } from 'react-router-dom'
 import { LuPackagePlus } from "react-icons/lu"
@@ -26,7 +25,7 @@ function HomePage() {
                 <div className="hero-section">
                     <div>
                         <hgroup>
-                            <h1 className="text-5xl text-foam font-bold">PYSPRESSO</h1>
+                            <h1 className="text-5xl text-foam font-bold">PySPRESSO</h1>
                             <p className="text-2xl text-crema max-w-xl">Modular Pipeline for Omics Analysis - build, run, and share reproducible workflows.</p>
                             <Link to="/create-workflow" className="wf-button cursor-pointer transition duration-300 hover:bg-noir">
                                 Get Started

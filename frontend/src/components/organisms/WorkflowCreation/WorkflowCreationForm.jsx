@@ -16,6 +16,21 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
     const [reportFileName, setReportFileName] = useState("")
     const [dataFormat, setDataFormat] = useState("cd")
 
+    const needsBatchInfo = dataFormat === "cd"
+    const fileErrors = [
+        filesState?.data?.error,
+        needsBatchInfo ? filesState?.batchInfo?.error : null,
+        filesState?.importFile?.error,
+    ].filter(Boolean)
+    const hasFileErrors = fileErrors.length > 0
+
+    function handleDataFormatChange(format) {
+        setDataFormat(format)
+        setLoadError(null)
+        filesDispatch({ type: 'SET_ERROR', key: 'batchInfo', error: null })
+        setBatchDragActive(false)
+    }
+
     // pro změnu designu
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [dataDragActive, setDataDragActive] = useState(false)
@@ -45,19 +60,16 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
     async function onSubmit(e) {
         e.preventDefault()
 
-        const hasFileErrors = Boolean(
-            filesState?.data?.error || filesState?.batchInfo?.error || filesState?.importFile?.error
-        )
+        if (isSubmitting) return
         if (hasFileErrors) {
-            const firstErr = filesState?.data?.error || filesState?.batchInfo?.error || filesState?.importFile?.error
-            setLoadError(firstErr)
+            setLoadError(fileErrors[0])
             return
         }
 
         // kontrola, jestli uživatel nahrál jak data tak batch info
         const missingFiles = []
         if (!filesState?.data?.file) missingFiles.push('data')
-        if (!filesState?.batchInfo?.file) missingFiles.push('batchInfo')
+        if (needsBatchInfo && !filesState?.batchInfo?.file) missingFiles.push('batchInfo')
         if (missingFiles.length) {
             missingFiles.forEach((k) => {
                 const err = k === 'data' ? 'Data file is required.' : 'Batch info file is required.'
@@ -85,7 +97,7 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
             formData.append("data", filesState.data.file)
         }
 
-        if (filesState?.batchInfo?.file) {
+        if (needsBatchInfo && filesState?.batchInfo?.file) {
             formData.append("batchInfo", filesState.batchInfo.file)
         }
 
@@ -93,6 +105,7 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
             formData.append("importFile", filesState.importFile.file)
         }
 
+        setIsSubmitting(true)
         try {
             const response = await fetch(API_BASE_URL + "/new_workflow", {
                 method: "POST",
@@ -116,6 +129,8 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
             navigate(`/workflow/${responseData.workflowId}`)
         } catch (err) {
             setLoadError(formatNetworkError(err))
+        } finally {
+            setIsSubmitting(false)
         }
     }
 
@@ -220,11 +235,45 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                 </div> */}
             </div >
 
-            {/* druhá část formuláře - vstupní data a batch info */}
+            {/* druhá část formuláře - formát vstupních dat */}
             <div>
                 <div className="flex justify-center items-center gap-ds-lg mb-ds-lg">
                     <StepBadge
                         stepNumber={2}
+                    />
+                    <h2 className="text-3xl font-bold text-noir">Data format</h2>
+                </div>
+
+                <div className="flex flex-col">
+                    <label htmlFor="format" className="mb-ds-sm font-medium text-noir text-2xl">
+                        <div className="flex items-center gap-ds-sm">
+                            <Tooltip
+                                text={"Choose the format before uploading. Compound Discoverer requires two files; SciexOS requires one export."}
+                            >
+                                <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
+                            </Tooltip>
+                            Data format *
+                        </div>
+                    </label>
+                    <select
+                        id="format"
+                        value={dataFormat}
+                        onChange={(e) => handleDataFormatChange(e.target.value)}
+                        className="border border-roast/75 rounded-lg p-ds-sm h-18 w-80 focus:border-noir focus:outline-none focus:border-2"
+                        required
+                    >
+                        <option value="cd">Compound Discoverer</option>
+                        <option value="sciexos">SciexOS</option>
+                    </select>
+                </div>
+            </div>
+
+
+            {/* třetí část formuláře - vstupní data a batch info */}
+            <div>
+                <div className="flex justify-center items-center gap-ds-lg mb-ds-lg">
+                    <StepBadge
+                        stepNumber={3}
                     />
                     <h2 className="text-3xl font-bold text-noir">Data import</h2>
                 </div>
@@ -234,11 +283,11 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                         <label className="mb-[8px] font-medium text-noir text-2xl">
                             <div className="flex items-center gap-ds-sm">
                                 <Tooltip
-                                    text={"Input data file. The file must be in spreadsheet format."}
+                                    text={needsBatchInfo ? "Compound Discoverer feature table." : "Complete SciexOS export containing sample information and component measurements."}
                                 >
                                     <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
                                 </Tooltip>
-                                Upload data *
+                                {needsBatchInfo ? "Upload data *" : "Upload SciexOS export *"}
                             </div>
                         </label>
                         <input
@@ -268,6 +317,7 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                         {filesState?.data?.error ? <p className="text-red-600">{filesState.data.error}</p> : null}
                     </div>
 
+                    {needsBatchInfo && (
                     <div className="flex flex-col">
                         <label className="mb-[8px] font-medium text-noir text-2xl">
                             <div className="flex items-center gap-ds-sm">
@@ -305,14 +355,15 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                         </label>
                         {filesState?.batchInfo?.error ? <p className="text-red-600">{filesState.batchInfo.error}</p> : null}
                     </div>
+                    )}
                 </div>
             </div>
 
-            {/* třetí část formuláře - import metod */}
+            {/* čtvrtá část formuláře - import metod */}
             <div>
                 <div className="flex justify-center items-center gap-ds-lg mb-ds-lg">
                     <StepBadge
-                        stepNumber={3}
+                        stepNumber={4}
                     />
                     <h2 className="text-3xl font-bold text-noir">Methods import</h2>
                 </div>
@@ -356,37 +407,6 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                 </div>
             </div>
 
-            {/* čtvrtá část formuláře - formát vstupních dat */}
-            <div>
-                <div className="flex justify-center items-center gap-ds-lg mb-ds-lg">
-                    <StepBadge
-                        stepNumber={4}
-                    />
-                    <h2 className="text-3xl font-bold text-noir">Data format</h2>
-                </div>
-
-                <div className="flex flex-col">
-                    <label className="mb-ds-sm font-medium text-noir text-2xl">
-                        <div className="flex items-center gap-ds-sm">
-                            <Tooltip
-                                text={"Format of the input data (e.g., Compound Discoverer)"}
-                            >
-                                <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
-                            </Tooltip>
-                            Data format *
-                        </div>
-                    </label>
-                    <select
-                        id="format"
-                        value={dataFormat}
-                        onChange={(e) => setDataFormat(e.target.value)}
-                        className="border border-roast/75 rounded-lg p-ds-sm h-18 w-80 focus:border-noir focus:outline-none focus:border-2"
-                        required
-                    >
-                        <option value="cd" className="">Compound Discoverer</option>
-                    </select>
-                </div>
-            </div>
 
             {
                 loadError && (
@@ -398,9 +418,9 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
 
             <button
                 type="submit"
-                disabled={isSubmitting || Boolean(filesState?.data?.error || filesState?.batchInfo?.error || filesState?.importFile?.error)}
+                disabled={isSubmitting || hasFileErrors}
                 className={`bg-grounds text-foam rounded-4xl py-4 w-50 text-2xl font-semibold  transition duration-300 hover:bg-noir/90
-                            mb-ds-lg ${isSubmitting || Boolean(filesState?.data?.error || filesState?.batchInfo?.error || filesState?.importFile?.error)
+                            mb-ds-lg ${isSubmitting || hasFileErrors
                         ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
             >
                 {isSubmitting ? 'Submitting...' : 'Submit'}
