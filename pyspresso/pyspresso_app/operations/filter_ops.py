@@ -166,7 +166,9 @@ def _parse_blank_setting(setting):
 
         blank_index = setting[0]
 
-        if isinstance(blank_index, bool) or not isinstance(blank_index, (int, np.integer)):
+        if isinstance(blank_index, bool) or not isinstance(
+            blank_index, (int, np.integer)
+        ):
             raise ValueError(
                 "Blank index inside setting list must be an integer, "
                 "for example [0], [1], or [-1]."
@@ -380,7 +382,7 @@ def filter_missing_values(
         state,
         f"The list of removed features:\n{removed_ids_all}",
     )
-  # Update state ------------------------------------------------------
+    # Update state ------------------------------------------------------
 
     state.data = data
     state.data.reset_index(drop=True, inplace=True)
@@ -556,8 +558,7 @@ def filter_blank_intensity_ratio(
         )
 
     print(
-        "Blank intensity ratio filter used blank reference: "
-        + blank_used_text,
+        "Blank intensity ratio filter used blank reference: " + blank_used_text,
         flush=True,
     )
 
@@ -1271,7 +1272,7 @@ def filter_dilution_series_linearity(
         state,
         f"The list of removed features:\n{removed_ids}",
     )
-    
+
     return {
         "features_after": int(state.data.shape[0]),
         "removed_count": removed_count,
@@ -1280,6 +1281,7 @@ def filter_dilution_series_linearity(
         "removed_features_file": txt_path,
         "images": images,
     }
+
 
 @register_operation(
     id="filter_number_of_corrected_batches",
@@ -1398,7 +1400,7 @@ def filter_number_of_corrected_batches(
         state,
         f"The list of removed features:\n{removed_ids}",
     )
-    
+
     return {
         "features_after": int(state.data.shape[0]),
         "removed_count": removed_count,
@@ -1501,6 +1503,7 @@ def drop_samples(
         title="Removing specified samples",
     )
 
+
 @register_operation(
     id="drop_features",
     label="Drop Features",
@@ -1571,11 +1574,7 @@ def drop_features(
     )
 
     if note != "":
-        add_text(
-                state,
-                note,
-                title="Note"
-        )
+        add_text(state, note, title="Note")
 
     return {
         "dropped_feature_indexes": row_indexes_to_drop,
@@ -1649,11 +1648,7 @@ def drop_features_by_cpdID(
         title="Removing specified cpdID features",
     )
     if note != "":
-        add_text(
-                state,
-                note,
-                title="Note"
-        )
+        add_text(state, note, title="Note")
 
     return {
         "requested_cpdIDs": cpdIDs_to_drop,
@@ -1765,12 +1760,10 @@ def drop_blank_samples(state: WorkflowState):
     add_text(
         state,
         "Blank samples were removed from the data.",
-        title="Dropping blank samples"
+        title="Dropping blank samples",
     )
-    
-    return {
-        "dropped_sample_blank_indexes": blank_indexes
-    }
+
+    return {"dropped_sample_blank_indexes": blank_indexes}
 
 
 @register_operation(
@@ -1832,9 +1825,9 @@ def drop_dilution_series_samples(state: WorkflowState):
     add_text(
         state,
         "Dilution series samples were removed from the data.",
-        title="Dropping dilution series samples"
+        title="Dropping dilution series samples",
     )
-     
+
     result["dropped_group"] = "dilution_series_samples"
     return result
 
@@ -1895,11 +1888,7 @@ def drop_standard_samples(state: WorkflowState):
     state.standard_samples = False
 
     # REPORTING ---------------------------------------------------------
-    add_text(
-        state,
-        "Standards were removed from the data.",
-        title="Dropping standards"
-    )
+    add_text(state, "Standards were removed from the data.", title="Dropping standards")
 
     result["dropped_group"] = "standard_samples"
     return result
@@ -2381,11 +2370,7 @@ def filter_sparse_spike_features(
             title="Removing features flagged as sparse/spiky",
         )
         if note != "":
-            add_text(
-                state,
-                note,
-                title="Diagnostic Note"
-            )
+            add_text(state, note, title="Diagnostic Note")
 
     return {
         "flagged_count": removed_count,

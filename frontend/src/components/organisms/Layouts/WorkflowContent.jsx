@@ -386,7 +386,7 @@ function WorkflowContent({ workflow,
                     )}
 
                     {/* tlačítka pro tabulková data */}
-                    <div className="flex justify-between">
+                    <div className="flex justify-between items-center">
                         {workflow?.state?.data && (
                             <DataTabs
                                 visualizations={visualizations}
@@ -395,6 +395,16 @@ function WorkflowContent({ workflow,
                             />
                         )}
 
+                        {workflow?.state?.data && (
+                            <a
+                                href={apiBaseUrl + `/workflow/${workflowId}/report`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-lg font-medium text-noir pb-1 border-b-2 border-transparent hover:border-noir transition-colors duration-200"
+                            >
+                                Open report
+                            </a>
+                        )}
                     </div>
 
                     {/* výsledek o vykování kroku */}
