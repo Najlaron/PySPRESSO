@@ -10,6 +10,7 @@ from pyspresso_app.core.html_reporter import (
 def run_step(workflow: Workflow, step: WorkflowStep) -> WorkflowStep:
     operation = get_operation(step.operation_id)
 
+
     validate_step(workflow.state, step, operation)
 
     if not step.enabled:
@@ -40,6 +41,8 @@ def run_step(workflow: Workflow, step: WorkflowStep) -> WorkflowStep:
         step.warnings.append(
             f"HTML report initialization failed: {report_exc}"
         )
+
+    
     # Execute analytical operation
     try:
         result = operation.func(

@@ -1812,7 +1812,7 @@ def statistics_PLSDA(
             label="Plot name suffix",
         ),
     ],
-    requires=["plsda_scores"],
+    requires=["plsda", "plsda_scores"],
     produces=["figures"],
 )
 def visualizer_PLSDA(
