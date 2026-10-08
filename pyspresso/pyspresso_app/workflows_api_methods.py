@@ -27,6 +27,11 @@ UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 # povolené formáty dat
 ALLOWED_EXTENSIONS = {"csv", "txt", "xlsx", "xls", "tsv"}
 
+INITIALIZER_BY_DATA_FORMAT = {
+    "cd": "initializer_compound_discoverer",
+    "sciexos": "initializer_sciexos",
+}
+
 # místo, kde jsou obrázky a další vytvořené soubory
 OUTPUT_FOLDER = APP_BASE_DIR / "outputs"
 OUTPUT_FOLDER.mkdir(exist_ok=True)
@@ -198,14 +203,10 @@ def _get_default_operation_params(operation_id: str) -> dict:
 
 # přidá inicialiační metodu podle zvoleného formátu dat do nově vytvořeného workflow
 def add_init_step(wf, data_format: str):
-    format_to_initializer = {
-        "cd": "initializer_compound_discoverer",
-    }
-
     selected_format = (data_format or "").strip().lower()
-    operation_id = format_to_initializer.get(selected_format)
+    operation_id = INITIALIZER_BY_DATA_FORMAT.get(selected_format)
     if not operation_id:
-        supported_formats = ", ".join(sorted(format_to_initializer.keys()))
+        supported_formats = ", ".join(sorted(INITIALIZER_BY_DATA_FORMAT.keys()))
         raise ValueError(
             f"Unsupported dataFormat '{data_format}'. "
             f"Supported values: {supported_formats}"
@@ -217,15 +218,24 @@ def add_init_step(wf, data_format: str):
     except KeyError as ex:
         raise KeyError(f"Operation '{operation_id}' not found") from ex
 
-    step_id = str(uuid.uuid4())
-
-    new_step = WorkflowStep(
-        step_id=step_id,
-        operation_id=operation_id,
-        params=default_params,
+    # Preserve parameters from a matching imported initializer, if present.
+    new_step = next(
+        (step for step in wf.definition.steps if step.operation_id == operation_id),
+        None,
     )
+    if new_step is None:
+        new_step = WorkflowStep(
+            step_id=str(uuid.uuid4()),
+            operation_id=operation_id,
+            params=default_params,
+        )
 
-    wf.definition.steps.append(new_step)
+    initializer_ids = set(INITIALIZER_BY_DATA_FORMAT.values())
+    other_steps = [
+        step for step in wf.definition.steps
+        if step.operation_id not in initializer_ids
+    ]
+    wf.definition.steps = [new_step] + other_steps
 
 
 # vrátí konkrétní metodu
@@ -268,9 +278,23 @@ def create_new_workflow():
     #         {"message": f"A workflow using folder '{folder_name}' already exists."}
     #     ), 409
 
-    data_format = request.form.get("dataFormat", "").strip()
+    data_format = request.form.get("dataFormat", "").strip().lower()
     if not data_format:
         return jsonify({"message": "dataFormat is required."}), 400
+
+    if data_format not in INITIALIZER_BY_DATA_FORMAT:
+        return jsonify({"message": f"Unsupported dataFormat '{data_format}'."}), 400
+
+    # Validate the selected format's required files before saving uploads.
+    required_files = [("data", "Data")]
+    if data_format == "cd":
+        required_files.append(("batchInfo", "Batch info"))
+    for key, label in required_files:
+        file = request.files.get(key)
+        if not file or not file.filename:
+            return jsonify({"message": f"{label} file is required."}), 400
+        if not allowed_file(file.filename):
+            return jsonify({"message": f"Unsupported {label.lower()} file type."}), 400
 
     # uloží data a batch info a vratí cesty k nim (možná hodit do samotné funkce, at tady toho není moc)
     files_dict = {}
@@ -281,7 +305,7 @@ def create_new_workflow():
             if filepath:
                 files_dict["data"] = filepath
 
-    if "batchInfo" in request.files:
+    if data_format == "cd" and "batchInfo" in request.files:
         file = request.files["batchInfo"]
         if file and file.filename:
             filepath = save_uploaded_file(file, folder_name or "workflows")
@@ -293,27 +317,16 @@ def create_new_workflow():
     workflow.state.main_folder = folder_name
     workflow.state.report_file_name = report_file_name or "report"
 
-    # přidání inicializačního kroku pro data
-    # add_init_step(workflow)
-
-    # import kroků z jiného workflow, pokud není nahraný, přidá se inicializační metoda
-    if "importFile" in request.files:
-        import_file = request.files["importFile"]
+    # Imported methods also start with the initializer for the chosen format.
+    import_file = request.files.get("importFile")
+    try:
         if import_file and import_file.filename:
-            try:
-                _ = import_methods_from_file(workflow, import_file)
-            except ValueError as ex:
-                return jsonify({"message": str(ex)}), 400
-            except KeyError as ex:
-                return jsonify({"message": str(ex)}), 400
-    else:
-        # přidání inicializačního kroku pro data
-        try:
-            add_init_step(workflow, data_format)
-        except ValueError as ex:
-            return jsonify({"message": str(ex)}), 400
-        except KeyError as ex:
-            return jsonify({"message": str(ex)}), 404
+            import_methods_from_file(workflow, import_file)
+        add_init_step(workflow, data_format)
+    except ValueError as ex:
+        return jsonify({"message": str(ex)}), 400
+    except KeyError as ex:
+        return jsonify({"message": str(ex)}), 400
 
     # uloží cesty k souborům
     workflow.state.files = files_dict
