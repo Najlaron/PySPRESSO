@@ -2144,6 +2144,9 @@ body {{
 }}
 
 .parameter-key {{
+    min-width:
+        0;
+
     background:
         #fbf5ef;
 
@@ -2152,6 +2155,9 @@ body {{
 
     font-weight:
         700;
+
+    overflow-wrap:
+        anywhere;
 }}
 
 .parameter-value {{
