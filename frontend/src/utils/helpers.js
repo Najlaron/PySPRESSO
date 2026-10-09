@@ -1,6 +1,14 @@
 export function CapitalizeFirstLetter(string) {
     if (!string) return ""
-    return string.charAt(0).toUpperCase() + string.slice(1)
+    return string
+        .split(",")
+        .map((category) => {
+            const normalized = category.trim().replace(/_/g, " ")
+            if (!normalized) return ""
+            return normalized.charAt(0).toUpperCase() + normalized.slice(1)
+        })
+        .filter(Boolean)
+        .join(", ")
 }
 
 export function formatNetworkError(err) {

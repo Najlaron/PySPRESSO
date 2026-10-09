@@ -17,6 +17,7 @@ class ParameterDef:
 class OperationTag(str, Enum):
     INITIALIZATION = "initialization"
     IO = "io"
+    DATA_CHECKPOINT = "data_checkpoint"
     FILTER = "filter"
     TRANSFORMATION = "transformation"
     NORMALIZATION = "normalization"

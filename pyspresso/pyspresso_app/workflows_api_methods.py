@@ -232,8 +232,7 @@ def add_init_step(wf, data_format: str):
 
     initializer_ids = set(INITIALIZER_BY_DATA_FORMAT.values())
     other_steps = [
-        step for step in wf.definition.steps
-        if step.operation_id not in initializer_ids
+        step for step in wf.definition.steps if step.operation_id not in initializer_ids
     ]
     wf.definition.steps = [new_step] + other_steps
 

@@ -24,7 +24,6 @@ from pyspresso_app.core.html_reporter import (
     add_figure,
 )
 
-
 # ---------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------
@@ -232,9 +231,7 @@ def _add_candidates(state: WorkflowState, features, method, specification, score
         metadata_lookup["cpdID"] = metadata_lookup["cpdID"].astype(str)
         metadata_lookup = metadata_lookup.drop_duplicates("cpdID").set_index("cpdID")
 
-        name_column = (
-            "Name" if "Name" in metadata_lookup.columns else "Compound Name"
-        )
+        name_column = "Name" if "Name" in metadata_lookup.columns else "Compound Name"
         optional_columns = [
             ("Name", name_column),
             ("Formula", "Formula"),
@@ -644,8 +641,7 @@ def statistics_correlation_means(
     missing_samples = [sample for sample in sample_names if sample not in data.columns]
     if missing_samples:
         raise ValueError(
-            "Metadata sample(s) missing from data: "
-            + ", ".join(missing_samples[:10])
+            "Metadata sample(s) missing from data: " + ", ".join(missing_samples[:10])
         )
 
     try:
@@ -655,7 +651,9 @@ def statistics_correlation_means(
     except KeyError as exc:
         raise ValueError("Expected a 'cpdID' column in data.") from exc
     except (TypeError, ValueError) as exc:
-        raise ValueError("Correlation input contains non-numeric abundance values.") from exc
+        raise ValueError(
+            "Correlation input contains non-numeric abundance values."
+        ) from exc
 
     sample_by_feature.index = sample_names
     groups = metadata.set_index(metadata["Sample File"].astype(str))[column_name]
@@ -706,7 +704,7 @@ def statistics_correlation_means(
             "figure",
             "Group mean correlation matrix heatmap",
         )
-        
+
     # REPORTING ---------------------------------------------------------
     add_text(
         state,
@@ -871,10 +869,10 @@ def statistics_PCA(state: WorkflowState, n_components_for_candidates=2):
     )
 
     explained_variance_table = pd.DataFrame(
-    {
-        "Component": labels,
-        "Explained variance (%)": per_var,
-    }
+        {
+            "Component": labels,
+            "Explained variance (%)": per_var,
+        }
     )
 
     add_table(
@@ -1037,7 +1035,9 @@ def statistics_PLSDA(
     elif isinstance(response_column_names, (list, tuple)):
         response_columns = [str(column).strip() for column in response_column_names]
     else:
-        raise ValueError("response_column_names must be a column name or a list of names.")
+        raise ValueError(
+            "response_column_names must be a column name or a list of names."
+        )
 
     if not response_columns or any(not column for column in response_columns):
         raise ValueError("At least one non-empty response column name is required.")
@@ -1111,16 +1111,20 @@ def statistics_PLSDA(
     if data["cpdID"].isna().any() or data["cpdID"].astype(str).str.strip().eq("").any():
         raise ValueError("Data contains an empty cpdID feature identifier.")
     if data["cpdID"].astype(str).duplicated().any():
-        duplicates = data.loc[
-            data["cpdID"].astype(str).duplicated(keep=False), "cpdID"
-        ].astype(str).unique()
+        duplicates = (
+            data.loc[data["cpdID"].astype(str).duplicated(keep=False), "cpdID"]
+            .astype(str)
+            .unique()
+        )
         raise ValueError(
             "Data contains duplicate cpdID values: " + ", ".join(duplicates[:10])
         )
 
     missing_response = metadata[response_columns].isna()
-    blank_response = metadata[response_columns].astype(str).apply(
-        lambda column: column.str.strip().eq("")
+    blank_response = (
+        metadata[response_columns]
+        .astype(str)
+        .apply(lambda column: column.str.strip().eq(""))
     )
     if (missing_response | blank_response).any(axis=None):
         bad_rows = metadata.loc[
@@ -1234,8 +1238,7 @@ def statistics_PLSDA(
     lv_counts_dict = {int(k): int(v) for k, v in lv_counts.to_dict().items()}
 
     repeat_metrics = [
-        _classification_metrics(Y_full, prediction)
-        for prediction in repeat_predictions
+        _classification_metrics(Y_full, prediction) for prediction in repeat_predictions
     ]
     repeat_nmc = [metric[0] for metric in repeat_metrics]
     repeat_accuracy = [metric[1] for metric in repeat_metrics]
@@ -1278,14 +1281,11 @@ def statistics_PLSDA(
         for i, cname in enumerate(class_names)
     }
     q2_per_class = {
-        str(cname): float(q2_values[i])
-        for i, cname in enumerate(class_names)
+        str(cname): float(q2_values[i]) for i, cname in enumerate(class_names)
     }
     q2_macro = float(np.nanmean(q2_values))
     r2_macro = float(np.nanmean(list(r2_per_class.values())))
-    r2_global_flat = float(
-        r2_score(Y_full.ravel(), calibrated_predictions.ravel())
-    )
+    r2_global_flat = float(r2_score(Y_full.ravel(), calibrated_predictions.ravel()))
 
     score_columns = [f"LV{i}" for i in range(1, model.x_scores_.shape[1] + 1)]
     scores_df = pd.DataFrame(model.x_scores_, columns=score_columns)
@@ -1476,8 +1476,7 @@ def statistics_PLSDA(
         score_plot_path = _unique_path(
             os.path.join(
                 statistics_folder,
-                output_file_prefix
-                + "_PLSDA_scores_LV1_vs_LV2.png",
+                output_file_prefix + "_PLSDA_scores_LV1_vs_LV2.png",
             )
         )
 
@@ -1534,8 +1533,7 @@ def statistics_PLSDA(
         score_plot_path = _unique_path(
             os.path.join(
                 statistics_folder,
-                output_file_prefix
-                + "_PLSDA_scores_LV1.png",
+                output_file_prefix + "_PLSDA_scores_LV1.png",
             )
         )
 
@@ -1590,10 +1588,7 @@ def statistics_PLSDA(
                 ", ".join(response_columns),
                 len(class_names),
                 n_comp,
-                (
-                    f"{actual_outer_splits} "
-                    f"(requested {outer_splits})"
-                ),
+                (f"{actual_outer_splits} " f"(requested {outer_splits})"),
                 outer_repeats,
                 inner_splits,
                 selection_metric,
@@ -1625,11 +1620,7 @@ def statistics_PLSDA(
                 f"{auc:.4f}",
                 f"{cv_accuracy:.4f}",
                 f"{nmc:.2f}",
-                (
-                    f"{consensus_auc:.4f}"
-                    if np.isfinite(consensus_auc)
-                    else "NA"
-                ),
+                (f"{consensus_auc:.4f}" if np.isfinite(consensus_auc) else "NA"),
                 f"{consensus_accuracy:.4f}",
                 str(consensus_nmc),
                 f"{r2_macro:.4f}",
@@ -1664,22 +1655,18 @@ def statistics_PLSDA(
         ),
         title="R2 and Q2 interpretation",
     )
-    per_class_metrics = pd.DataFrame({
-        "Class": [str(name) for name in class_names],
-        "R2": [r2_per_class[str(name)] for name in class_names],
-        "Q2": [q2_per_class[str(name)] for name in class_names],}
+    per_class_metrics = pd.DataFrame(
+        {
+            "Class": [str(name) for name in class_names],
+            "R2": [r2_per_class[str(name)] for name in class_names],
+            "Q2": [q2_per_class[str(name)] for name in class_names],
+        }
     )
 
     lv_selection_table = pd.DataFrame(
         {
-            "Latent variables": [
-                int(value)
-                for value in lv_counts.index
-            ],
-            "Times selected": [
-                int(value)
-                for value in lv_counts.values
-            ],
+            "Latent variables": [int(value) for value in lv_counts.index],
+            "Times selected": [int(value) for value in lv_counts.values],
         }
     )
 
@@ -1696,9 +1683,11 @@ def statistics_PLSDA(
         title="Per-class R2 and Q2",
         include_index=False,
     )
-    class_count_table = pd.DataFrame({
-        "Class": [str(name) for name in class_names],
-        "Samples": [int(class_counts.get(i, 0)) for i in range(len(class_names))],}
+    class_count_table = pd.DataFrame(
+        {
+            "Class": [str(name) for name in class_names],
+            "Samples": [int(class_counts.get(i, 0)) for i in range(len(class_names))],
+        }
     )
     add_table(
         state,
@@ -1726,16 +1715,16 @@ def statistics_PLSDA(
         )
 
     else:
-            add_text(
-        state,
-        (
-            "The score plot shows the latent-variable scores of the final "
-            "PLS-DA model fitted to the complete dataset. "
-            "Samples are colored according to the response classes used "
-            "to train the model."
-        ),
-        title="PLS-DA score plot",
-    )
+        add_text(
+            state,
+            (
+                "The score plot shows the latent-variable scores of the final "
+                "PLS-DA model fitted to the complete dataset. "
+                "Samples are colored according to the response classes used "
+                "to train the model."
+            ),
+            title="PLS-DA score plot",
+        )
 
     if n_comp == 1:
         add_text(
@@ -1753,7 +1742,7 @@ def statistics_PLSDA(
         score_plot_path,
         title=score_plot_title,
     )
-    
+
     return {
         "message": "PLS-DA was performed.",
         "warnings": warning_messages,
@@ -1877,8 +1866,8 @@ def visualizer_PLSDA(
 
     fig, ax = plt.subplots(figsize=(8, 6))
     if color_by:
-        groups = scores[color_by].astype(object).where(
-            scores[color_by].notna(), "Missing"
+        groups = (
+            scores[color_by].astype(object).where(scores[color_by].notna(), "Missing")
         )
         for group in sorted(groups.unique(), key=_natural_sort_key):
             subset = scores.loc[groups == group]
@@ -1920,11 +1909,9 @@ def visualizer_PLSDA(
         out_path = _unique_path(base_path + suffix)
         fig.savefig(out_path, dpi=300, bbox_inches="tight")
         saved_paths.append(out_path)
-    
+
     if saved_paths:
-        _add_artifact_if_available(
-            state, saved_paths[0], "figure", "PLS-DA score plot"
-        )
+        _add_artifact_if_available(state, saved_paths[0], "figure", "PLS-DA score plot")
 
     # REPORTING ---------------------------------------------------------
     add_text(
@@ -1933,8 +1920,7 @@ def visualizer_PLSDA(
             f"PLS-DA score plot created for {x_column} versus {y_column}. "
             f"Samples were colored by '{color_by}'."
             if color_by
-            else
-            f"PLS-DA score plot created for {x_column} versus {y_column}."
+            else f"PLS-DA score plot created for {x_column} versus {y_column}."
         ),
         title="PLS-DA score plot",
     )
@@ -1986,9 +1972,12 @@ def visualizer_PLSDA_vips(state: WorkflowState, top_n=30, plt_name_suffix=""):
     if top_n < 1:
         raise ValueError("top_n must be at least 1.")
 
-    vip_scores = pd.to_numeric(
-        state.plsda_vip_scores, errors="coerce"
-    ).dropna().sort_values(ascending=False).head(top_n)
+    vip_scores = (
+        pd.to_numeric(state.plsda_vip_scores, errors="coerce")
+        .dropna()
+        .sort_values(ascending=False)
+        .head(top_n)
+    )
     if vip_scores.empty:
         raise ValueError("No finite PLS-DA VIP scores are available to plot.")
 
@@ -2138,9 +2127,9 @@ def statistics_ttest(
     normalized_groups = metadata[groups_column_name].astype(str)
     group1 = str(group1)
     group2 = str(group2)
-    available_groups = normalized_groups.loc[
-        metadata[groups_column_name].notna()
-    ].unique().tolist()
+    available_groups = (
+        normalized_groups.loc[metadata[groups_column_name].notna()].unique().tolist()
+    )
     if group1 not in available_groups:
         raise ValueError(f"Group '{group1}' was not found in '{groups_column_name}'.")
     if group2 not in available_groups:
@@ -2148,12 +2137,12 @@ def statistics_ttest(
     if group1 == group2:
         raise ValueError("group1 and group2 must be different groups.")
 
-    group1_samples = metadata.loc[
-        normalized_groups == group1, "Sample File"
-    ].astype(str).tolist()
-    group2_samples = metadata.loc[
-        normalized_groups == group2, "Sample File"
-    ].astype(str).tolist()
+    group1_samples = (
+        metadata.loc[normalized_groups == group1, "Sample File"].astype(str).tolist()
+    )
+    group2_samples = (
+        metadata.loc[normalized_groups == group2, "Sample File"].astype(str).tolist()
+    )
     if len(group1_samples) < 2 or len(group2_samples) < 2:
         raise ValueError("Each compared group must contain at least two samples.")
 
@@ -2179,9 +2168,7 @@ def statistics_ttest(
     g2_mean = group2_data.mean(axis=1)
     if was_log_transformed:
         if log_base is None or float(log_base) <= 0 or float(log_base) == 1:
-            raise ValueError(
-                "A valid log_base is required for log-transformed data."
-            )
+            raise ValueError("A valid log_base is required for log-transformed data.")
 
         # Difference between means in log space corresponds to fold change
         # in the original scale.
@@ -2206,9 +2193,7 @@ def statistics_ttest(
     else:
         # Do not invent a pseudocount. A zero denominator means that the
         # fold-change ratio is undefined.
-        fold_change = g2_mean.div(
-            g1_mean.replace(0, np.nan)
-        )
+        fold_change = g2_mean.div(g1_mean.replace(0, np.nan))
 
     normality_group1 = []
     normality_group2 = []
@@ -2268,9 +2253,7 @@ def statistics_ttest(
         }
     )
 
-    sort_column = (
-        "adjusted p-value" if correction_method != "none" else "p-value"
-    )
+    sort_column = "adjusted p-value" if correction_method != "none" else "p-value"
     p_values_table = p_values_table.sort_values(
         by=sort_column, ascending=True
     ).reset_index(drop=True)
@@ -2394,8 +2377,6 @@ def statistics_ttest(
     requires=["pca_df", "pca_per_var"],
     produces=["figures"],
 )
-
-
 def visualize_PCA_scores(
     state: WorkflowState,
     component_x=1,
@@ -2449,9 +2430,7 @@ def visualize_PCA_scores(
             )
 
         if color_by not in state.metadata.columns:
-            raise ValueError(
-                f"Color column '{color_by}' was not found in metadata."
-            )
+            raise ValueError(f"Color column '{color_by}' was not found in metadata.")
 
         metadata = state.metadata.copy()
 
@@ -2479,7 +2458,14 @@ def visualize_PCA_scores(
             validate="one_to_one",
         )
 
-        group_values = pca_df[color_by].astype(object).where(pca_df[color_by].notna(),"Missing",)
+        group_values = (
+            pca_df[color_by]
+            .astype(object)
+            .where(
+                pca_df[color_by].notna(),
+                "Missing",
+            )
+        )
 
         groups = group_values.unique()
 
@@ -2968,14 +2954,10 @@ def visualizer_PCA_grouped(
     grouping_description = []
 
     if color_column is not None:
-        grouping_description.append(
-            f"colors represent '{color_column}'"
-        )
+        grouping_description.append(f"colors represent '{color_column}'")
 
     if marker_column is not None:
-        grouping_description.append(
-            f"marker shapes represent '{marker_column}'"
-        )
+        grouping_description.append(f"marker shapes represent '{marker_column}'")
 
     add_text(
         state,

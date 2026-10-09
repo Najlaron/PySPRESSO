@@ -241,7 +241,7 @@ def _clear_derived_statistics(
     ),
     citation="",
     category_tags=[
-        OperationTag.IO,
+        OperationTag.DATA_CHECKPOINT,
     ],
     parameter_schema=[
         ParameterDef(
@@ -500,7 +500,7 @@ def save_data_checkpoint(
     ),
     citation="",
     category_tags=[
-        OperationTag.IO,
+        OperationTag.DATA_CHECKPOINT,
     ],
     parameter_schema=[
         ParameterDef(

@@ -6,6 +6,7 @@ import { FaRegQuestionCircle } from "react-icons/fa"
 import Tooltip from "../../molecules/WorkflowLayout/Tooltip"
 import { API_BASE_URL } from "../../../config"
 import { PiUploadSimpleBold } from "react-icons/pi"
+import { MdDone } from "react-icons/md"
 
 function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadError }) {
     const navigate = useNavigate()
@@ -23,6 +24,9 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
         filesState?.importFile?.error,
     ].filter(Boolean)
     const hasFileErrors = fileErrors.length > 0
+    const hasDataFile = Boolean(filesState?.data?.file)
+    const hasBatchInfoFile = Boolean(filesState?.batchInfo?.file)
+    const hasImportFile = Boolean(filesState?.importFile?.file)
 
     function handleDataFormatChange(format) {
         setDataFormat(format)
@@ -307,54 +311,76 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                             onDragEnter={() => setDataDragActive(true)}
                             onDragLeave={() => setDataDragActive(false)}
                             className={`w-78 border rounded-[10px] px-ds-md py-ds-xl flex flex-col justify-center items-center gap-ds-sm 
-                                        cursor-pointer hover:bg-crema/50 transition ${dataDragActive ? 'ring-2 ring-espresso border-transparent' : 'border-dashed border-roast/75'}`}
+                                        cursor-pointer hover:bg-crema/50 transition ${dataDragActive
+                                    ? 'ring-2 ring-espresso border-transparent'
+                                    : 'border-dashed border-roast/75'}`}
                         >
-                            <PiUploadSimpleBold size="3.5rem" color="#713105" />
+                            {hasDataFile ? (
+                                <MdDone size="3.5rem" className="text-green-600" />
+                            ) : (
+                                <PiUploadSimpleBold size="3.5rem" color="#713105" />
+                            )}
                             <span className="text-espresso font-medium text-xl text-center break-all px-2">
                                 {filesState?.data?.file?.name || "No file selected"}
                             </span>
+                            {hasDataFile ? (
+                                <span className="text-espresso text-base font-semibold">
+                                    File uploaded
+                                </span>
+                            ) : null}
                         </label>
                         {filesState?.data?.error ? <p className="text-red-600">{filesState.data.error}</p> : null}
                     </div>
 
                     {needsBatchInfo && (
-                    <div className="flex flex-col">
-                        <label className="mb-[8px] font-medium text-noir text-2xl">
-                            <div className="flex items-center gap-ds-sm">
-                                <Tooltip
-                                    text={"Batch information file. The file must be in spreadsheet format."}
-                                >
-                                    <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
-                                </Tooltip>
-                                Upload batch info *
-                            </div>
-                        </label>
-                        <input
-                            id="batchInfoFileInput"
-                            type="file"
-                            onChange={(e) => handleBatchInfoFileChange(e.target.files?.[0])}
-                            className="sr-only"
-                        />
-                        <label
-                            htmlFor="batchInfoFileInput"
-                            onDrop={(e) => {
-                                e.preventDefault()
-                                setBatchDragActive(false)
-                                processDroppedFile(e.dataTransfer.files?.[0], 'batchInfo')
-                            }}
-                            onDragOver={(e) => e.preventDefault()}
-                            onDragEnter={() => setBatchDragActive(true)}
-                            onDragLeave={() => setBatchDragActive(false)}
-                            className={`w-78 border rounded-[10px] px-ds-md py-ds-xl flex flex-col justify-center items-center gap-ds-sm 
-                                        cursor-pointer hover:bg-crema/50 transition ${batchDragActive ? 'ring-2 ring-espresso border-transparent' : 'border-dashed border-roast/75'}`}
-                        >
-                            <PiUploadSimpleBold size="3.5rem" color="#713105" />
-                            <span className="text-espresso text-xl font-medium text-center break-all px-2">
-                                {filesState?.batchInfo?.file?.name || "No file selected"}
-                            </span>
-                        </label>
-                        {filesState?.batchInfo?.error ? <p className="text-red-600">{filesState.batchInfo.error}</p> : null}
-                    </div>
+                        <div className="flex flex-col">
+                            <label className="mb-[8px] font-medium text-noir text-2xl">
+                                <div className="flex items-center gap-ds-sm">
+                                    <Tooltip
+                                        text={"Batch information file. The file must be in spreadsheet format."}
+                                    >
+                                        <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
+                                    </Tooltip>
+                                    Upload batch info *
+                                </div>
+                            </label>
+                            <input
+                                id="batchInfoFileInput"
+                                type="file"
+                                onChange={(e) => handleBatchInfoFileChange(e.target.files?.[0])}
+                                className="sr-only"
+                            />
+                            <label
+                                htmlFor="batchInfoFileInput"
+                                onDrop={(e) => {
+                                    e.preventDefault()
+                                    setBatchDragActive(false)
+                                    processDroppedFile(e.dataTransfer.files?.[0], 'batchInfo')
+                                }}
+                                onDragOver={(e) => e.preventDefault()}
+                                onDragEnter={() => setBatchDragActive(true)}
+                                onDragLeave={() => setBatchDragActive(false)}
+                                className={`w-78 border rounded-[10px] px-ds-md py-ds-xl flex flex-col justify-center items-center gap-ds-sm 
+                                        cursor-pointer hover:bg-crema/50 transition ${batchDragActive
+                                        ? 'ring-2 ring-espresso border-transparent'
+                                        : 'border-dashed border-roast/75'}`}
+                            >
+                                {hasBatchInfoFile ? (
+                                    <MdDone size="3.5rem" className="text-green-600" />
+                                ) : (
+                                    <PiUploadSimpleBold size="3.5rem" color="#713105" />
+                                )}
+                                <span className="text-espresso text-xl font-medium text-center break-all px-2">
+                                    {filesState?.batchInfo?.file?.name || "No file selected"}
+                                </span>
+                                {hasBatchInfoFile ? (
+                                    <span className="text-espresso text-base font-semibold">
+                                        File uploaded
+                                    </span>
+                                ) : null}
+                            </label>
+                            {filesState?.batchInfo?.error ? <p className="text-red-600">{filesState.batchInfo.error}</p> : null}
+                        </div>
                     )}
                 </div>
             </div>
@@ -396,12 +422,23 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                         onDragEnter={() => setImportDragActive(true)}
                         onDragLeave={() => setImportDragActive(false)}
                         className={`w-78 border rounded-[10px] px-ds-md py-ds-xl flex flex-col justify-center items-center gap-ds-sm 
-                                    cursor-pointer hover:bg-crema/50 transition ${importDragActive ? 'ring-2 ring-espresso border-transparent' : 'border-dashed border-roast/75'}`}
+                                    cursor-pointer hover:bg-crema/50 transition ${importDragActive
+                                ? 'ring-2 ring-espresso border-transparent'
+                                : 'border-dashed border-roast/75'}`}
                     >
-                        <PiUploadSimpleBold size="3.5rem" color="#713105" />
+                        {hasImportFile ? (
+                            <MdDone size="3.5rem" className="text-green-600" />
+                        ) : (
+                            <PiUploadSimpleBold size="3.5rem" color="#713105" />
+                        )}
                         <span className="text-espresso text-xl font-medium text-center break-all px-2">
                             {filesState?.importFile?.file?.name || "No file selected"}
                         </span>
+                        {hasImportFile ? (
+                            <span className="text-espresso text-base font-semibold">
+                                File uploaded
+                            </span>
+                        ) : null}
                     </label>
                     {filesState?.importFile?.error ? <p className="text-red-600">{filesState.importFile.error}</p> : null}
                 </div>

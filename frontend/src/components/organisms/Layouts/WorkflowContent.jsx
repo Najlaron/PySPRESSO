@@ -395,16 +395,15 @@ function WorkflowContent({ workflow,
                             />
                         )}
 
-                        {workflow?.state?.data && (
-                            <a
-                                href={apiBaseUrl + `/workflow/${workflowId}/report`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-lg font-medium text-noir pb-1 border-b-2 border-transparent hover:border-noir transition-colors duration-200"
-                            >
-                                Open report
-                            </a>
-                        )}
+                        <a
+                            href={apiBaseUrl + `/workflow/${workflowId}/report`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-lg font-medium bg-espresso hover:bg-noir/85 p-ds-md text-light-foam rounded-lg shadow-xl
+                                transition-colors duration-200"
+                        >
+                            Open report
+                        </a>
                     </div>
 
                     {/* výsledek o vykování kroku */}
