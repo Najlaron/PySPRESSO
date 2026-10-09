@@ -11,8 +11,8 @@ import { restrictToVerticalAxis } from "@dnd-kit/modifiers"
 function WorkflowSidebar({
     searchQuery,
     setSearchQuery,
-    selectedCategory,
-    setSelectedCategory,
+    selectedCategories,
+    setSelectedCategories,
     categories,
     filteredOperations,
     workflow,
@@ -35,7 +35,7 @@ function WorkflowSidebar({
     // search bar je zablokovaný pokud se přidává nějaká metoda, pokud běží krok nebo pokud se odstranuje krok
     const isMethodActionsLocked = isAddingMethod || isStepRunning || Boolean(runningStepId) || isStepDeleting
     const isSingleStepRunning = isStepRunning || Boolean(runningStepId)
-    const hasActiveFilter = Boolean(searchQuery.trim()) || Boolean(selectedCategory)
+    const hasActiveFilter = Boolean(searchQuery.trim()) || selectedCategories.length > 0
 
     const sensors = useSensors(
         useSensor(MouseSensor, {
@@ -67,15 +67,15 @@ function WorkflowSidebar({
 
 
     return (
-        <aside className="w-[30%] h-screen overflow-hidden bg-light-foam pt-ds-xl pb-ds-lg px-ds-lg shadow-[4px_0_12px_rgba(0,0,0,0.08)] z-10">
-            <div className="flex flex-col justify-between h-full max-w-360">
+        <aside className="w-[30%] h-screen overflow-y-auto overflow-x-hidden bg-light-foam pt-ds-xl pb-ds-lg px-ds-lg shadow-[4px_0_12px_rgba(0,0,0,0.08)] z-10">
+            <div className="flex flex-col justify-between min-h-full max-w-360">
                 {/* Search bar */}
                 <div className="">
                     <SearchBar
                         searchQuery={searchQuery}
                         setSearchQuery={setSearchQuery}
-                        selectedCategory={selectedCategory}
-                        setSelectedCategory={setSelectedCategory}
+                        selectedCategories={selectedCategories}
+                        setSelectedCategories={setSelectedCategories}
                         categories={categories}
                         isWorkflowLoading={isWorkflowLoading}
                         isDisabled={isMethodActionsLocked}
@@ -106,7 +106,7 @@ function WorkflowSidebar({
                 </div>
 
                 {/* přidané metody ve workflow */}
-                <div className="mt-ds-xl flex-1 min-h-0 overflow-y-auto">
+                <div className="mt-ds-xl">
                     <div className="flex flex-col gap-ds-md">
                         <h3 className="text-xl text-espresso font-semibold">METHODS IN WORKFLOW</h3>
                         <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={handleDragEnd} modifiers={[restrictToVerticalAxis]}>

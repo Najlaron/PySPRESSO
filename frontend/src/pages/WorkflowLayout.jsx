@@ -14,7 +14,7 @@ function WorkflowLayout() {
     const [workflowLoadErrror, setWorkflowLoadError] = useState(null)
     const [operations, setOperations] = useState([])
     const [searchQuery, setSearchQuery] = useState("")
-    const [selectedCategory, setSelectedCategory] = useState("")
+    const [selectedCategories, setSelectedCategories] = useState([])
     const [selectedStep, setSelectedStep] = useState(null)
     const [isRunning, setIsRunning] = useState(false)
     const [isAllStepsRunning, setIsAllStepsRunning] = useState(false)
@@ -105,14 +105,19 @@ function WorkflowLayout() {
     ).sort((a, b) => a.localeCompare(b))
 
     // vrací pouze ty metody, které obsahují zadaný výraz ze search baru
-    // a zároveň odpovídají zvolené kategorii (pokud je vybraná)
+    // a zároveň obsahují všechny zvolené kategorie (pokud jsou vybrané)
     const filteredOperations = operations.filter((op) => {
         const query = searchQuery.toLowerCase().trim()
-        const selectedCategoryNormalized = selectedCategory.toLowerCase().trim()
+        const selectedCategoriesNormalized = selectedCategories
+            .map((category) => String(category).toLowerCase().trim())
+            .filter(Boolean)
 
         const labelMatch = op.label.toLowerCase().includes(query)
         const categoryTags = (op?.categoryTags ?? []).map((tag) => String(tag).toLowerCase().trim())
-        const categoryMatch = !selectedCategoryNormalized || categoryTags.includes(selectedCategoryNormalized)
+        const categoryMatch =
+            selectedCategoriesNormalized.length === 0
+                ? true
+                : selectedCategoriesNormalized.every((category) => categoryTags.includes(category))
 
         return labelMatch && categoryMatch
     })
@@ -341,8 +346,8 @@ function WorkflowLayout() {
             <WorkflowSidebar
                 searchQuery={searchQuery}
                 setSearchQuery={setSearchQuery}
-                selectedCategory={selectedCategory}
-                setSelectedCategory={setSelectedCategory}
+                selectedCategories={selectedCategories}
+                setSelectedCategories={setSelectedCategories}
                 categories={categories}
                 filteredOperations={filteredOperations}
                 workflow={workflow}
