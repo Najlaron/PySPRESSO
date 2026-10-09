@@ -114,12 +114,13 @@ function WorkflowLayout() {
 
         const labelMatch = op.label.toLowerCase().includes(query)
         const categoryTags = (op?.categoryTags ?? []).map((tag) => String(tag).toLowerCase().trim())
+        const hasBlockedCategory = categoryTags.some((tag) => blockedCategories.has(tag))
         const categoryMatch =
             selectedCategoriesNormalized.length === 0
                 ? true
                 : selectedCategoriesNormalized.every((category) => categoryTags.includes(category))
 
-        return labelMatch && categoryMatch
+        return !hasBlockedCategory && labelMatch && categoryMatch
     })
 
     // funkce pro obnovu workflow po vykonání nějakého kroku

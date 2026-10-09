@@ -68,7 +68,7 @@ function WorkflowSidebar({
 
     return (
         <aside className="w-[30%] h-screen overflow-y-auto overflow-x-hidden bg-light-foam pt-ds-xl pb-ds-lg px-ds-lg shadow-[4px_0_12px_rgba(0,0,0,0.08)] z-10">
-            <div className="flex flex-col justify-between min-h-full max-w-360">
+            <div className="flex flex-col min-h-full max-w-360">
                 {/* Search bar */}
                 <div className="">
                     <SearchBar
@@ -140,14 +140,16 @@ function WorkflowSidebar({
                 {/* tlačítko pro spuštění všech metod */}
                 {/* nejde spustit, pokud už probíhá spouštění nějaké metody, nebo všech metod nebo je zrovna odstraňován nějaký krok */}
                 {workflow && (
-                    <button onClick={onExecuteAll}
-                        disabled={isRunningAll || isSingleStepRunning || isStepDeleting}
-                        className={`bg-espresso text-foam rounded-xl shadow-md py-ds-md text-xl font-medium mt-ds-xl
-                        flex gap-ds-md items-center justify-center
+                    <div className="mt-auto pt-ds-lg">
+                        <button onClick={onExecuteAll}
+                            disabled={isRunningAll || isSingleStepRunning || isStepDeleting}
+                            className={`bg-espresso text-foam rounded-xl shadow-md py-ds-md text-xl font-medium
+                        flex gap-ds-md items-center justify-center w-full
                         hover:bg-noir/90 transition duration-300 ${isRunningAll || isSingleStepRunning ? "cursor-wait bg-noir/90" : " cursor-pointer"}`}>
-                        <MdPlayArrow size="1.5rem" />
-                        <span>{isRunningAll ? "Running..." : "Run all methods"}</span>
-                    </button>
+                            <MdPlayArrow size="1.5rem" />
+                            <span>{isRunningAll ? "Running..." : "Run all methods"}</span>
+                        </button>
+                    </div>
                 )}
             </div>
         </aside>

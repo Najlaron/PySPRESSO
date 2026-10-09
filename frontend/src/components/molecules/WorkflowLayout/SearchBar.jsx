@@ -50,7 +50,7 @@ function SearchBar({
                     disabled={isInputDisabled}
                 />
             </div>
-            <div className="self-end min-w-80 mb-ds-md">
+            <div className="w-full max-w-full mb-ds-md">
                 <button
                     type="button"
                     onClick={() => setIsCategoryMenuOpen((prev) => !prev)}

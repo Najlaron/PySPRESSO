@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from "react"
 import { MdExpandMore, MdExpandLess, MdPlayArrow } from "react-icons/md"
-import { GiTestTubes } from "react-icons/gi"
 import { ImLab } from "react-icons/im"
 import { PiSliders } from "react-icons/pi"
 import { HiOutlineDotsHorizontal } from "react-icons/hi"
@@ -10,6 +9,25 @@ import { MdDone } from "react-icons/md"
 import { useSortable } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { LuClock3 } from "react-icons/lu"
+
+// categories icons
+import { FiTool } from "react-icons/fi" // correction
+import { LuFilter } from "react-icons/lu" // filter
+import { GoArrowSwitch } from "react-icons/go" // transformation
+import { LuChartNoAxesCombined } from "react-icons/lu" // statistics
+import { AiOutlineDotChart } from "react-icons/ai" // vizualization
+import { LuFileInput } from "react-icons/lu" // checkpoints
+import { LuDatabase } from "react-icons/lu" // inicialization
+
+const CATEGORY_ICONS = {
+    correction: FiTool,
+    filter: LuFilter,
+    transformation: GoArrowSwitch,
+    statistics: LuChartNoAxesCombined,
+    visualization: AiOutlineDotChart,
+    data_checkpoint: LuFileInput,
+    initialization: LuDatabase,
+}
 
 
 // vizualizace metody po jejím přidání do workflow
@@ -32,9 +50,12 @@ function WorkflowStepCard({
     const isAnyStepRunning = Boolean(runningStepId)
     const isCorrectionCategory = operation?.categoryTags?.some((tag) => String(tag).toLowerCase() === "correction")
     const takeLong = isCorrectionCategory || operation?.id === "visualizer_violin_plots"
+    const categoryTags = (operation?.categoryTags ?? []).map((tag) => String(tag).toLowerCase())
+    const matchingCategoryTag = categoryTags.find((tag) => CATEGORY_ICONS[tag])
+    const OperationIcon = matchingCategoryTag ? CATEGORY_ICONS[matchingCategoryTag] : ImLab
 
     // drag and drop část
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+    const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id })
     const style = {
         transform: transform ? CSS.Translate.toString(transform) : undefined,
         transition,
@@ -77,7 +98,7 @@ function WorkflowStepCard({
                 <div className="flex items-start justify-between mt-ds-md px-ds-md w-full">
                     <div className="flex items-center gap-ds-md min-w-0">
                         <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-crema/25 shrink-0">
-                            <ImLab className="h-6 w-6 text-espresso" />
+                            <OperationIcon className="h-6 w-6 text-espresso" />
                         </div>
 
                         <div className="min-w-0">
