@@ -19,7 +19,11 @@ from pyspresso_app.core.workflow_models import (
 from pyspresso_app.core.registry import get_operation, list_operations
 from pyspresso_app.core.executor import run_step
 from pyspresso_app.bootstrap import initialize
-from pyspresso_app.core.html_reporter import get_report_path
+from pyspresso_app.core.html_reporter import (
+    configure_report,
+    get_report_path,
+    get_workflow_report_file_name,
+)
 
 # místo, kam se ukládáají data
 UPLOAD_FOLDER = UPLOADS_BASE_DIR / "uploads"
@@ -256,9 +260,7 @@ def get_operation_func(operation_id: str):
 def create_new_workflow():
     workflow_name = request.form.get("workflowName", "").strip()
     folder_name = request.form.get("folderName", "").strip()
-    report_file_name = request.form.get("reportFileName", "").strip()
-    if not report_file_name:
-        report_file_name = "report"
+    report_file_name = get_workflow_report_file_name(workflow_name)
 
     # kontrola, jestli byly vyplněné povinné pole
     if not workflow_name:
@@ -314,7 +316,7 @@ def create_new_workflow():
     workflow_id = str(uuid.uuid4())
     workflow = Workflow(workflow_id=workflow_id, name=workflow_name)
     workflow.state.main_folder = folder_name
-    workflow.state.report_file_name = report_file_name or "report"
+    workflow.state.report_file_name = report_file_name
 
     # Imported methods also start with the initializer for the chosen format.
     import_file = request.files.get("importFile")
@@ -329,6 +331,19 @@ def create_new_workflow():
 
     # uloží cesty k souborům
     workflow.state.files = files_dict
+
+    # Create the report immediately and persist its paths with workflow state.
+    workflow.state.report_html_url = f"/workflow/{workflow_id}/report"
+
+    try:
+        configure_report(
+            workflow.state,
+            workflow_name=workflow_name,
+        )
+    except Exception as exc:
+        return jsonify({
+            "message": f"Could not create workflow report: {exc}"
+        }), 500
 
     definition = _json_safe_for_database(workflow.definition.to_dict())
 
@@ -763,25 +778,10 @@ def execute_step(workflow_id: str, step_id: str):
 
 
 def _resolve_report_html_path(workflow: Workflow) -> Path:
-    folder_value = getattr(workflow.state, "main_folder", None)
-    report_name = getattr(workflow.state, "report_file_name", None) or "report"
-    report_stem = Path(str(report_name)).stem or "report"
+    report_path = Path(get_report_path(workflow.state)).resolve()
 
-    if not folder_value or str(folder_value).strip() == "":
-        raise ValueError("Workflow state.main_folder is missing.")
-
-    folder_parts = [
-        part for part in str(folder_value).replace("\\", "/").split("/") if part
-    ]
-
-    if folder_parts and folder_parts[0] == "outputs":
-        folder_parts = folder_parts[1:]
-
-    report_dir = OUTPUT_FOLDER.joinpath(*folder_parts)
-    report_path = (report_dir / f"{report_stem}.html").resolve()
-
-    output_root = OUTPUT_FOLDER.resolve()
-    report_path.relative_to(output_root)
+    # Ensure the report is inside the application's output directory.
+    report_path.relative_to(OUTPUT_FOLDER.resolve())
 
     return report_path
 

@@ -1014,10 +1014,10 @@ def _read_text_table_auto(path, min_columns=2):
     Then falls back to common separators.
     """
     encodings = [
-        "utf-8",
         "utf-8-sig",
-        "ISO-8859-1",
+        "utf-8",
         "cp1250",
+        "cp1252",
         "latin1",
     ]
 

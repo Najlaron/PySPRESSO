@@ -32,6 +32,11 @@ def validate_step(
     if missing_requirements:
         step.valid = False
         step.status = StepStatus.BLOCKED
+        # Map those, that could happen to user and give them better clues on what to do
+        if {"pca", "pca_df"}.intersection(missing_requirements):
+            step.messages.append("This operation requires PCA results. Run PCA first, then retry this operation.")
+        elif {"plsda", "plsda_model"}.intersection(missing_requirements):
+            step.messages.append("This operation requires PLS-DA results. Run PLS-DA first, then retry this operation.")
         step.messages.append(
             "Missing required workflow state: " + ", ".join(missing_requirements)
         )

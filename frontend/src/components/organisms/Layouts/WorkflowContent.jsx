@@ -48,6 +48,7 @@ function getImagePathsFromStep(step) {
     const imagePaths = [
         ...collectImagePaths(summary.saved_paths),
         ...collectImagePaths(summary.figure_path),
+        ...collectImagePaths(summary.example_path),
         ...collectImagePaths(summary.before_plots),
         ...collectImagePaths(summary.after_plots),
         ...collectImagePaths(summary.s_exploration_images),

@@ -8,6 +8,9 @@ import { API_BASE_URL } from "../../../config"
 import { PiUploadSimpleBold } from "react-icons/pi"
 import { MdDone } from "react-icons/md"
 
+const DATA_FORMAT_STORAGE_KEY = "pyspresso:lastDataFormat"
+const SUPPORTED_DATA_FORMATS = ["cd", "sciexos"]
+
 function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadError }) {
     const navigate = useNavigate()
 
@@ -15,7 +18,17 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
     const [workflowName, setWorkflowName] = useState("")
     const [folderName, setFolderName] = useState("")
     const [reportFileName, setReportFileName] = useState("")
-    const [dataFormat, setDataFormat] = useState("cd")
+    const [dataFormat, setDataFormat] = useState(() => {
+        try {
+            const savedFormat = localStorage.getItem(DATA_FORMAT_STORAGE_KEY)
+
+            return SUPPORTED_DATA_FORMATS.includes(savedFormat)
+                ? savedFormat
+                : "cd"
+        } catch {
+            return "cd"
+        }
+    })
 
     const needsBatchInfo = dataFormat === "cd"
     const fileErrors = [
@@ -121,6 +134,12 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
             if (!response.ok) {
                 setLoadError(responseData?.message ?? "Failed to create new workflow.")
                 return
+            }
+            // Remember the format after successful workflow creation.
+            try {
+                localStorage.setItem(DATA_FORMAT_STORAGE_KEY, dataFormat)
+            } catch {
+                // Continue if preference storage is unavailable.
             }
 
             setWorkflowName("")

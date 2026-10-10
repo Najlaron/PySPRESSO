@@ -12,6 +12,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Mapping, Sequence
 
+from pyspresso_app.config import APP_BASE_DIR
+
 import pandas as pd
 
 REPORT_SCHEMA_VERSION = 1
@@ -379,7 +381,13 @@ def _safe_stem(
 ) -> str:
     raw = str(value or DEFAULT_REPORT_FILE_NAME).strip()
 
-    raw = Path(raw).stem
+    raw = Path(raw).name
+
+    if raw.lower().endswith(".html"):
+        raw = raw[:-5]
+    elif not raw.endswith("-report"):
+        # Preserve filename handling for existing workflows.
+        raw = Path(raw).stem
 
     raw = re.sub(
         r"[^\w\-. ]+",
@@ -398,6 +406,9 @@ def _safe_stem(
 
     return raw or DEFAULT_REPORT_FILE_NAME
 
+def get_workflow_report_file_name(workflow_name: str) -> str:
+    """Return a safe report filename derived from the workflow name."""
+    return _safe_stem(f"{workflow_name}-report")
 
 def _report_paths(
     state: Any,
@@ -448,8 +459,10 @@ def _report_paths(
     if not directory.is_absolute():
         parts = directory.parts
 
-        if not parts or parts[0] != "outputs":
-            directory = Path("outputs") / directory
+        if parts and parts[0] == "outputs":
+            directory = Path(*parts[1:])
+
+        directory = Path(APP_BASE_DIR) / "outputs" / directory
 
     directory.mkdir(
         parents=True,
@@ -1345,6 +1358,16 @@ def _render_html(
             start=1,
         )
     )
+
+    if not blocks:
+        blocks_html = (
+            '<div class="report-item text-item">'
+            '<h3>Your workflow report is ready</h3>'
+            '<p>No operations have been run yet. '
+            'As you run operations in this workflow, their results '
+            'will appear here.</p>'
+            '</div>'
+        )
 
     toc_html = _render_toc(blocks)
 
