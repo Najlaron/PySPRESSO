@@ -8,21 +8,27 @@ import { CapitalizeFirstLetter } from "../../../utils/helpers"
 import { MdDone } from "react-icons/md"
 import { useSortable } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
-import { LuClock3 } from "react-icons/lu"
 
 // categories icons
 import { FiTool } from "react-icons/fi" // correction
 import { LuFilter } from "react-icons/lu" // filter
-import { GoArrowSwitch } from "react-icons/go" // transformation
 import { LuChartNoAxesCombined } from "react-icons/lu" // statistics
 import { AiOutlineDotChart } from "react-icons/ai" // vizualization
 import { LuFileInput } from "react-icons/lu" // checkpoints
 import { LuDatabase } from "react-icons/lu" // inicialization
 
+function TransformationFxIcon({ className = "" }) {
+    return (
+        <span className={`inline-flex items-center justify-center ${className} text-[1.2rem] font-medium tracking-tight`}>
+            f(x)
+        </span>
+    )
+}
+
 const CATEGORY_ICONS = {
     correction: FiTool,
     filter: LuFilter,
-    transformation: GoArrowSwitch,
+    transformation: TransformationFxIcon,
     statistics: LuChartNoAxesCombined,
     visualization: AiOutlineDotChart,
     data_checkpoint: LuFileInput,
@@ -106,9 +112,13 @@ function WorkflowStepCard({
                                 <h2 className="text-base font-medium text-noir truncate">
                                     {operation?.label}
                                 </h2>
-                                {takeLong && (
-                                    <LuClock3 className="h-4 w-4 shrink-0 text-espresso" title="This operation may take longer than usual." />
-                                )}
+                                {takeLong && isCurrentStepRunning ? (
+                                    <div
+                                        className="loader shrink-0"
+                                        title="This operation is still running."
+                                        style={{ width: "22px", "--b": "3px" }}
+                                    />
+                                ) : null}
                             </div>
                             <p className="mt-1 text-sm text-noir/60 truncate">
                                 {CapitalizeFirstLetter(operation?.categoryTags?.join(", "))}
@@ -213,7 +223,6 @@ function WorkflowStepCard({
 
 
             </div>
-
 
         </div>
     );
