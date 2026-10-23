@@ -215,7 +215,7 @@ function WorkflowContent({ workflow,
                 return workflow.state.variable_metadata
             case "Batch Info":
                 return workflow.state.batch_info
-            case "Candidates Features":
+            case "Candidates":
                 return workflow.state.candidates
             default:
                 return null

@@ -30,6 +30,7 @@ def run_step(workflow: Workflow, step: WorkflowStep) -> WorkflowStep:
             workflow.state,
             workflow_name=workflow.name,
             operation_name=operation.label,
+            citation=operation.citation,
             operation_id=operation.id,
             step_id=step.step_id,
             parameters=step.params,

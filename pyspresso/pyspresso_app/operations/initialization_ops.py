@@ -2699,3 +2699,440 @@ def initializer_sciexos(
                    "metrics": {"n_features": len(features), "n_samples": len(samples)},
                    "artifacts": []},
     }
+
+### -------------------------------------------------------------------------
+### Native PySPRESSO format initializer and helpers
+
+def _native_read_table(state, key, separator):
+    name = (state.files or {}).get(key)
+    if not name:
+        raise ValueError(f"Missing uploaded file: {key}.")
+
+    root = Path(UPLOADS_BASE_DIR).resolve()
+    path = (root / name).resolve()
+
+    if not path.is_relative_to(root):
+        raise ValueError(f"Invalid upload path for {key}.")
+
+    if not path.is_file():
+        raise ValueError(
+            f"{key}: uploaded file was not found: {path.name}"
+        )
+
+    if path.stat().st_size == 0:
+        raise ValueError(
+            f"{key}: uploaded file is empty: {path.name}"
+        )
+
+    # Read the header as a row so duplicate column names are detected
+    # before pandas can automatically rename them.
+    options = dict(
+        header=None,
+        dtype=str,
+        keep_default_na=False,
+    )
+
+    try:
+        if path.suffix.lower() in {".xlsx", ".xls"}:
+            raw = pd.read_excel(path, sheet_name=0, **options)
+        else:
+            sep = "\t" if path.suffix.lower() == ".tsv" else separator
+            raw = pd.read_csv(
+                path,
+                sep=sep,
+                encoding="utf-8-sig",
+                **options,
+            )
+
+    except pd.errors.EmptyDataError as exc:
+        raise ValueError(
+            f"{key}: file contains no readable columns: {path.name}. "
+            "Check that the export contains a header and data rows."
+        ) from exc
+
+    except Exception as exc:
+        raise ValueError(
+            f"Could not read {key} ({path.name}): {exc}"
+        ) from exc
+
+    if raw.shape[0] < 2:
+        raise ValueError(
+            f"{key}: table must contain a header and at least one row."
+        )
+
+    headers = raw.iloc[0].tolist()
+
+    if (
+        any(not str(value).strip() for value in headers)
+        or len(headers) != len(set(headers))
+    ):
+        raise ValueError(f"{key}: empty or duplicate column names.")
+
+    table = raw.iloc[1:].copy().reset_index(drop=True)
+    table.columns = headers
+
+    # Do not drop all-missing sample columns or interpret literal IDs
+    # such as "NA" and "001" as missing/numeric values.
+    return table
+
+
+def _native_ids(table, column, label):
+    if column not in table:
+        raise ValueError(
+            f"{label}: required column {column!r} is missing."
+        )
+
+    ids = table[column].astype(str)
+
+    if ids.str.strip().eq("").any() or ids.duplicated().any():
+        raise ValueError(
+            f"{label}: {column!r} contains empty or duplicate IDs."
+        )
+
+    table[column] = ids
+    return ids.tolist()
+
+
+def _native_align(table, column, expected, label):
+    actual = _native_ids(table, column, label)
+
+    missing = sorted(set(expected) - set(actual))
+    extra = sorted(set(actual) - set(expected))
+
+    if missing or extra:
+        raise ValueError(
+            f"{label}: IDs do not match data. "
+            f"Missing ({len(missing)}): {missing[:8]}; "
+            f"extra ({len(extra)}): {extra[:8]}."
+        )
+
+    return (
+        table.set_index(column, drop=False)
+        .loc[expected]
+        .reset_index(drop=True)
+    )
+
+
+@register_operation(
+    id="initializer_pyspresso",
+    label="Initialize PySPRESSO Dataset",
+    description=(
+        "Import data, metadata, variable metadata "
+        "and batch information."
+    ),
+    category_tags=[
+        OperationTag.IO,
+        OperationTag.INITIALIZATION,
+    ],
+    parameter_schema=[
+        ParameterDef(
+            name="separator",
+            type="str",
+            default=";",
+            label="CSV separator",
+            help=(
+                "Checkpoint CSVs use ;. Use , for comma-separated "
+                "CSVs. TSV files use tabs."
+            ),
+        ),
+        ParameterDef(
+            name="processing_state",
+            type="str",
+            default="{}",
+            label="Previous processing state",
+            help=(
+                "{} means untransformed/unscaled data. "
+                "For processed tables, specify the five preprocessing "
+                "flags from the checkpoint auxiliary_state."
+            ),
+        ),
+    ],
+    requires=["files"],
+    produces=[
+        "data",
+        "metadata",
+        "variable_metadata",
+        "batch_info",
+        "batch",
+        "QC_samples",
+        "blank_samples",
+        "standard_samples",
+        "dilution_series_samples",
+        "dil_concentrations",
+        "main_folder",
+    ],
+)
+def initializer_pyspresso(
+    state: WorkflowState,
+    separator=";",
+    processing_state="{}",
+):
+    if not isinstance(separator, str) or len(separator) != 1:
+        raise ValueError("CSV separator must be one character.")
+
+    frames = {
+        key: _native_read_table(state, key, separator)
+        for key in (
+            "data",
+            "metadata",
+            "variable_metadata",
+            "batch_info",
+        )
+    }
+
+    data = frames["data"]
+    md = frames["metadata"]
+    vm = frames["variable_metadata"]
+    bi = frames["batch_info"]
+
+    feature_ids = _native_ids(data, "cpdID", "Data")
+    samples = [column for column in data.columns if column != "cpdID"]
+
+    if not samples:
+        raise ValueError("Data must contain at least one sample column.")
+
+    data = data[["cpdID"] + samples].copy()
+    md = _native_align(md, "Sample File", samples, "Metadata")
+    vm = _native_align(vm, "cpdID", feature_ids, "Variable metadata")
+
+    # Older Compound Discoverer exports may identify batch-info rows
+    # through Study File ID rather than the actual data-column name.
+    if "Sample File" not in bi:
+        _native_ids(md, "Study File ID", "Metadata")
+        batch_ids = _native_ids(bi, "Study File ID", "Batch info")
+
+        lookup = md.set_index("Study File ID")["Sample File"]
+
+        if set(batch_ids) != set(lookup.index):
+            raise ValueError(
+                "Batch info Study File IDs do not match metadata."
+            )
+
+        bi["Sample File"] = bi["Study File ID"].map(lookup)
+
+    # Validate the complete sample set without changing acquisition order.
+    _native_align(bi, "Sample File", samples, "Batch info")
+
+    if "Batch" not in bi or bi["Batch"].str.strip().eq("").any():
+        raise ValueError(
+            "Batch info requires a nonempty Batch value for every sample."
+        )
+
+    if "Injection Order" in bi:
+        order = pd.to_numeric(
+            bi["Injection Order"],
+            errors="raise",
+        )
+
+        if (
+            order.isna().any()
+            or order.isin([float("inf"), -float("inf")]).any()
+            or order.duplicated().any()
+        ):
+            raise ValueError(
+                "Injection Order must be finite and globally unique."
+            )
+
+        bi = (
+            bi.assign(**{"Injection Order": order})
+            .sort_values("Injection Order", kind="stable")
+        )
+
+    # Without global Injection Order, batch_info row order is the
+    # acquisition order. Do not sort samples alphabetically.
+    samples = bi["Sample File"].tolist()
+    bi = bi.reset_index(drop=True)
+
+    md = _native_align(md, "Sample File", samples, "Metadata")
+    data = data[["cpdID"] + samples]
+
+    # Shared fields must agree. Do not silently overwrite conflicts.
+    shared_columns = [
+        "Batch",
+        "Injection Order",
+        "Creation Date",
+        "Sample Type",
+        "Study File ID",
+    ]
+
+    for column in shared_columns:
+        if column not in bi:
+            continue
+
+        if column in md:
+            left = md[column].astype(str)
+            right = bi[column].astype(str)
+
+            if column == "Injection Order":
+                agree = pd.to_numeric(
+                    left, errors="coerce"
+                ).eq(
+                    pd.to_numeric(right, errors="coerce")
+                )
+            else:
+                agree = left.eq(right)
+
+            if not agree.all():
+                raise ValueError(
+                    f"Metadata and batch info disagree in {column!r}."
+                )
+
+        md[column] = bi[column].to_numpy()
+
+    if (
+        "Sample Type" not in md
+        or md["Sample Type"].str.strip().eq("").any()
+    ):
+        raise ValueError(
+            "Metadata requires Sample Type for every sample."
+        )
+
+    # Convert intensities explicitly. Invalid text raises an error.
+    # Empty cells remain missing; zeros remain zeros.
+    numeric = data[samples].replace({
+        "": float("nan"),
+        "NaN": float("nan"),
+        "nan": float("nan"),
+    })
+    numeric = numeric.apply(pd.to_numeric, errors="raise")
+
+    if numeric.isin([float("inf"), -float("inf")]).any().any():
+        raise ValueError("Data contain infinite intensities.")
+
+    data = pd.concat([data[["cpdID"]], numeric], axis=1)
+
+    for column in ("m/z", "RT [min]"):
+        if column in vm:
+            vm[column] = pd.to_numeric(
+                vm[column].replace("", float("nan")),
+                errors="raise",
+            )
+
+    # These properties cannot be inferred reliably from four tables.
+    flags = {
+        "was_log_transformed": False,
+        "log_base": None,
+        "was_centered": False,
+        "was_scaled": False,
+        "was_normalized": False,
+    }
+
+    supplied = (
+        ast.literal_eval(processing_state)
+        if isinstance(processing_state, str)
+        else processing_state
+    )
+
+    if not isinstance(supplied, dict) or set(supplied) - set(flags):
+        raise ValueError(
+            "processing_state must contain only the five "
+            "preprocessing flags."
+        )
+
+    flags.update(supplied)
+
+    for name in ("was_log_transformed", "was_centered"):
+        if not isinstance(flags[name], bool):
+            raise ValueError(f"{name} must be True or False.")
+
+    for name in ("was_scaled", "was_normalized"):
+        value = flags[name]
+        if value is not False and (
+            not isinstance(value, str) or not value.strip()
+        ):
+            raise ValueError(
+                f"{name} must be False or the method name."
+            )
+
+    if flags["was_log_transformed"]:
+        base = float(flags["log_base"])
+
+        if not (0 < base < float("inf")) or base == 1:
+            raise ValueError(
+                "A valid log_base is required for log-transformed data."
+            )
+
+        flags["log_base"] = base
+
+    elif flags["log_base"] is not None:
+        raise ValueError(
+            "log_base must be None when was_log_transformed=False."
+        )
+
+    # Exact native labels. Reference injections are not fitting QCs.
+    lists = {
+        name: md.loc[
+            md["Sample Type"].eq(sample_type),
+            "Sample File",
+        ].tolist()
+        for name, sample_type in [
+            ("QC_samples", "Quality Control"),
+            ("blank_samples", "Blank"),
+            ("standard_samples", "Standard"),
+            ("dilution_series_samples", "Dilution QC"),
+        ]
+    }
+
+    dilution_mask = md["Sample Type"].eq("Dilution QC")
+    levels = []
+
+    if dilution_mask.any():
+        if "dQC Level" not in md:
+            raise ValueError(
+                "Dilution QC samples require dQC Level in metadata."
+            )
+
+        levels = pd.to_numeric(
+            md.loc[dilution_mask, "dQC Level"],
+            errors="raise",
+        ).astype(float).tolist()
+
+        if any(not (0 < value < float("inf")) for value in levels):
+            raise ValueError(
+                "dQC Level values must be positive and finite."
+            )
+
+        md.loc[dilution_mask, "dQC Level"] = levels
+
+    # All validation above completes before replacing the active tables.
+    _initializer_folders(state)
+
+    state.data = data.reset_index(drop=True)
+    state.metadata = md
+    state.variable_metadata = vm
+    state.batch_info = bi
+    state.batch = bi["Batch"].tolist()
+
+    for name, value in {
+        **flags,
+        **lists,
+        "dil_concentrations": levels,
+    }.items():
+        setattr(state, name, value)
+
+    add_text(
+        state,
+        (
+            f"Imported {len(data)} features, {len(samples)} samples, "
+            f"{bi['Batch'].nunique()} batches; "
+            f"{len(state.QC_samples)} fitting QCs. "
+            f"Missing intensities preserved: "
+            f"{int(numeric.isna().sum().sum())}."
+        ),
+        title="PySPRESSO dataset initialization",
+    )
+
+    add_text(
+        state,
+        str(flags),
+        title="Imported processing state",
+        preformatted=True,
+    )
+
+    return {
+        "features": int(len(data)),
+        "samples": int(len(samples)),
+        "batches": int(bi["Batch"].nunique()),
+        "fitting_qcs": int(len(state.QC_samples)),
+        "missing_intensities": int(numeric.isna().sum().sum()),
+    }

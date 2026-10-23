@@ -174,3 +174,69 @@ def scaler_pareto(state: WorkflowState):
         "was_scaled": state.was_scaled,
         "was_centered": state.was_centered,
     }
+
+@register_operation(
+    id="transformer_negative_to_zero",
+    label="Replace Negative Values with Zero",
+    description=(
+        "Replace negative raw sample intensities with zero. "
+        "Missing values and feature identifiers remain unchanged."
+    ),
+    citation="",
+    category_tags=[OperationTag.TRANSFORMATION],
+    parameter_schema=[],
+    requires=["data"],
+    produces=["data"],
+)
+def transformer_negative_to_zero(state: WorkflowState):
+    if state.data is None:
+        raise ValueError("No data loaded.")
+
+    # Negative logged or centered values may be meaningful.
+    if (
+        getattr(state, "was_log_transformed", False)
+        or getattr(state, "was_scaled", False)
+        or getattr(state, "was_centered", False)
+    ):
+        raise ValueError(
+            "Run this operation on raw intensities, "
+            "before log transformation, centering or scaling."
+        )
+
+    data = state.data.copy()
+
+    # First column contains feature identifiers.
+    values = data.iloc[:, 1:].apply(
+        pd.to_numeric,
+        errors="raise",
+    )
+
+    negative_mask = values < 0
+
+    n_replaced = int(negative_mask.to_numpy().sum())
+    n_features = int(negative_mask.any(axis=1).sum())
+    n_samples = int(negative_mask.any(axis=0).sum())
+
+    # NaN values are preserved because NaN < 0 is False.
+    values = values.mask(negative_mask, 0.0)
+
+    # Assign sample columns without modifying the identifier column.
+    data[values.columns] = values
+    state.data = data
+
+    add_text(
+        state,
+        (
+            f"Replaced {n_replaced} negative measurements with zero "
+            f"across {n_features} features and {n_samples} samples. "
+            "Missing values were preserved. "
+            "No features or samples were removed."
+        ),
+        title="Negative values replaced with zero",
+    )
+
+    return {
+        "values_replaced": n_replaced,
+        "features_affected": n_features,
+        "samples_affected": n_samples,
+    }

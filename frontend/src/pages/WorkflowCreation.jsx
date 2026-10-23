@@ -4,6 +4,8 @@ import { useReducer, useState, useEffect } from 'react'
 
 const initialFilesState = {
     data: { file: null, error: null },
+    metadata: { file: null, error: null },
+    variableMetadata: { file: null, error: null },
     batchInfo: { file: null, error: null },
     importFile: { file: null, error: null },
 }
