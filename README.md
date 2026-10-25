@@ -20,36 +20,46 @@
 > 
 > https://colab.research.google.com/github/Najlaron/PySPRESSO/blob/main/demo-PySPRESSO-pipeline.ipynb
 
-## Running the app
+## Build and run the desktop app (`.exe`)
 
-### Option A: Desktop app (recommended for end users)
-No Docker, Node.js or command line knowledge required.
+### Requirements
+- [Python](https://www.python.org/downloads/)
+- [Node.js](https://nodejs.org/en/download)
 
-1. Download/build `PySPRESSO.exe` (see "Building the desktop app" below).
-2. Double-click `PySPRESSO.exe` inside the `PySPRESSO` folder.
-3. A console window opens (keep it open) and your browser opens automatically at `http://127.0.0.1:5000`.
-4. To stop the app, close the console window.
+### 1) Build the app
+From the project root, run:
 
-Your data (uploaded files, generated outputs, database) is stored in `%LOCALAPPDATA%\PySPRESSO`, separate from the app folder — this is what makes it safe to rebuild/replace `PySPRESSO.exe` (see below) without losing your data. Don't run the desktop app and Docker at the same time — both use port 5000, and whichever started first will silently receive all requests.
+`build-desktop.bat`
 
-#### Building the desktop app
-Requires Python and Node.js installed once, only for building:
-```
-build-desktop.bat
-```
-This builds the frontend and bundles the whole app with PyInstaller into `pyspresso\dist\PySPRESSO\`. **Rebuilding replaces that entire folder** (old `.exe`/libraries are deleted and rewritten) — but since your data lives in `%LOCALAPPDATA%\PySPRESSO` instead, it's untouched by rebuilds. Copy the `dist\PySPRESSO` folder wherever you like and share/run `PySPRESSO.exe` from inside it.
+This script:
+- builds the frontend
+- packages the app with PyInstaller
+- creates the output in `pyspresso\dist\PySPRESSO\`
 
-### Option B: Docker (for development)
-```
-docker compose up -d
-```
-Then open `http://localhost:5173`. Use `start-app.bat` / `stop-app.bat` on Windows as shortcuts.
+Rebuilding replaces the entire `dist\PySPRESSO` folder (old `.exe` and bundled libraries are deleted and recreated).
 
-### Backup and restore (Windows desktop app)
+### 2) Start the app
+Open the built `PySPRESSO` folder, then double-click `PySPRESSO.exe`.
+
+A console window appears — keep it open while using the app.  
+Your browser should open automatically at `http://127.0.0.1:5000`.
+
+If the browser does not open automatically, open that URL manually.
+
+### 3) Use the app
+Work with PySPRESSO in the browser window normally.
+
+As long as the console window stays open, the backend is running.
+
+### 4) Stop the app
+To stop PySPRESSO, close the console window opened by `PySPRESSO.exe`.
+
+### Where your data is stored (important)
 Desktop app data is stored in `%LOCALAPPDATA%\PySPRESSO`.
 
-- Create backup zip: `backup-data.bat`
-- Restore from zip: `restore-data.bat "path-to-backup-zip"`
+This includes:
+- uploaded files
+- generated outputs
+- local database
 
-The backup zip contains `instance`, `outputs`, and `uploads`.
-After rebuilding the `.exe`, restoring that zip will put those folders back into `%LOCALAPPDATA%\PySPRESSO`.
+Because this data is stored outside the app folder, you can rebuild or replace the `.exe` package without losing your data.
