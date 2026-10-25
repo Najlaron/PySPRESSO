@@ -34,6 +34,7 @@ ALLOWED_EXTENSIONS = {"csv", "txt", "xlsx", "xls", "tsv"}
 INITIALIZER_BY_DATA_FORMAT = {
     "cd": "initializer_compound_discoverer",
     "sciexos": "initializer_sciexos",
+    "pyspresso": "initializer_pyspresso",
 }
 
 # místo, kde jsou obrázky a další vytvořené soubory
@@ -67,9 +68,11 @@ def save_uploaded_file(file, subfolder="workflows"):
     subfolder = _validate_folder_name(subfolder)
     folder_path = UPLOAD_FOLDER / subfolder
     folder_path.mkdir(parents=True, exist_ok=True)
-    filename = secure_filename(file.filename)
+    filename = f"{uuid.uuid4().hex}_{secure_filename(file.filename)}"
     filepath = folder_path / filename
 
+    # Rewind in case the upload stream was previously read or saved.
+    file.stream.seek(0)
     file.save(str(filepath))
     return str(filepath.relative_to(UPLOAD_FOLDER.parent))
 
@@ -286,32 +289,56 @@ def create_new_workflow():
     if data_format not in INITIALIZER_BY_DATA_FORMAT:
         return jsonify({"message": f"Unsupported dataFormat '{data_format}'."}), 400
 
-    # Validate the selected format's required files before saving uploads.
-    required_files = [("data", "Data")]
-    if data_format == "cd":
-        required_files.append(("batchInfo", "Batch info"))
-    for key, label in required_files:
-        file = request.files.get(key)
+    # Tuples: multipart field, WorkflowState.files key, display label.
+    uploads_by_format = {
+        "cd": [
+            ("data", "data", "Data"),
+            ("batchInfo", "batch_info", "Batch info"),
+        ],
+        "sciexos": [
+            ("data", "data", "Data"),
+        ],
+        "pyspresso": [
+            ("data", "data", "Data"),
+            ("metadata", "metadata", "Sample metadata"),
+            ("variableMetadata", "variable_metadata", "Variable metadata"),
+            ("batchInfo", "batch_info", "Batch info"),
+        ],
+    }
+
+    required_uploads = uploads_by_format[data_format]
+
+    # Validate every file before saving any.
+    for form_key, state_key, label in required_uploads:
+        file = request.files.get(form_key)
+
         if not file or not file.filename:
-            return jsonify({"message": f"{label} file is required."}), 400
+            return jsonify({
+                "message": f"{label} file is required."
+            }), 400
+
         if not allowed_file(file.filename):
-            return jsonify({"message": f"Unsupported {label.lower()} file type."}), 400
+            return jsonify({
+                "message": f"Unsupported {label.lower()} file type."
+            }), 400
 
-    # uloží data a batch info a vratí cesty k nim (možná hodit do samotné funkce, at tady toho není moc)
     files_dict = {}
-    if "data" in request.files:
-        file = request.files["data"]
-        if file and file.filename:
-            filepath = save_uploaded_file(file, folder_name or "workflows")
-            if filepath:
-                files_dict["data"] = filepath
 
-    if data_format == "cd" and "batchInfo" in request.files:
-        file = request.files["batchInfo"]
-        if file and file.filename:
-            filepath = save_uploaded_file(file, folder_name or "workflows")
-            if filepath:
-                files_dict["batch_info"] = filepath
+    for form_key, state_key, label in required_uploads:
+        uploaded_file = request.files[form_key]
+        uploaded_file.stream.seek(0)
+
+        filepath = save_uploaded_file(
+            uploaded_file,
+            folder_name,
+        )
+
+        if not filepath:
+            return jsonify({
+                "message": f"Could not save {label.lower()} file."
+            }), 400
+
+        files_dict[state_key] = filepath
 
     workflow_id = str(uuid.uuid4())
     workflow = Workflow(workflow_id=workflow_id, name=workflow_name)
@@ -330,6 +357,8 @@ def create_new_workflow():
         return jsonify({"message": str(ex)}), 400
 
     # uloží cesty k souborům
+    print("Received upload fields:", list(request.files.keys()))
+    print("Saved file mapping:", files_dict)
     workflow.state.files = files_dict
 
     # Create the report immediately and persist its paths with workflow state.

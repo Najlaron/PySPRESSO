@@ -9,7 +9,23 @@ import { PiUploadSimpleBold } from "react-icons/pi"
 import { MdDone } from "react-icons/md"
 
 const DATA_FORMAT_STORAGE_KEY = "pyspresso:lastDataFormat"
-const SUPPORTED_DATA_FORMATS = ["cd", "sciexos"]
+const SUPPORTED_DATA_FORMATS = ["cd", "sciexos", "pyspresso"]
+
+const TABLE_UPLOADS = {
+    cd: [
+        { key: "data", label: "Data" },
+        { key: "batchInfo", label: "Batch info" },
+    ],
+    sciexos: [
+        { key: "data", label: "SciexOS export" },
+    ],
+    pyspresso: [
+        { key: "data", label: "Data" },
+        { key: "metadata", label: "Sample metadata" },
+        { key: "variableMetadata", label: "Variable metadata" },
+        { key: "batchInfo", label: "Batch info" },
+    ],
+}
 
 function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadError }) {
     const navigate = useNavigate()
@@ -30,48 +46,35 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
         }
     })
 
-    const needsBatchInfo = dataFormat === "cd"
+    const requiredUploads = TABLE_UPLOADS[dataFormat]
+
     const fileErrors = [
-        filesState?.data?.error,
-        needsBatchInfo ? filesState?.batchInfo?.error : null,
+        ...requiredUploads.map(({ key }) => filesState?.[key]?.error),
         filesState?.importFile?.error,
     ].filter(Boolean)
+
     const hasFileErrors = fileErrors.length > 0
-    const hasDataFile = Boolean(filesState?.data?.file)
-    const hasBatchInfoFile = Boolean(filesState?.batchInfo?.file)
     const hasImportFile = Boolean(filesState?.importFile?.file)
+
+    const [tableDragKey, setTableDragKey] = useState(null)
 
     function handleDataFormatChange(format) {
         setDataFormat(format)
         setLoadError(null)
-        filesDispatch({ type: 'SET_ERROR', key: 'batchInfo', error: null })
-        setBatchDragActive(false)
+        setTableDragKey(null)
+
+        for (const key of ["data", "metadata", "variableMetadata", "batchInfo"]) {
+            filesDispatch({
+                type: "SET_ERROR",
+                key,
+                error: null,
+            })
+        }
     }
 
     // pro změnu designu
     const [isSubmitting, setIsSubmitting] = useState(false)
-    const [dataDragActive, setDataDragActive] = useState(false)
-    const [batchDragActive, setBatchDragActive] = useState(false)
     const [importDragActive, setImportDragActive] = useState(false)
-
-    // volá se po dropu, podle typu souboru zavolá funkci pro jeho získání
-    function processDroppedFile(file, key) {
-        if (!file) return
-
-        switch (key) {
-            case 'data':
-                handleDataFileChange(file)
-                break
-            case 'batchInfo':
-                handleBatchInfoFileChange(file)
-                break
-            case 'importFile':
-                handleFileInputChange(file)
-                break
-            default:
-                break
-        }
-    }
 
     // submit formuláře
     async function onSubmit(e) {
@@ -84,38 +87,34 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
         }
 
         // kontrola, jestli uživatel nahrál jak data tak batch info
-        const missingFiles = []
-        if (!filesState?.data?.file) missingFiles.push('data')
-        if (needsBatchInfo && !filesState?.batchInfo?.file) missingFiles.push('batchInfo')
+        const missingFiles = requiredUploads.filter(
+            ({ key }) => !filesState?.[key]?.file
+        )
+
         if (missingFiles.length) {
-            missingFiles.forEach((k) => {
-                const err = k === 'data' ? 'Data file is required.' : 'Batch info file is required.'
-                filesDispatch({ type: 'SET_ERROR', key: k, error: err })
+            missingFiles.forEach(({ key, label }) => {
+                filesDispatch({
+                    type: "SET_ERROR",
+                    key,
+                    error: `${label} file is required.`,
+                })
             })
 
-            let erorrMsg = ""
-            if (missingFiles.length === 2) {
-                erorrMsg = "Data file and Batch info file are required."
-            } else {
-                erorrMsg = missingFiles[0] === 'data' ? "Data file is required." : "Batch info file is required."
-            }
-
-            setLoadError(erorrMsg)
+            setLoadError(
+                `Please upload: ${missingFiles.map(({ label }) => label).join(", ")}.`
+            )
             return
         }
 
         const formData = new FormData()
+
         formData.append("workflowName", workflowName)
         formData.append("folderName", folderName)
         formData.append("reportFileName", reportFileName)
         formData.append("dataFormat", dataFormat)
 
-        if (filesState?.data?.file) {
-            formData.append("data", filesState.data.file)
-        }
-
-        if (needsBatchInfo && filesState?.batchInfo?.file) {
-            formData.append("batchInfo", filesState.batchInfo.file)
+        for (const { key } of requiredUploads) {
+            formData.append(key, filesState[key].file)
         }
 
         if (filesState?.importFile?.file) {
@@ -169,20 +168,24 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
         }
     }
 
-    // funkce pro získání vstupních dat
-    function handleDataFileChange(file) {
+    function handleTableFileChange(file, key) {
         if (!file) return
 
-        filesDispatch({ type: 'SET_FILE', key: 'data', file })
-        filesDispatch({ type: 'SET_ERROR', key: 'data', error: null })
+        filesDispatch({
+            type: "SET_FILE",
+            key,
+            file,
+        })
     }
 
-    // funkce pro získání batch info
-    function handleBatchInfoFileChange(file) {
+    function processDroppedFile(file, key) {
         if (!file) return
 
-        filesDispatch({ type: 'SET_FILE', key: 'batchInfo', file })
-        filesDispatch({ type: 'SET_ERROR', key: 'batchInfo', error: null })
+        if (key === "importFile") {
+            handleFileInputChange(file)
+        } else {
+            handleTableFileChange(file, key)
+        }
     }
 
     return (
@@ -271,7 +274,9 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                     <label htmlFor="format" className="mb-ds-sm font-medium text-noir text-2xl">
                         <div className="flex items-center gap-ds-sm">
                             <Tooltip
-                                text={"Choose the format before uploading. Compound Discoverer requires two files; SciexOS requires one export."}
+                                text={"Choose the format before uploading. Compound Discoverer requires two files; SciexOS requires one export; " +
+                                        "PySPRESSO requires data, sample metadata, variable metadata and batch info."
+                                    }
                             >
                                 <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
                             </Tooltip>
@@ -287,6 +292,7 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                     >
                         <option value="cd">Compound Discoverer</option>
                         <option value="sciexos">SciexOS</option>
+                        <option value="pyspresso">PySPRESSO</option>
                     </select>
                 </div>
             </div>
@@ -301,106 +307,69 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                     <h2 className="text-3xl font-bold text-noir">Data import</h2>
                 </div>
 
-                <div className="flex flex-row gap-ds-xl">
-                    <div className="flex flex-col">
-                        <label className="mb-[8px] font-medium text-noir text-2xl">
-                            <div className="flex items-center gap-ds-sm">
-                                <Tooltip
-                                    text={needsBatchInfo ? "Compound Discoverer feature table." : "Complete SciexOS export containing sample information and component measurements."}
-                                >
-                                    <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
-                                </Tooltip>
-                                {needsBatchInfo ? "Upload data *" : "Upload SciexOS export *"}
-                            </div>
-                        </label>
-                        <input
-                            id="dataFileInput"
-                            type="file"
-                            onChange={(e) => handleDataFileChange(e.target.files?.[0])}
-                            className="sr-only"
-                        />
-                        <label
-                            htmlFor="dataFileInput"
-                            onDrop={(e) => {
-                                e.preventDefault()
-                                setDataDragActive(false)
-                                processDroppedFile(e.dataTransfer.files?.[0], 'data')
-                            }}
-                            onDragOver={(e) => e.preventDefault()}
-                            onDragEnter={() => setDataDragActive(true)}
-                            onDragLeave={() => setDataDragActive(false)}
-                            className={`w-78 border rounded-[10px] px-ds-md py-ds-xl flex flex-col justify-center items-center gap-ds-sm 
-                                        cursor-pointer hover:bg-crema/50 transition ${dataDragActive
-                                    ? 'ring-2 ring-espresso border-transparent'
-                                    : 'border-dashed border-roast/75'}`}
-                        >
-                            {hasDataFile ? (
-                                <MdDone size="3.5rem" className="text-green-600" />
-                            ) : (
-                                <PiUploadSimpleBold size="3.5rem" color="#713105" />
-                            )}
-                            <span className="text-espresso font-medium text-xl text-center break-all px-2">
-                                {filesState?.data?.file?.name || "No file selected"}
-                            </span>
-                            {hasDataFile ? (
-                                <span className="text-espresso text-base font-semibold">
-                                    File uploaded
-                                </span>
-                            ) : null}
-                        </label>
-                        {filesState?.data?.error ? <p className="text-red-600">{filesState.data.error}</p> : null}
-                    </div>
+                <div className="flex flex-wrap justify-center gap-ds-xl">
+                    {requiredUploads.map(({ key, label }) => {
+                        const file = filesState?.[key]?.file
+                        const error = filesState?.[key]?.error
+                        const inputId = `${key}FileInput`
 
-                    {needsBatchInfo && (
-                        <div className="flex flex-col">
-                            <label className="mb-[8px] font-medium text-noir text-2xl">
-                                <div className="flex items-center gap-ds-sm">
-                                    <Tooltip
-                                        text={"Batch information file. The file must be in spreadsheet format."}
-                                    >
-                                        <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
-                                    </Tooltip>
-                                    Upload batch info *
-                                </div>
-                            </label>
-                            <input
-                                id="batchInfoFileInput"
-                                type="file"
-                                onChange={(e) => handleBatchInfoFileChange(e.target.files?.[0])}
-                                className="sr-only"
-                            />
-                            <label
-                                htmlFor="batchInfoFileInput"
-                                onDrop={(e) => {
-                                    e.preventDefault()
-                                    setBatchDragActive(false)
-                                    processDroppedFile(e.dataTransfer.files?.[0], 'batchInfo')
-                                }}
-                                onDragOver={(e) => e.preventDefault()}
-                                onDragEnter={() => setBatchDragActive(true)}
-                                onDragLeave={() => setBatchDragActive(false)}
-                                className={`w-78 border rounded-[10px] px-ds-md py-ds-xl flex flex-col justify-center items-center gap-ds-sm 
-                                        cursor-pointer hover:bg-crema/50 transition ${batchDragActive
-                                        ? 'ring-2 ring-espresso border-transparent'
-                                        : 'border-dashed border-roast/75'}`}
-                            >
-                                {hasBatchInfoFile ? (
-                                    <MdDone size="3.5rem" className="text-green-600" />
-                                ) : (
-                                    <PiUploadSimpleBold size="3.5rem" color="#713105" />
-                                )}
-                                <span className="text-espresso text-xl font-medium text-center break-all px-2">
-                                    {filesState?.batchInfo?.file?.name || "No file selected"}
-                                </span>
-                                {hasBatchInfoFile ? (
-                                    <span className="text-espresso text-base font-semibold">
-                                        File uploaded
+                        return (
+                            <div key={key} className="flex flex-col">
+                                <label
+                                    htmlFor={inputId}
+                                    className="mb-[8px] font-medium text-noir text-2xl"
+                                >
+                                    Upload {label.toLowerCase()} *
+                                </label>
+
+                                <input
+                                    id={inputId}
+                                    type="file"
+                                    accept=".csv,.tsv,.txt,.xlsx,.xls"
+                                    onChange={(e) =>
+                                        handleTableFileChange(e.target.files?.[0], key)
+                                    }
+                                    className="sr-only"
+                                />
+
+                                <label
+                                    htmlFor={inputId}
+                                    onDrop={(e) => {
+                                        e.preventDefault()
+                                        setTableDragKey(null)
+                                        processDroppedFile(e.dataTransfer.files?.[0], key)
+                                    }}
+                                    onDragOver={(e) => e.preventDefault()}
+                                    onDragEnter={() => setTableDragKey(key)}
+                                    onDragLeave={() => setTableDragKey(null)}
+                                    className={`
+                                        w-78 border rounded-[10px] px-ds-md py-ds-xl
+                                        flex flex-col justify-center items-center gap-ds-sm
+                                        cursor-pointer hover:bg-crema/50 transition
+                                        ${
+                                            tableDragKey === key
+                                                ? "ring-2 ring-espresso border-transparent"
+                                                : "border-dashed border-roast/75"
+                                        }
+                                    `}
+                                >
+                                    {file ? (
+                                        <MdDone size="3.5rem" className="text-green-600" />
+                                    ) : (
+                                        <PiUploadSimpleBold size="3.5rem" color="#713105" />
+                                    )}
+
+                                    <span className="text-espresso font-medium text-xl text-center break-all px-2">
+                                        {file?.name || "No file selected"}
                                     </span>
+                                </label>
+
+                                {error ? (
+                                    <p className="text-red-600">{error}</p>
                                 ) : null}
-                            </label>
-                            {filesState?.batchInfo?.error ? <p className="text-red-600">{filesState.batchInfo.error}</p> : null}
-                        </div>
-                    )}
+                            </div>
+                        )
+                    })}
                 </div>
             </div>
 

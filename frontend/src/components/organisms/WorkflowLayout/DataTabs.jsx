@@ -2,7 +2,7 @@ import TabDataButton from "../../molecules/WorkflowLayout/TabDataButton"
 
 // tlačítka pro zobrazení tabulkových dat
 function DataTabs({ visualizations = [], activeView, setActiveView }) {
-    const tabLabels = ["Data", "Metadata", "Variables Metadata", "Batch Info", "Candidates Features"]
+    const tabLabels = ["Data", "Metadata", "Variables Metadata", "Batch Info", "Candidates"]
 
     return (
         <div className="flex gap-ds-md items-center flex-wrap">

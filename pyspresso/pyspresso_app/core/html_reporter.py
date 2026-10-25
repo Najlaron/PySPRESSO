@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import base64
 import json
+import csv
 import mimetypes
 import re
 import uuid
 from datetime import datetime, timezone
 from html import escape
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from threading import RLock
 from typing import Any, Mapping, Sequence
@@ -18,6 +19,7 @@ import pandas as pd
 
 REPORT_SCHEMA_VERSION = 1
 DEFAULT_REPORT_FILE_NAME = "report"
+PYSPRESSO_CITATION = "" # Will add when available.
 
 _REPORT_LOCK = RLock()
 
@@ -106,6 +108,7 @@ def begin_step(
     state: Any,
     *,
     operation_name: str,
+    citation: str = "", 
     parameters: Mapping[str, Any] | None = None,
     operation_id: str | None = None,
     step_id: str | None = None,
@@ -157,6 +160,7 @@ def begin_step(
             "step_id": step_id,
             "operation_id": operation_id,
             "operation_name": str(operation_name),
+            "citation": str(citation or "").strip(),
             "run_number": previous_runs + 1,
             "parameters": _json_safe(dict(parameters or {})),
             "status": "running",
@@ -573,13 +577,67 @@ def _load_or_create_manifest(
         subtitle=subtitle,
     )
 
+def _render_citations_csv(manifest: Mapping[str, Any]) -> str:
+    """List citations from successful report runs, without duplicate pairs."""
+    output = StringIO(newline="")
+    writer = csv.writer(output, delimiter=";", lineterminator="\n")
+    writer.writerow(["operation_id", "operation_name", "citation"])
+
+    # Include PySPRESSO once, when its reference is configured.
+    software_citation = str(
+        manifest.get("pyspresso_citation") or ""
+    ).strip()
+
+    if software_citation:
+        writer.writerow([
+            "pyspresso",
+            "PySPRESSO",
+            software_citation,
+        ])
+
+    seen = set()
+
+    for block in manifest.get("blocks", []):
+        # Running, failed and cancelled operations are not included.
+        if block.get("status") != "success":
+            continue
+
+        citation = str(block.get("citation") or "").strip()
+        if not citation:
+            continue
+
+        operation_id = str(block.get("operation_id") or "")
+        key = (operation_id, citation)
+
+        # Repeating an operation should not repeat its reference.
+        if key in seen:
+            continue
+
+        seen.add(key)
+
+        writer.writerow([
+            operation_id,
+            str(block.get("operation_name") or ""),
+            citation,
+        ])
+
+    # UTF-8 BOM helps Excel display accented author names correctly.
+    return "\ufeff" + output.getvalue()
 
 def _persist(
-    paths: Mapping[str, Path],
-    manifest: dict[str, Any],
-) -> None:
+        paths: Mapping[str, Path],
+        manifest: dict[str, Any],
+    ) -> None:
 
     manifest["updated_at"] = _utc_now_iso()
+
+    # Store the software reference once it becomes available.
+    # Preserve the reference already recorded for this report.
+    if (
+        PYSPRESSO_CITATION.strip()
+        and not manifest.get("pyspresso_citation")
+    ):
+        manifest["pyspresso_citation"] = PYSPRESSO_CITATION.strip()
 
     manifest_text = json.dumps(
         _json_safe(manifest),
@@ -600,6 +658,15 @@ def _persist(
         html_text,
     )
 
+    # Derive the location from the actual report path.
+    citations_path = paths["html"].with_name(
+        f"{paths['html'].stem}-citations.csv"
+    )
+
+    _atomic_write_text(
+        citations_path,
+        _render_citations_csv(manifest),
+    )
 
 def _atomic_write_text(
     path: Path,

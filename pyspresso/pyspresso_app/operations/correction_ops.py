@@ -8,6 +8,8 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from matplotlib.lines import Line2D
+
 from pyspresso_app.core.registry import register_operation
 from pyspresso_app.core.operation_models import OperationTag, ParameterDef
 from pyspresso_app.core.workflow_models import WorkflowState
@@ -1178,8 +1180,11 @@ def correct_qc_interpolation(
         state.was_log_transformed = False
         state.log_base = None
     else:
-        # corrected data stays in log2 space; do not force raw zeros into log2 zero
-        print("Data was kept in log2 space;-not forcing zeros.")
+        if preserve_zeros:
+            # Raw zero-coded missing values have no finite log2 equivalent.
+            data = data.mask(original_zero_mask, np.nan)
+
+        print("Data was kept in log2 space.")
         state.was_log_transformed = True
         state.log_base = 2
 
@@ -1257,7 +1262,883 @@ def correct_qc_interpolation(
         "dropped_non_sample_columns": dropped_extra_columns,
         "batch_alignment_note": batch_alignment_note,
     }
+# ---------------------------------------------------------------------
+# LOESS / LOWESS correction
+# ---------------------------------------------------------------------
 
+@register_operation(
+    id="correct_qc_loess",
+    label="LOESS / LOWESS QC Correction",
+    description=(
+        "Correct signal drift and batch differences using QC-based "
+        "local polynomial regression. Degree 1 uses local linear "
+        "(LOWESS-style) fitting; degree 2 uses quadratic LOESS. "
+        "Uses the existing sample order and workflow transformation flags."
+    ),
+    citation=(
+        "Dunn WB, Broadhurst D, Begley P, et al. (2011). "
+        "Procedures for large-scale metabolic profiling of serum and plasma "
+        "using gas chromatography and liquid chromatography coupled to "
+        "mass spectrometry. Nature Protocols, 6, 1060–1083. "
+        "https://doi.org/10.1038/nprot.2011.335. "
+        "PySPRESSO adapts the QC-based LOESS correction approach, "
+        "using log2-domain fitting, user-selected smoothing parameters "
+        "and a common QC-median reference."
+    ),
+    category_tags=[
+        OperationTag.CORRECTION,
+        OperationTag.VISUALIZATION,
+    ],
+    parameter_schema=[
+        ParameterDef(
+            name="span",
+            type="float",
+            required=False,
+            default=0.75,
+            label="Smoothing span",
+            help=(
+                "Fraction of valid QCs used in each local fit, in (0, 1]. "
+                "Larger values produce smoother correction curves."
+            ),
+        ),
+        ParameterDef(
+            name="degree",
+            type="int",
+            required=False,
+            default=2,
+            label="Polynomial degree",
+            help=(
+                "1 = local linear / LOWESS-style fitting; "
+                "2 = quadratic LOESS. Both use scikit-misc LOESS."
+            ),
+        ),
+        ParameterDef(
+            name="robust",
+            type="bool",
+            required=False,
+            default=True,
+            label="Robust fitting",
+            help="Downweight residual outliers using four robust iterations.",
+        ),
+        ParameterDef(
+            name="log_offset",
+            type="float",
+            required=False,
+            default=0.0,
+            label="Offset used before input log",
+            help=(
+                "Logged input only: use 1e-10 after PySPRESSO Log Transform. "
+                "Use 0 for ordinary logged values, including spline log2 output. "
+                "Ignored for raw input."
+            ),
+        ),
+        ParameterDef(
+            name="delog",
+            type="bool",
+            required=False,
+            default=True,
+            label="Return raw scale",
+            help=(
+                "True returns linear intensities; False returns log2 values, "
+                "regardless of the input log base."
+            ),
+        ),
+        ParameterDef(
+            name="show",
+            type="str_or_list",
+            required=False,
+            default="default",
+            label="Features to plot",
+            help=(
+                "'default', 'all', 'none', an index, cpdID, "
+                "or a list of indexes/cpdIDs."
+            ),
+        ),
+    ],
+    requires=["data", "QC_samples", "batch"],
+    produces=[
+        "data",
+        "variable_metadata",
+        "was_log_transformed",
+        "log_base",
+    ],
+)
+def correct_qc_loess(
+    state: WorkflowState,
+    span: float = 0.75,
+    degree: int = 2,
+    robust: bool = True,
+    log_offset: float = 0.0,
+    delog: bool = True,
+    show="default",
+):
+    from skmisc.loess import loess
+
+    import matplotlib
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+
+    # ---------------------------------------------------------------
+    # Validate parameters and workflow state.
+    # Correction should precede centering/scaling.
+    # ---------------------------------------------------------------
+
+    if not np.isfinite(span) or not 0 < span <= 1:
+        raise ValueError("span must be in (0, 1].")
+
+    if degree not in (1, 2):
+        raise ValueError("degree must be 1 or 2.")
+
+    if not np.isfinite(log_offset) or log_offset < 0:
+        raise ValueError("log_offset must be finite and nonnegative.")
+
+    if (
+        getattr(state, "was_scaled", False)
+        or getattr(state, "was_centered", False)
+    ):
+        raise ValueError("Run QC correction before centering or scaling.")
+
+    if state.data is None or "cpdID" not in state.data.columns:
+        raise ValueError("Initialize data first.")
+
+    # ---------------------------------------------------------------
+    # Use the sample order already established during initialization.
+    # Internally, rows are samples and columns are features.
+    # ---------------------------------------------------------------
+
+    df = state.data.copy().reset_index(drop=True)
+
+    feature_names = df["cpdID"].astype(str)
+    sample_names = list(df.columns[1:])
+
+    values = (
+        df.iloc[:, 1:]
+        .apply(pd.to_numeric, errors="raise")
+        .T
+        .to_numpy(dtype=float)
+    )
+
+    if np.isposinf(values).any():
+        raise ValueError("Positive infinity in input data.")
+
+    if state.batch is None or len(state.batch) != len(sample_names):
+        raise ValueError(
+            "state.batch must match the current sample columns."
+        )
+
+    batch = np.asarray(state.batch)
+
+    if pd.isna(batch).any():
+        raise ValueError("Missing batch labels.")
+
+    unique_batches = list(dict.fromkeys(state.batch))
+
+    if state.QC_samples is None or state.QC_samples is False:
+        raise ValueError("QC samples are not defined.")
+
+    is_qc = np.isin(sample_names, state.QC_samples)
+
+    if not is_qc.any():
+        raise ValueError("No QC samples found in the current data.")
+
+    # No sorting or metadata realignment here.
+    x = np.arange(len(sample_names), dtype=float)
+
+    # Used only to restore known raw zeros on linear output.
+    zero_mask = np.zeros(values.shape, dtype=bool)
+
+    # ---------------------------------------------------------------
+    # Prepare log2 intensities for fitting.
+    #
+    # Raw input:
+    #   zero -> missing; positive values -> log2.
+    #
+    # Logged input:
+    #   use state.log_base to convert to log2.
+    #   Logged zero and negative values are valid measurements.
+    # ---------------------------------------------------------------
+
+    if state.was_log_transformed:
+        base = float(state.log_base)
+
+        if not np.isfinite(base) or base <= 0 or base == 1:
+            raise ValueError("Invalid workflow log_base.")
+
+        logged = values * np.log2(base)
+
+        if np.isposinf(logged).any():
+            raise ValueError("Logged input implies infinite intensity.")
+
+        if log_offset > 0:
+            # Your Log Transform computes log_base(raw + 1e-10).
+            #
+            # Undo the declared offset before fitting ordinary log2(raw).
+            # expm1 provides accurate inversion near raw=0.
+            delta = logged * np.log(2.0) - np.log(log_offset)
+
+            # Tolerate floating-point roundoff around the encoded zero.
+            zero_mask = np.isclose(
+                delta,
+                0.0,
+                rtol=0,
+                atol=1e-12,
+            )
+
+            with np.errstate(over="raise", invalid="ignore"):
+                raw = log_offset * np.expm1(delta)
+
+            if np.any((raw < 0) & ~zero_mask):
+                raise ValueError(
+                    "Input implies negative raw values. "
+                    "Check the log_offset parameter."
+                )
+
+            raw[zero_mask] = np.nan
+
+            with np.errstate(divide="ignore", invalid="ignore"):
+                logged = np.log2(raw)
+
+        # Handle missing values previously represented as log(0).
+        logged[np.isneginf(logged)] = np.nan
+
+    else:
+        negative_mask = values < 0
+
+        if negative_mask.any():
+            # values is samples × features.
+            sample_indices, feature_indices = np.where(negative_mask)
+
+            examples = [
+                (
+                    f"{feature_names.iloc[feature_idx]} | "
+                    f"{sample_names[sample_idx]} | "
+                    f"value={values[sample_idx, feature_idx]:.8g}"
+                )
+                for sample_idx, feature_idx in zip(
+                    sample_indices[:10],
+                    feature_indices[:10],
+                )
+            ]
+
+            raise ValueError(
+                f"Found {int(negative_mask.sum())} negative measurements "
+                f"across {len(np.unique(feature_indices))} features. "
+                f"Minimum value: {np.nanmin(values):.8g}. "
+                "Examples: " + "; ".join(examples)
+            )
+
+        zero_mask = values == 0
+        values[zero_mask] = np.nan
+
+        logged = np.log2(values)
+
+    corrected = logged.copy()
+
+    # Reuse utilities already present in correction_ops.py.
+    selected_features = _resolve_show_indices(
+        show,
+        len(feature_names),
+        feature_names,
+    )
+
+    main_folder, figures_folder = _ensure_main_folders(state)
+    suffixes = _get_suffixes(state)
+
+    diagnostics = []
+    plot_paths = []
+    corrected_batch_counts = []
+
+    # ---------------------------------------------------------------
+    # Fit each feature separately within each batch.
+    # Only valid QC measurements contribute to the model.
+    # ---------------------------------------------------------------
+
+    for feature_idx, feature_name in enumerate(feature_names):
+        predictions = {}
+        anchor_values = []
+
+        for batch_name in unique_batches:
+            batch_mask = batch == batch_name
+
+            valid_qc = (
+                batch_mask
+                & is_qc
+                & np.isfinite(logged[:, feature_idx])
+            )
+
+            x_qc = x[valid_qc]
+            y_qc = logged[valid_qc, feature_idx]
+
+            reason = ""
+            outside_qc_range = 0
+
+            try:
+                if len(y_qc) < 5:
+                    raise ValueError("Fewer than five valid QCs.")
+
+                outside_qc_range = int(
+                    np.sum(
+                        (x[batch_mask] < x_qc[0])
+                        | (x[batch_mask] > x_qc[-1])
+                    )
+                )
+
+                if np.ptp(y_qc) == 0:
+                    # Constant QCs need no drift fit, but their batch
+                    # can still be aligned to the common QC reference.
+                    prediction = np.full(
+                        batch_mask.sum(),
+                        y_qc[0],
+                    )
+
+                else:
+                    # The most distant local neighbour receives zero
+                    # tricube weight. Require enough effective points
+                    # to estimate the polynomial.
+                    local_points = int(np.floor(span * len(y_qc)))
+
+                    if local_points < degree + 2:
+                        raise ValueError(
+                            "Too few local neighbours. "
+                            "Increase span or reduce degree."
+                        )
+
+                    # Rescale positions for numerical stability.
+                    width = x_qc[-1] - x_qc[0]
+                    x_scaled = (x_qc - x_qc[0]) / width
+
+                    model = loess(
+                        x_scaled,
+                        y_qc,
+                        span=span,
+                        degree=degree,
+                        family="symmetric" if robust else "gaussian",
+                        iterations=4 if robust else 0,
+                        surface="direct",
+                    )
+                    model.fit()
+
+                    # Outside valid QC coverage, use the nearest
+                    # boundary prediction instead of extrapolating.
+                    x_predict = np.clip(
+                        x[batch_mask],
+                        x_qc[0],
+                        x_qc[-1],
+                    )
+                    x_predict = (x_predict - x_qc[0]) / width
+
+                    prediction = np.asarray(
+                        model.predict(x_predict).values
+                    )
+
+                    if not np.isfinite(prediction).all():
+                        raise ValueError(
+                            "Nonfinite LOESS predictions."
+                        )
+
+                predictions[batch_name] = prediction
+                anchor_values.append(y_qc)
+
+            except (
+                ValueError,
+                RuntimeError,
+                FloatingPointError,
+            ) as exc:
+                # Leave this feature-batch combination uncorrected.
+                # Do not discard the whole feature.
+                reason = str(exc)
+
+            diagnostics.append({
+                "cpdID": feature_name,
+                "batch": str(batch_name),
+                "valid_qcs": len(y_qc),
+                "corrected": batch_name in predictions,
+                "reason": reason,
+                "outside_qc_range": outside_qc_range,
+            })
+
+        # -----------------------------------------------------------
+        # Use one common QC reference across fitted batches.
+        #
+        # In log2 space:
+        # corrected = observed - fitted trend + common reference
+        #
+        # This corrects both drift and between-batch offsets.
+        # -----------------------------------------------------------
+
+        anchor = (
+            np.median(np.concatenate(anchor_values))
+            if anchor_values
+            else np.nan
+        )
+
+        for batch_name, prediction in predictions.items():
+            batch_mask = batch == batch_name
+
+            corrected[batch_mask, feature_idx] = (
+                logged[batch_mask, feature_idx]
+                - prediction
+                + anchor
+            )
+
+        corrected_batch_counts.append(len(predictions))
+
+        # -----------------------------------------------------------
+        # Plot selected features using existing output conventions.
+        # Both panels show log2 values, even when output will be raw.
+        # -----------------------------------------------------------
+
+        if feature_idx in selected_features:
+            
+            before = logged[:, feature_idx]
+            after = corrected[:, feature_idx]
+
+            # The last records belong to this feature's batch fits.
+            feature_diagnostics = diagnostics[-len(unique_batches):]
+
+            colors = plt.get_cmap("tab10")
+            batch_colors = {
+                b: colors(i % 10)
+                for i, b in enumerate(unique_batches)
+            }
+
+            fig, axes = plt.subplots(
+                3,
+                1,
+                figsize=(14, 10),
+                sharex=True,
+                gridspec_kw={"height_ratios": [2, 2, 1.3]},
+            )
+
+            ax_before, ax_after, ax_change = axes
+
+            try:
+                for batch_name in unique_batches:
+                    color = batch_colors[batch_name]
+
+                    batch_mask = batch == batch_name
+                    sample_mask = batch_mask & ~is_qc
+                    qc_mask = batch_mask & is_qc
+
+                    # -----------------------------------------------
+                    # Panel 1: observed data and fitted technical trend.
+                    # -----------------------------------------------
+
+                    ax_before.scatter(
+                        x[sample_mask],
+                        before[sample_mask],
+                        color=color,
+                        s=28,
+                        alpha=0.8,
+                    )
+
+                    ax_before.scatter(
+                        x[qc_mask],
+                        before[qc_mask],
+                        color="black",
+                        marker="x",
+                        s=65,
+                        linewidths=2,
+                        zorder=5,
+                    )
+
+                    # -----------------------------------------------
+                    # Panel 2: before/after at the same sample positions.
+                    # Faint points show original measurements.
+                    # Vertical segments show each applied adjustment.
+                    # -----------------------------------------------
+
+                    valid_pair = (
+                        batch_mask
+                        & np.isfinite(before)
+                        & np.isfinite(after)
+                    )
+
+                    ax_after.scatter(
+                        x[valid_pair],
+                        before[valid_pair],
+                        color="grey",
+                        marker="o",
+                        s=35,
+                        alpha=0.25,
+                        zorder=1,
+                    )
+
+                    ax_after.vlines(
+                        x[valid_pair],
+                        np.minimum(before[valid_pair], after[valid_pair]),
+                        np.maximum(before[valid_pair], after[valid_pair]),
+                        color=color,
+                        alpha=0.35,
+                        linewidth=1,
+                        zorder=2,
+                    )
+
+                    ax_after.scatter(
+                        x[sample_mask],
+                        after[sample_mask],
+                        color=color,
+                        s=28,
+                        alpha=0.9,
+                        zorder=3,
+                    )
+
+                    ax_after.scatter(
+                        x[qc_mask],
+                        after[qc_mask],
+                        color="black",
+                        marker="x",
+                        s=65,
+                        linewidths=2,
+                        zorder=5,
+                    )
+
+                    # -----------------------------------------------
+                    # Panel 3: correction applied by the fitted model.
+                    #
+                    # corrected = original + adjustment
+                    # adjustment = anchor - fitted trend
+                    # -----------------------------------------------
+
+                    if batch_name in predictions:
+                        prediction = predictions[batch_name]
+                        adjustment = anchor - prediction
+
+                        # Show the fitted trend in the BEFORE panel.
+                        ax_before.plot(
+                            x[batch_mask],
+                            prediction,
+                            color=color,
+                            linewidth=2.5,
+                            zorder=4,
+                        )
+
+                        ax_change.plot(
+                            x[batch_mask],
+                            adjustment,
+                            color=color,
+                            linewidth=2,
+                        )
+
+                        # Missing measurements are not corrected.
+                        # Mark adjustments only where input was observed.
+                        observed = np.isfinite(before[batch_mask])
+
+                        ax_change.scatter(
+                            x[batch_mask][observed],
+                            adjustment[observed],
+                            color=color,
+                            s=16,
+                        )
+
+                        # Highlight predictions outside valid QC coverage.
+                        valid_qc = (
+                            batch_mask
+                            & is_qc
+                            & np.isfinite(before)
+                        )
+
+                        qc_positions = x[valid_qc]
+
+                        outside = (
+                            (x[batch_mask] < qc_positions.min())
+                            | (x[batch_mask] > qc_positions.max())
+                        )
+
+                        if outside.any():
+                            ax_change.scatter(
+                                x[batch_mask][outside],
+                                adjustment[outside],
+                                facecolors="none",
+                                edgecolors="black",
+                                s=70,
+                                linewidths=1,
+                                zorder=5,
+                            )
+
+                    else:
+                        # Distinguish "not fitted" from a fitted model
+                        # that genuinely recommends zero adjustment.
+                        ax_change.scatter(
+                            x[batch_mask],
+                            np.zeros(batch_mask.sum()),
+                            color="crimson",
+                            marker="x",
+                            s=30,
+                            zorder=5,
+                        )
+
+                # Common reference level across successfully fitted batches.
+                if np.isfinite(anchor):
+                    for ax in (ax_before, ax_after):
+                        ax.axhline(
+                            anchor,
+                            color="black",
+                            linestyle="--",
+                            linewidth=1.2,
+                            alpha=0.7,
+                        )
+
+                # Match before/after limits so visual comparison is fair.
+                finite_values = np.concatenate([
+                    before[np.isfinite(before)],
+                    after[np.isfinite(after)],
+                ])
+
+                if finite_values.size:
+                    lower = finite_values.min()
+                    upper = finite_values.max()
+                    padding = max(0.2, 0.08 * (upper - lower))
+
+                    ax_before.set_ylim(lower - padding, upper + padding)
+                    ax_after.set_ylim(lower - padding, upper + padding)
+
+                ax_before.set_title(
+                    "1. Before correction — solid lines show fitted QC trends",
+                    loc="left",
+                )
+                ax_after.set_title(
+                    "2. After correction — faint grey points show original values",
+                    loc="left",
+                )
+                ax_change.set_title(
+                    "3. Applied adjustment — +1 doubles intensity; "
+                    "−1 halves intensity",
+                    loc="left",
+                )
+
+                ax_before.set_ylabel("log2 intensity")
+                ax_after.set_ylabel("log2 intensity")
+                ax_change.set_ylabel("Added log2 shift")
+                ax_change.set_xlabel(
+                    "Sample position in acquisition order"
+                )
+
+                ax_change.axhline(
+                    0,
+                    color="grey",
+                    linestyle="--",
+                    linewidth=1,
+                )
+
+                for ax in axes:
+                    ax.grid(axis="y", alpha=0.15)
+
+                # Explicit status for each batch, including skipped fits.
+                status_lines = []
+
+                for record in feature_diagnostics:
+                    if record["corrected"]:
+                        status = (
+                            f"{record['batch']}: corrected "
+                            f"({record['valid_qcs']} valid QCs)"
+                        )
+
+                        if record["outside_qc_range"]:
+                            status += (
+                                f"; {record['outside_qc_range']} positions "
+                                "outside QC coverage"
+                            )
+                    else:
+                        status = (
+                            f"{record['batch']}: NOT CORRECTED "
+                            f"({record['valid_qcs']} valid QCs) — "
+                            f"{record['reason']}"
+                        )
+
+                    status_lines.append(status)
+
+                legend_handles = [
+                    Line2D(
+                        [0], [0],
+                        marker="o",
+                        linestyle="none",
+                        color=batch_colors[b],
+                        label=str(b),
+                    )
+                    for b in unique_batches
+                ]
+
+                legend_handles.extend([
+                    Line2D(
+                        [0], [0],
+                        marker="x",
+                        linestyle="none",
+                        color="black",
+                        label="QC measurement",
+                    ),
+                    Line2D(
+                        [0], [0],
+                        color="black",
+                        linestyle="--",
+                        label="Common QC reference",
+                    ),
+                    Line2D(
+                        [0], [0],
+                        marker="o",
+                        markerfacecolor="none",
+                        linestyle="none",
+                        color="black",
+                        label="Boundary-held adjustment",
+                    ),
+                    Line2D(
+                        [0], [0],
+                        marker="x",
+                        linestyle="none",
+                        color="crimson",
+                        label="Fit skipped; no correction",
+                    ),
+                ])
+
+                ax_before.legend(
+                    handles=legend_handles,
+                    loc="best",
+                    frameon=False,
+                    fontsize=8,
+                    ncol=2,
+                )
+
+                fig.suptitle(
+                    f"{feature_name}\n"
+                    + "\n".join(status_lines),
+                    fontsize=11,
+                )
+
+                fig.tight_layout()
+
+                saved_paths = []
+
+                for suffix in suffixes:
+                    path = _unique_path(
+                        os.path.join(
+                            figures_folder,
+                            f"LOESS_{feature_idx}{suffix}",
+                        )
+                    )
+
+                    fig.savefig(
+                        path,
+                        dpi=180,
+                        bbox_inches="tight",
+                    )
+                    saved_paths.append(path)
+
+                if saved_paths:
+                    report_path = next(
+                        (
+                            path
+                            for path in saved_paths
+                            if path.endswith(".png")
+                        ),
+                        saved_paths[0],
+                    )
+                    plot_paths.append(report_path)
+
+            finally:
+                plt.close(fig)
+
+    # ---------------------------------------------------------------
+    # Convert output and restore known raw zeros when requested.
+    # Missing measurements remain NaN in log2 output.
+    # ---------------------------------------------------------------
+
+    if delog:
+        with np.errstate(over="raise", invalid="raise"):
+            corrected = np.exp2(corrected)
+
+        corrected[zero_mask] = 0.0
+
+    output = pd.DataFrame(
+        corrected.T,
+        columns=sample_names,
+    )
+    output.insert(
+        0,
+        "cpdID",
+        df["cpdID"].to_numpy(),
+    )
+
+    # Save fit failures and QC coverage for review.
+    diagnostics_path = _unique_path(
+        os.path.join(
+            main_folder,
+            "loess_fit_diagnostics.csv",
+        )
+    )
+    pd.DataFrame(diagnostics).to_csv(
+        diagnostics_path,
+        index=False,
+    )
+
+    variable_metadata = getattr(
+        state,
+        "variable_metadata",
+        None,
+    )
+
+    if (
+        variable_metadata is not None
+        and "cpdID" in variable_metadata.columns
+    ):
+        variable_metadata = variable_metadata.copy()
+
+        counts_by_feature = dict(
+            zip(feature_names, corrected_batch_counts)
+        )
+
+        variable_metadata["corrected_batches"] = (
+            variable_metadata["cpdID"]
+            .astype(str)
+            .map(counts_by_feature)
+        )
+
+    state.data = output
+    state.variable_metadata = variable_metadata
+    state.was_log_transformed = not delog
+    state.log_base = None if delog else 2
+
+    # ---------------------------------------------------------------
+    # Report settings, skipped fits and plots.
+    # ---------------------------------------------------------------
+
+    skipped = sum(
+        not record["corrected"]
+        for record in diagnostics
+    )
+
+    add_text(
+        state,
+        (
+            f"LOESS: span={span}, degree={degree}, robust={robust}. "
+            f"Fitting: log2; output: {'raw' if delog else 'log2'}. "
+            f"Input log offset: {log_offset}. "
+            f"Skipped fits: {skipped}/{len(diagnostics)}. "
+            "Skipped fits retain their input values in the requested "
+            "output scale. A common QC median anchors fitted batches. "
+            "Boundary predictions are held constant outside valid "
+            "QC coverage. No missing-value imputation. "
+            f"Fit diagnostics: {os.path.basename(diagnostics_path)}."
+        ),
+        title="LOESS / LOWESS QC correction",
+    )
+
+    for path in plot_paths:
+        add_figure(
+            state,
+            path,
+            title="LOESS correction",
+            caption="Before and after; black crosses indicate QCs.",
+        )
+
+    return {
+        "features_corrected": sum(
+            count > 0 for count in corrected_batch_counts
+        ),
+        "skipped_feature_batches": skipped,
+        "fit_diagnostics_file": diagnostics_path,
+        "plots": plot_paths,
+        "output_space": "raw" if delog else "log2",
+    }
 
 # ---------------------------------------------------------------------
 # ComBat correction
@@ -1331,7 +2212,13 @@ def _align_metadata_to_samples(metadata, sample_cols):
         "Correct batch effects using ComBat. Intended mainly for datasets without QC samples, "
         "where known batch labels are available."
     ),
-    citation="",
+    citation=(
+        "Behdenna A, Colange M, Haziza J, et al. (2023). "
+        "pyComBat, a Python tool for batch effects correction in "
+        "high-throughput molecular data using empirical Bayes methods. "
+        "BMC Bioinformatics, 24, 459. "
+        "https://doi.org/10.1186/s12859-023-05578-5"
+    ),
     category_tags=[OperationTag.CORRECTION],
     parameter_schema=[
         ParameterDef(
