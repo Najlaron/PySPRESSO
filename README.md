@@ -1,65 +1,124 @@
-# PySPRESSO :coffee:
-**PySPRESSO** - **Py**thon **S**tatistical **P**rocessing and **RE**porting for **S**cientific **S**tudies in **O**mics. 
-##
-> *It is a comprehensive tool designed to streamline workflows for processing and reporting peak matrix data, especially for applications in metabolomics or other omics fields.*
->
-> ### Features
-> * **Data Filtering:** Handles missing values, removes outliers, and corrects for blank intensity.
-> * **Batch Correction:** Corrects batch effects using QC samples.
-> * **Normalization:** Supports methods like z-scores and Probabilistic Quotient Normalization (PQN).
-> * **Statistical Analysis:** Implements PCA and PLS-DA.
-> * **Report Generation:** Automatically generates PDF reports for the processed data.
-##
+# PySPRESSO ☕
 
-> [!IMPORTANT]
-> *This is a WIP (Work in progress)* APP. If you want to add some feature feel free to do so (or contact me if you don't code yourself. :innocent: )
+**PySPRESSO** — **Py**thon **S**tatistical **P**rocessing and **RE**porting for **S**cientific **S**tudies in **O**mics.
 
-> [!TIP]
-> ## DEMO
-> If you wanna try the functionality
-> 
-> https://colab.research.google.com/github/Najlaron/PySPRESSO/blob/main/demo-PySPRESSO-pipeline.ipynb
+PySPRESSO is a local, browser-based application for building and running customizable workflows for omics feature-table analysis, with a focus on metabolomics and lipidomics.
 
-## Build and run the desktop app (`.exe`)
+Combine data import, filtering, correction, transformations, statistical analyses, and visualizations through a graphical interface. Extend the available operations with your own Python functions.
 
-### Requirements
-- [Python](https://www.python.org/downloads/)
-- [Node.js](https://nodejs.org/en/download)
+**[Download the Windows app](https://github.com/Najlaron/PySPRESSO/releases/latest)** · **[Build from source](#build-from-source-windows)** · **[Report an issue](https://github.com/Najlaron/PySPRESSO/issues)**
 
-### 1) Build the app
-From the project root, run:
+## Features
 
-`build-desktop.bat`
+- **Workflow creation:** Assemble analysis workflows and configure operations through a graphical interface.
+- **Data import:** Import feature tables from Compound Discoverer, SCIEX OS, or PySPRESSO outputs.
+- **Filtering and transformations:** Process missing values, filter features, and transform or scale measurements.
+- **QC-based correction:** Apply spline or LOESS/LOWESS correction to address technical variation.
+- **Statistical analysis:** Explore data using methods including PCA and PLS-DA.
+- **Reporting:** Generate HTML reports and workflow citation tables.
+- **Custom operations:** Add Python operations using the operation registration system.
 
-This script:
-- builds the frontend
-- packages the app with PyInstaller
-- creates the output in `pyspresso\dist\PySPRESSO\`
+PySPRESSO processes feature tables exported by upstream software; it is not a raw mass-spectrometry data processing or peak-picking tool.
 
-Rebuilding replaces the entire `dist\PySPRESSO` folder (old `.exe` and bundled libraries are deleted and recreated).
+## Download and run on Windows
 
-### 2) Start the app
-Open the built `PySPRESSO` folder, then double-click `PySPRESSO.exe`.
+Download the packaged application from the **[latest release](https://github.com/Najlaron/PySPRESSO/releases/latest)**.
 
-A console window appears — keep it open while using the app.  
-Your browser should open automatically at `http://127.0.0.1:5000`.
+1. Under **Assets**, select the attached Windows application ZIP.
+2. Extract the **entire ZIP** into a folder on your computer.
+3. Open the extracted `PySPRESSO` folder and double-click **`PySPRESSO.exe`**.
+4. Keep the console window open while using the application.
+5. Your browser should open automatically at **http://127.0.0.1:5000**. If it does not, open this address manually.
 
-If the browser does not open automatically, open that URL manually.
+Keep the executable and its accompanying files together. Do not run the executable from inside the ZIP.
 
-### 3) Use the app
-Work with PySPRESSO in the browser window normally.
+The automatically generated **Source code** archives contain the project source, not the ready-to-run Windows application.
 
-As long as the console window stays open, the backend is running.
+### Using and stopping the application
 
-### 4) Stop the app
-To stop PySPRESSO, close the console window opened by `PySPRESSO.exe`.
+Use PySPRESSO through the browser to create a workflow, import your data, add operations, and inspect the results.
 
-### Where your data is stored (important)
-Desktop app data is stored in `%LOCALAPPDATA%\PySPRESSO`.
+The application runs on your computer. The browser provides its interface.
+
+To stop PySPRESSO, close the console window opened by `PySPRESSO.exe`. Closing only the browser tab does not stop the backend.
+
+## Where your data is stored
+
+The packaged Windows application stores its working data in:
+
+```text
+%LOCALAPPDATA%\PySPRESSO
+```
 
 This includes:
-- uploaded files
-- generated outputs
-- local database
 
-Because this data is stored outside the app folder, you can rebuild or replace the `.exe` package without losing your data.
+- Uploaded files
+- Generated outputs
+- The local database
+
+To open this location, paste the path into the Windows File Explorer address bar.
+
+Working data is stored separately from the application folder, so replacing the application package does not delete it. Back up this directory before updating to a new version.
+
+## Build from source (Windows)
+
+Use this route if you want to build the executable yourself or modify the application.
+
+### Requirements
+
+- [Python](https://www.python.org/downloads/)
+- [Node.js and npm](https://nodejs.org/en/download)
+
+Download or clone the **`PySPRESSO-GUI`** branch. If downloading the source as a ZIP, extract it before continuing.
+
+### Build
+
+From the project root, run:
+
+```powershell
+.\build-desktop.bat
+```
+
+The build script:
+
+- Builds the frontend
+- Packages the application with PyInstaller
+- Creates the application folder at:
+
+```text
+pyspresso\dist\PySPRESSO\
+```
+
+**Rebuilding replaces the entire `dist\PySPRESSO` folder**, including the previous executable and bundled libraries. Keep any files you want to preserve outside that build-output folder.
+
+### Run
+
+Open:
+
+```text
+pyspresso\dist\PySPRESSO\
+```
+
+Then double-click **`PySPRESSO.exe`** and follow the launch instructions above.
+
+## Extending PySPRESSO
+
+PySPRESSO supports custom Python operations through its operation registration system. Operations can define their own parameters and citations and access workflow data for processing or analysis.
+
+Custom operations may require additional Python dependencies. When introducing a new dependency, ensure that it is available in the runtime environment or included in a rebuilt application package.
+
+## Feedback and contributions
+
+PySPRESSO is under active development. Bug reports, suggestions, and contributions are welcome.
+
+Please use [GitHub Issues](https://github.com/Najlaron/PySPRESSO/issues) to report a problem or suggest a feature. For errors, include:
+
+- The PySPRESSO version and your operating system
+- The steps needed to reproduce the problem
+- The error message, if available
+
+Please avoid uploading confidential study data. A small synthetic example is preferable when demonstrating a problem.
+
+## License
+
+See [LICENSE](LICENSE) for the project’s licensing terms.
