@@ -55,7 +55,7 @@ function WorkflowStepCard({
     const isCurrentStepRunning = runningStepId === step.step_id
     const isAnyStepRunning = Boolean(runningStepId)
     const isCorrectionCategory = operation?.categoryTags?.some((tag) => String(tag).toLowerCase() === "correction")
-    const takeLong = isCorrectionCategory || operation?.id === "visualizer_violin_plots"
+    const takeLong = isCorrectionCategory || ["visualizer_violin_plots", "statistics_PLSDA"].includes(operation?.id)
     const categoryTags = (operation?.categoryTags ?? []).map((tag) => String(tag).toLowerCase())
     const matchingCategoryTag = categoryTags.find((tag) => CATEGORY_ICONS[tag])
     const OperationIcon = matchingCategoryTag ? CATEGORY_ICONS[matchingCategoryTag] : ImLab

@@ -2,7 +2,7 @@ import FeatureCard from '../components/molecules/HomePage/FeatureCard'
 import Step from '../components/molecules/HomePage/Step'
 import HowToCite from '../components/molecules/HomePage/HowToCite'
 import Footer from '../components/organisms/Layouts/Footer'
-import logoLightSrc from "../../media/logo-light.png"
+import logoLightSrc from "../../media/logo-light.svg"
 import { Link } from 'react-router-dom'
 import { LuPackagePlus } from "react-icons/lu"
 import { LuWorkflow } from "react-icons/lu"

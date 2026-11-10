@@ -1,12 +1,16 @@
 import "../../../../css/tooltip.css"
 
-// tooltip komponenta
-function Tooltip({ children, text }) {
+function Tooltip({ children, text, placement = "top" }) {
     return (
         <div className="tooltip-container">
             <div className="tooltip-children">
                 {children}
-                <div className="tooltip">
+                <div
+                    className={`tooltip ${
+                        placement === "bottom" ? "tooltip-bottom" : ""
+                    }`}
+                    role="tooltip"
+                >
                     <span>{text}</span>
                 </div>
             </div>

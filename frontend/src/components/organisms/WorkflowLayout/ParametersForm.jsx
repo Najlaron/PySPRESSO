@@ -2,6 +2,8 @@ import { useState, useEffect } from "react"
 import ParameterInput from "../../molecules/WorkflowLayout/ParameterInput"
 import { formatNetworkError } from "../../../utils/helpers"
 import { API_BASE_URL } from "../../../config"
+import { FaRegQuestionCircle } from "react-icons/fa"
+import Tooltip from "../../molecules/WorkflowLayout/Tooltip"
 
 // formulář pro vyplnění parametrů metody
 function ParametersForm({ step, operation, workflowId, onClose, reorderPromiseParams, onSubmitPromiseChange }) {
@@ -396,9 +398,23 @@ function ParametersForm({ step, operation, workflowId, onClose, reorderPromisePa
     return (
         <main className="flex-1 pt-ds-lg px-ds-xl bg-foam overflow-y-auto">
             <hgroup>
-                <h1 className="text-4xl font-bold text-noir mb-ds-sm">
-                    {operation.label}
-                </h1>
+                <div className="flex items-center gap-ds-sm mb-ds-sm">
+                    <h1 className="text-4xl font-bold text-noir">
+                        {operation.label}
+                    </h1>
+
+                    {operation.description && (
+                        <Tooltip text={operation.description} placement="bottom">
+                            <FaRegQuestionCircle
+                                size="1.2rem"
+                                color="#341100"
+                                className="shrink-0 cursor-help"
+                                aria-label="About this operation"
+                            />
+                        </Tooltip>
+                    )}
+                </div>
+
                 <p className="text-espresso">PARAMETERS SETTING</p>
             </hgroup>
 

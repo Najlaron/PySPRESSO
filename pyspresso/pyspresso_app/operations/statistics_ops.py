@@ -154,7 +154,7 @@ def _candidates_order(state: WorkflowState, how="method"):
 
 def _add_candidates(state: WorkflowState, features, method, specification, scores):
     """
-    Port of old Workflow.add_candidates(), adapted to WorkflowState.
+    Append candidate features with method details, then update hit counts and ordering
     """
     variable_metadata = state.variable_metadata
 
@@ -261,7 +261,10 @@ def _add_candidates(state: WorkflowState, features, method, specification, score
 
 def _shapiro_ok(x):
     """
-    Port of old Workflow._shapiro_ok().
+    Return whether the Shapiro-Wilk p-value exceeds 0.05.
+
+    Return a diagnostic string when fewer than three values are available
+    or all values are identical.
     """
     if x.size < 3 or np.all(x == x[0]):
         return "Not enough data for normality test"
@@ -322,7 +325,7 @@ def _plsda_double_cv_predict(
     rng=42,
 ):
     """
-    Port of old Workflow._plsda_double_cv_predict().
+    Generate held-out predictions using repeated nested stratified cross-validation.
     """
     n_samples, n_features = X.shape
     n_classes = Y.shape[1]
@@ -476,7 +479,7 @@ def _plsda_double_cv_predict(
 
 def _vip(model):
     """
-    Port of old Workflow._vip().
+    Calculate variable-importance-in-projection scores for a fitted PLS model.
     """
     t = model.x_scores_
     w = model.x_weights_
@@ -570,7 +573,10 @@ def _q2(Y_true, predictions):
             required=False,
             default="pearson",
             label="Correlation method",
-            help="Accepted for compatibility with old PySPRESSO. Old function did not pass this argument into corr().",
+            help=(
+                "Correlation method applied between group mean feature profiles. "
+                "Choose 'pearson', 'spearman', or 'kendall'."
+            ),
         ),
         ParameterDef(
             name="cmap",
@@ -578,6 +584,7 @@ def _q2(Y_true, predictions):
             required=False,
             default="coolwarm",
             label="Colormap",
+            help="Matplotlib colormap used for the correlation heatmap, e.g. coolwarm or viridis.",
         ),
         ParameterDef(
             name="min_max",
@@ -585,6 +592,10 @@ def _q2(Y_true, predictions):
             required=False,
             default=[-1, 1],
             label="Color scale min/max",
+            help=(
+                "Two values defining the heatmap color limits, for example [-1, 1]. "
+                "These affect the display, not the calculated correlations."
+            ),
         ),
         ParameterDef(
             name="plt_name_suffix",
@@ -592,6 +603,7 @@ def _q2(Y_true, predictions):
             required=False,
             default="",
             label="Plot name suffix",
+            help="Suffix added to the saved heatmap and correlation-table filenames.",
         ),
     ],
     requires=["data", "metadata"],
@@ -913,7 +925,14 @@ def statistics_PCA(state: WorkflowState, n_components_for_candidates=2):
 @register_operation(
     id="statistics_PLSDA",
     label="PLS-DA",
-    description="Perform PLS-DA with double cross-validation and VIP-based candidate selection.",
+    description=(
+        "Perform PLS-DA with repeated nested cross-validation "
+        "and VIP-based candidate selection. "
+        "This operation can take several minutes because many models "
+        "are fitted to select the number of latent variables and "
+        "evaluate predictive performance. Runtime depends on dataset "
+        "size and cross-validation settings."
+    ),
     citation="",
     category_tags=[OperationTag.STATISTICS, OperationTag.VISUALIZATION],
     parameter_schema=[
@@ -927,11 +946,19 @@ def statistics_PCA(state: WorkflowState, n_components_for_candidates=2):
         ),
         ParameterDef(
             name="ignored_groups",
-            type="list",
+            type="str",
             required=False,
-            default=None,
-            label="Ignored groups",
-            help="List like [['Sample Type', 'QC'], ['Sample Type', 'Blank']].",
+            default="",
+            label="Exclude sample groups",
+            help=(
+                "Enter metadata column: value1, value2. "
+                "Class: QC, dilQC, Blank... "
+                "For multiple columns use as column1: values; column2: values: "
+                "Class: QC, Blank; Type: Standard... "
+                "A sample matching any rule is excluded from this PLS-DA analysis. "
+                "Names are case-sensitive. Do not add brackets or quotes. "
+                "Leave empty to include all samples."
+            ),
         ),
         ParameterDef(
             name="candidate_percentile",
@@ -939,6 +966,12 @@ def statistics_PCA(state: WorkflowState, n_components_for_candidates=2):
             required=False,
             default=99.5,
             label="VIP candidate percentile",
+            help=(
+                "VIP percentile used to select candidate features, from 0 to 100. "
+                "Features strictly above this percentile are selected. "
+                "For example, 99.5 selects approximately the highest 0.5% of VIP scores; "
+                "this is not a statistical significance threshold."
+            ),
         ),
         ParameterDef(
             name="outer_splits",
@@ -954,6 +987,11 @@ def statistics_PCA(state: WorkflowState, n_components_for_candidates=2):
             required=False,
             default=10,
             label="Outer CV repeats",
+            help=(
+                "Number of repetitions of the outer cross-validation procedure. "
+                "Each repetition uses a different stratified split. "
+                "Increasing this value increases computation time."
+            ),
         ),
         ParameterDef(
             name="inner_splits",
@@ -977,6 +1015,7 @@ def statistics_PCA(state: WorkflowState, n_components_for_candidates=2):
             required=False,
             default=42,
             label="Random seed",
+            help ="Integer (number) seed used to generate cross-validation splits.",
         ),
     ],
     requires=["data", "metadata"],
@@ -1053,33 +1092,50 @@ def statistics_PLSDA(
             + ", ".join(missing_response_columns)
         )
 
-    if ignored_groups is None:
-        ignored_groups = []
-    elif (
-        isinstance(ignored_groups, (list, tuple))
-        and len(ignored_groups) == 2
-        and not isinstance(ignored_groups[0], (list, tuple))
-    ):
-        ignored_groups = [ignored_groups]
+    # Exclude samples matching any Column: value1, value2 rule.
+    ignored_groups = (ignored_groups or "").strip()
+    excluded_mask = pd.Series(False, index=metadata.index)
 
-    if not isinstance(ignored_groups, (list, tuple)):
-        raise ValueError("ignored_groups must be a list of [column, value] pairs.")
+    if ignored_groups:
+        for rule in ignored_groups.split(";"):
+            column, separator, values_text = rule.partition(":")
+            column = column.strip()
+            values = [value.strip() for value in values_text.split(",")]
 
-    for pair in ignored_groups:
-        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
-            raise ValueError(
-                "Each ignored_groups entry must contain exactly [column, value]."
-            )
-        col_name, grp_name = pair
-        if col_name not in metadata.columns:
-            raise ValueError(
-                f"Ignored-group column '{col_name}' was not found in metadata."
-            )
-        metadata = metadata.loc[metadata[col_name].astype(str) != str(grp_name)]
+            if not separator or not column or any(not value for value in values):
+                raise ValueError(
+                    f"Invalid exclusion rule '{rule.strip()}'. "
+                    "Use Column: value1, value2. "
+                    "Example: Class: QC, dilQC, Blank; Batch: Pilot"
+                )
 
-    metadata = metadata.reset_index(drop=True)
+            if column not in metadata.columns:
+                raise ValueError(
+                    f"Exclusion column '{column}' was not found in metadata."
+                )
+
+            column_values = metadata[column].astype("string").str.strip()
+            available_values = set(column_values.dropna())
+            missing_values = [
+                value for value in values if value not in available_values
+            ]
+
+            if missing_values:
+                raise ValueError(
+                    f"Excluded group(s) not found in '{column}': "
+                    f"{', '.join(missing_values)}. "
+                    "Check spelling and capitalization."
+                )
+
+            excluded_mask |= column_values.isin(values)
+
+    excluded_sample_count = int(excluded_mask.sum())
+    metadata = metadata.loc[~excluded_mask].reset_index(drop=True)
+
     if metadata.empty:
-        raise ValueError("No samples remain after applying ignored_groups.")
+        raise ValueError(
+            "No samples remain after applying the exclusion rules."
+        )
 
     missing_sample_mask = metadata["Sample File"].isna() | metadata[
         "Sample File"
@@ -1362,6 +1418,8 @@ def statistics_PLSDA(
 
     main_folder, statistics_folder = _ensure_statistics_folder(state)
     output_file_prefix = _get_output_file_prefix(state)
+    models_folder = os.path.join(main_folder, "models")
+    os.makedirs(models_folder, exist_ok=True)
 
     vip_path = _unique_path(
         os.path.join(statistics_folder, output_file_prefix + "_PLSDA_VIP_scores.csv")
@@ -1375,7 +1433,10 @@ def statistics_PLSDA(
         )
     )
     model_path = _unique_path(
-        os.path.join(statistics_folder, output_file_prefix + "_PLSDA_model.joblib")
+        os.path.join(
+            models_folder,
+            output_file_prefix + "_PLSDA_model.joblib",
+        )
     )
     scores_path = _unique_path(
         os.path.join(statistics_folder, output_file_prefix + "_PLSDA_scores.csv")
@@ -1596,6 +1657,16 @@ def statistics_PLSDA(
             ],
         }
     )
+    if ignored_groups:
+        add_text(
+            state,
+            (
+                f"Excluded samples: {excluded_sample_count}. "
+                f"Exclusion rules: {ignored_groups}. "
+                "Samples matching any rule were excluded from this analysis."
+            ),
+            title="Sample exclusions",
+        )
 
     add_table(
         state,
@@ -1697,51 +1768,32 @@ def statistics_PLSDA(
     )
 
     if score_plot_path is not None:
+        description = (
+            "The score plot shows the final PLS-DA model fitted to the "
+            "complete dataset. Samples are colored by the response classes "
+            "used to train the model. "
+        )
+
+        if n_comp == 1:
+            description += (
+                "The model contains one latent variable. Scores are shown "
+                "along LV1, with vertical jitter solely to separate "
+                "overlapping points. Jitter has no model interpretation."
+            )
+        else:
+            description += "The axes show LV1 and LV2."
+
         add_text(
             state,
-            (
-                "The score plot shows the first two latent variables "
-                "of the final PLS-DA model fitted to the complete dataset. "
-                "Samples are colored according to the response classes "
-                "used to train the model."
-            ),
+            description,
             title="PLS-DA score plot",
         )
 
         add_figure(
             state,
             score_plot_path,
-            title="PLS-DA score plot — LV1 vs LV2",
+            title=score_plot_title,
         )
-
-    else:
-        add_text(
-            state,
-            (
-                "The score plot shows the latent-variable scores of the final "
-                "PLS-DA model fitted to the complete dataset. "
-                "Samples are colored according to the response classes used "
-                "to train the model."
-            ),
-            title="PLS-DA score plot",
-        )
-
-    if n_comp == 1:
-        add_text(
-            state,
-            (
-                "The final model contains one latent variable. "
-                "Therefore, scores are displayed along LV1 only. "
-                "Small vertical jitter is used solely to prevent overlapping "
-                "points and does not represent an additional model dimension."
-            ),
-        )
-
-    add_figure(
-        state,
-        score_plot_path,
-        title=score_plot_title,
-    )
 
     return {
         "message": "PLS-DA was performed.",
@@ -1753,6 +1805,7 @@ def statistics_PLSDA(
         "model_path": model_path,
         "scores_path": scores_path,
         "score_plot_path": score_plot_path,
+        "figure_path": score_plot_path,
         "cv_predictions_path": cv_predictions_path,
     }
 
@@ -1770,6 +1823,10 @@ def statistics_PLSDA(
             required=False,
             default=1,
             label="X latent variable",
+            help=(
+                "Latent variable shown on the x-axis, numbered from 1. "
+                "It must exist in the fitted model and differ from the y-axis variable."
+            ),
         ),
         ParameterDef(
             name="component_y",
@@ -1777,6 +1834,12 @@ def statistics_PLSDA(
             required=False,
             default=2,
             label="Y latent variable",
+            help=(
+                "Latent variable shown on the y-axis, numbered from 1. "
+                "It must exist and differ from the x-axis variable. "
+                "For a model containing only LV1, the default axes "
+                "(X=1, Y=2) display LV1 with decorative vertical jitter."
+            ),
         ),
         ParameterDef(
             name="color_by",
@@ -1792,6 +1855,7 @@ def statistics_PLSDA(
             required=False,
             default=False,
             label="Annotate samples",
+            help="If True, display sample identifiers next to the plotted points.",
         ),
         ParameterDef(
             name="plt_name_suffix",
@@ -1799,9 +1863,10 @@ def statistics_PLSDA(
             required=False,
             default="",
             label="Plot name suffix",
+            help="Suffix added to the saved PLS-DA score-plot filename.",
         ),
     ],
-    requires=["plsda", "plsda_scores"],
+    requires=["plsda_scores"],
     produces=["figures"],
 )
 def visualizer_PLSDA(
@@ -1821,15 +1886,42 @@ def visualizer_PLSDA(
 
     x_column = f"LV{component_x}"
     y_column = f"LV{component_y}"
-    missing_components = [
-        column for column in (x_column, y_column) if column not in scores.columns
+
+    available_components = [
+        column
+        for column in scores.columns
+        if isinstance(column, str)
+        and column.startswith("LV")
+        and column[2:].isdigit()
     ]
-    if missing_components:
-        available = ", ".join(state.plsda_score_columns or [])
-        raise ValueError(
-            f"PLS-DA component(s) not available: {', '.join(missing_components)}. "
-            f"Available components: {available}."
+
+    # With the default axes, a one-LV model gets decorative vertical jitter.
+    # Explicit requests for other unavailable components still raise an error.
+    use_jitter = (
+        set(available_components) == {"LV1"}
+        and component_x == 1
+        and component_y == 2
+    )
+
+    if use_jitter:
+        y_column = "Jitter"
+        scores[y_column] = np.random.default_rng(42).uniform(
+            -0.08, 0.08, size=len(scores)
         )
+    else:
+        missing_components = [
+            column
+            for column in (x_column, y_column)
+            if column not in available_components
+        ]
+
+        if missing_components:
+            available = ", ".join(available_components) or "none"
+            raise ValueError(
+                f"PLS-DA component(s) not available: "
+                f"{', '.join(missing_components)}. "
+                f"Available components: {available}."
+            )
 
     color_by = str(color_by or "").strip()
     if color_by and color_by not in scores.columns:
@@ -1864,7 +1956,7 @@ def visualizer_PLSDA(
             validate="one_to_one",
         )
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(9, 3.5) if use_jitter else (8, 6))
     if color_by:
         groups = (
             scores[color_by].astype(object).where(scores[color_by].notna(), "Missing")
@@ -1893,8 +1985,15 @@ def visualizer_PLSDA(
     ax.axhline(0, color="grey", linewidth=0.7, alpha=0.5)
     ax.axvline(0, color="grey", linewidth=0.7, alpha=0.5)
     ax.set_xlabel(x_column)
-    ax.set_ylabel(y_column)
-    ax.set_title("PLS-DA score plot")
+
+    if use_jitter:
+        ax.set_ylabel("Jitter — visual separation only")
+        ax.set_yticks([])
+        ax.set_ylim(-0.12, 0.12)
+        ax.set_title("PLS-DA score plot — LV1")
+    else:
+        ax.set_ylabel(y_column)
+        ax.set_title("PLS-DA score plot")
     fig.tight_layout()
 
     _, statistics_folder = _ensure_statistics_folder(state)
@@ -1924,6 +2023,16 @@ def visualizer_PLSDA(
         ),
         title="PLS-DA score plot",
     )
+    
+    if use_jitter:
+        add_text(
+            state,
+            (
+                "The model contains one latent variable. Vertical jitter "
+                "only separates overlapping points and does not represent "
+                "another latent variable or additional biological variation."
+            ),
+        )
 
     add_figure(
         state,
@@ -1954,6 +2063,10 @@ def visualizer_PLSDA(
             required=False,
             default=30,
             label="Number of features",
+            help=(
+                "Maximum number of features to display, ordered by decreasing VIP score. "
+                "Must be at least 1."
+            ),
         ),
         ParameterDef(
             name="plt_name_suffix",
@@ -1961,6 +2074,7 @@ def visualizer_PLSDA(
             required=False,
             default="",
             label="Plot name suffix",
+            help="Suffix added to the saved VIP-plot filename.",
         ),
     ],
     requires=["plsda_vip_scores"],
@@ -1974,6 +2088,7 @@ def visualizer_PLSDA_vips(state: WorkflowState, top_n=30, plt_name_suffix=""):
 
     vip_scores = (
         pd.to_numeric(state.plsda_vip_scores, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
         .dropna()
         .sort_values(ascending=False)
         .head(top_n)
@@ -2056,6 +2171,11 @@ def visualizer_PLSDA_vips(state: WorkflowState, top_n=30, plt_name_suffix=""):
             required=True,
             default=None,
             label="Group 1",
+            help=(
+                "Exact value in the grouping metadata column identifying the reference group. "
+                "Reported fold changes are expressed as Group 2 / Group 1."
+            ),
+
         ),
         ParameterDef(
             name="group2",
@@ -2063,6 +2183,10 @@ def visualizer_PLSDA_vips(state: WorkflowState, top_n=30, plt_name_suffix=""):
             required=True,
             default=None,
             label="Group 2",
+            help=(
+                "Exact value in the grouping metadata column identifying the comparison group. "
+                "Must differ from Group 1."
+            ),
         ),
         ParameterDef(
             name="p_value_correction_method",
@@ -2078,6 +2202,7 @@ def visualizer_PLSDA_vips(state: WorkflowState, top_n=30, plt_name_suffix=""):
             required=False,
             default="ttest_results",
             label="Table name suffix",
+            help="Suffix added to the saved statistical-results table filename.",
         ),
     ],
     requires=["data", "metadata"],
@@ -2170,8 +2295,8 @@ def statistics_ttest(
         if log_base is None or float(log_base) <= 0 or float(log_base) == 1:
             raise ValueError("A valid log_base is required for log-transformed data.")
 
-        # Difference between means in log space corresponds to fold change
-        # in the original scale.
+        # Exponentiating the difference of mean log intensities gives the ratio
+        # of group geometric means on the corresponding linear scale.
         fold_change = float(log_base) ** (g2_mean - g1_mean)
 
     elif was_centered:
@@ -2685,7 +2810,7 @@ def visualizer_PCA_grouped(
     ignore_nans_in_groups=True,
 ):
     """
-    Reworked version for PySPRESSO-APP
+    Plot PC1 and PC2 with metadata-based colors, markers, and optional annotations.
     """
 
     plt, sns = _load_plotting()
@@ -2735,7 +2860,7 @@ def visualizer_PCA_grouped(
     column_name = color_column
     second_column_name = marker_column
 
-    # Handle NaNs in grouping columns, following the original function.
+    # Handle missing grouping values according to ignore_nans_in_groups.
     if ignore_nans_in_groups:
         cols = [c for c in [column_name, second_column_name] if c is not None]
 

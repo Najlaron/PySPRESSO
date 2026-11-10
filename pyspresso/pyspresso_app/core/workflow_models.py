@@ -27,8 +27,7 @@ def _safe_convert_value(x: Any) -> Any:
         pass
 
     if isinstance(x, float):
-        if math.isnan(x) or math.isinf(x):
-            return None
+        return x if math.isfinite(x) else None
 
     if isinstance(x, pd.Timestamp):
         return x.isoformat()
@@ -107,14 +106,14 @@ def _df_to_serializable(df: pd.DataFrame | None) -> Any:
 
 
 def _series_to_serializable(series: pd.Series | None) -> Any:
-    """Convert Series to JSON-serializable dict, handling NaN, Infinity, and null values."""
+    """Serialize Series values while preserving finite numbers."""
     if series is None:
         return None
-    s2 = series.copy()
-    # Delegate conversion to the shared helper for consistency
-    s2 = s2.apply(_safe_convert_value)
-    return s2.to_dict()
 
+    return {
+        str(key): _safe_convert_value(value)
+        for key, value in series.items()
+    }
 
 def _contains_legacy_truncation(value: Any) -> bool:
     """Detect the former preview marker without walking every table cell.

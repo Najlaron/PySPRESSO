@@ -209,13 +209,10 @@ def _is_generated_extra_column_name(column_name):
 
 def _clean_qc_correction_data_columns(state: WorkflowState, df_in: pd.DataFrame):
     """
-    Return data with only real sample columns for QC correction.
+    Remove generated table-display columns before QC correction.
 
-    The current bug was caused by an extra/generated column being present in
-    state.data after state restoration/display. The original correction expected
-    every column after cpdID to be a real sample column. This helper preserves the
-    original correction logic, but removes generated non-sample columns before the
-    samples x features matrix is created.
+    Use sample metadata to identify additional non-sample columns when
+    metadata matches almost all current data columns.
     """
     if "cpdID" not in df_in.columns:
         raise ValueError("Expected 'cpdID' column in state.data.")
@@ -278,11 +275,10 @@ def _clean_qc_correction_data_columns(state: WorkflowState, df_in: pd.DataFrame)
 
 def _align_batch_to_sample_names(state: WorkflowState, sample_names):
     """
-    Return batch labels aligned exactly to the current real sample columns.
+    Return batch labels aligned to the current sample columns.
 
-    The original correction failed when state.batch still contained labels for a
-    stale/generated column. This keeps original behavior when lengths already
-    match, but repairs common cases using metadata/batch_info.
+    Retain compatible stored labels; otherwise use metadata or batch
+    information to reconstruct the alignment where possible.
     """
     sample_names = [str(sample) for sample in sample_names]
     batch = getattr(state, "batch", None)
@@ -761,7 +757,10 @@ def _plot_s_exploration(batch_best_s, batch_p_ranges, figures_folder):
             required=False,
             default=True,
             label="Preserve original zeros",
-            help="If True, original zero values remain zero after correction.",
+            help=(
+                "If True, values that were zero in the input are restored as zero "
+                "when returning raw intensities, or as NaN when returning log2 values."
+            ),
         ),
         ParameterDef(
             name="cmap",
@@ -830,9 +829,7 @@ def correct_qc_interpolation(
     main_folder, figures_folder = _ensure_main_folders(state)
     suffixes = _get_suffixes(state)
 
-    # Remove generated/non-sample columns before creating the samples x features matrix.
-    # This keeps the original correction algorithm intact while preventing stale UI/state
-    # columns such as "<1 additional items..." from being treated as samples.
+    # Remove generated non-sample columns before constructing the sample matrix.
     df_in, sample_columns, dropped_extra_columns = _clean_qc_correction_data_columns(
         state,
         df_in,
@@ -1051,7 +1048,6 @@ def correct_qc_interpolation(
             first_saved = None
 
             for suffix in suffixes:
-                # plt.savefig(plt_name + suffix, dpi=300, bbox_inches="tight")
                 out_path = _unique_path(plt_name + suffix)
                 plt.savefig(out_path, dpi=300, bbox_inches="tight")
 
@@ -1061,7 +1057,6 @@ def correct_qc_interpolation(
                 if suffix == ".png":
                     saved_png = out_path
 
-            # plot_names_original.append(plt_name + ".png")
             plot_names_original.append(
                 saved_png if saved_png is not None else first_saved
             )
@@ -1108,9 +1103,6 @@ def correct_qc_interpolation(
                 if spline is not None:
                     yb_original = spline(xb)
                     yb_corrected = yb_original - yb_original + anchor_log
-
-                    # preds_min = min(preds_min, np.nanmin(yb_corrected))
-                    # preds_max = max(preds_max, np.nanmax(yb_corrected))
 
                     plt.plot(
                         xb,
@@ -1230,10 +1222,19 @@ def correct_qc_interpolation(
     # REPORTING
     add_text(
         state,
-        f"Correction was performed in log2 space " + "but the data were transformed back after the correction." if delog else "and were kept that way on the output.",
-        title = "Details")
+        (
+            "Correction was performed in log2 space. "
+            + (
+                "Corrected data were back-transformed to raw intensities."
+                if delog
+                else "Corrected data were retained in log2 space."
+            )
+        ),
+        title="Details",
+    )
 
-    for i in range(len(plot_names_original)): #should be same lengths
+    # Add the corresponding before/after plots to the report.
+    for i in range(len(plot_names_original)):
         path_original = plot_names_original[i]
         path_corrected = plot_names_corrected[i]
         add_figure(
@@ -1470,7 +1471,7 @@ def correct_qc_loess(
             raise ValueError("Logged input implies infinite intensity.")
 
         if log_offset > 0:
-            # Your Log Transform computes log_base(raw + 1e-10).
+            # PySPRESSO Log Transform computes log_base(raw + 1e-10).
             #
             # Undo the declared offset before fitting ordinary log2(raw).
             # expm1 provides accurate inversion near raw=0.
@@ -1534,7 +1535,7 @@ def correct_qc_loess(
 
     corrected = logged.copy()
 
-    # Reuse utilities already present in correction_ops.py.
+    # Resolve feature selection and prepare output paths.
     selected_features = _resolve_show_indices(
         show,
         len(feature_names),
@@ -1685,7 +1686,8 @@ def correct_qc_loess(
 
         # -----------------------------------------------------------
         # Plot selected features using existing output conventions.
-        # Both panels show log2 values, even when output will be raw.
+        # Intensity panels show log2 values; the adjustment panel shows log2 offsets.
+        # The display scale is independent of the requested output scale.
         # -----------------------------------------------------------
 
         if feature_idx in selected_features:
@@ -2227,7 +2229,10 @@ def _align_metadata_to_samples(metadata, sample_cols):
             required=False,
             default=True,
             label="Parametric prior",
-            help="Passed to pycombat.",
+            help=(
+                "If True, use parametric empirical Bayes priors. "
+                "If False, use non-parametric empirical Bayes priors."
+            ),
         ),
         ParameterDef(
             name="mean_only",

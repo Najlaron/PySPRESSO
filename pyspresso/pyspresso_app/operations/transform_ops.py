@@ -18,8 +18,29 @@ from pyspresso_app.core.html_reporter import (
     citation="",
     category_tags=[OperationTag.TRANSFORMATION],
     parameter_schema=[
-        ParameterDef("base", "float", False, 2, "Log base"),
-        ParameterDef("invert", "bool", False, False, "Invert transform"),
+        ParameterDef(
+            name="base",
+            type="float",
+            required=False,
+            default=2,
+            label="Log base",
+            help=(
+                "Base of the logarithm, for example 2 or 10. "
+                "Must be positive and different from 1. "
+                "The forward transformation uses log_base(intensity + 1e-10)."
+            ),
+        ),
+        ParameterDef(
+            name="invert",
+            type="bool",
+            required=False,
+            default=False,
+            label="Invert transform",
+            help=(
+                "If True, reverse a previous log transformation using the "
+                "same base and subtract the 1e-10 offset."
+            ),
+        ),
     ],
     requires=["data"],
     produces=["data", "was_log_transformed", "log_base"],
@@ -100,14 +121,8 @@ def transformer_log(
 )
 def scaler_pareto(state: WorkflowState):
     """
-    Apply feature-wise Pareto scaling.
-
-    Old PySPRESSO logic:
-        mean = feature mean
-        std = feature standard deviation
-        scaled = (x - mean) / sqrt(std)
-
-    Pareto scaling includes mean-centering.
+    Mean-center each feature and divide by the square root of its
+    sample standard deviation, calculated with ddof=1.
     """
 
     if state.data is None:
