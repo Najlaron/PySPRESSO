@@ -36,3 +36,14 @@
     right: 40%;
     filter: drop-shadow(0 -2px 0 rgba(79, 53, 28, 0.5));
 }
+
+.tooltip {
+    z-index: 100;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+}
+
+.tooltip.tooltip-bottom {
+    top: calc(100% + 10px);
+    bottom: auto;
+}

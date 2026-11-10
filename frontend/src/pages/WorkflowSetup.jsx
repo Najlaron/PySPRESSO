@@ -1,4 +1,4 @@
-import logoLightSrc from "../../media/logo-light.png"
+import logoLightSrc from "../../media/logo-light.svg"
 import Footer from "../components/organisms/Layouts/Footer"
 import CreateWfButton from "../components/molecules/WorkflowSetup/CreatingWfButton"
 import { Link } from 'react-router-dom'

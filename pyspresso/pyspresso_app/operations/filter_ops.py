@@ -72,15 +72,10 @@ def _filter_match_variable_metadata(data, variable_metadata):
 
 def _get_dropped_features_folder(state: WorkflowState):
     """
-    Get the folder where dropped-feature lists should be saved.
+    Return the dropped-feature output path.
 
-    Old PySPRESSO used:
-        self.main_folder + '/dropped_features'
-
-    Here we use:
-        state.main_folder + '/dropped_features'
-
-    If state.main_folder does not exist yet, we create a fallback folder.
+    If state.main_folder is unset, assign outputs/<workflow_id> as the
+    main folder. This helper does not create directories.
     """
     main_folder = getattr(state, "main_folder", None)
 
@@ -95,10 +90,7 @@ def _get_dropped_features_folder(state: WorkflowState):
 
 def _add_artifact_if_available(state: WorkflowState, path, artifact_type, description):
     """
-    Optional helper for future frontend use.
-
-    If WorkflowState has an artifacts list, the generated text file is stored there.
-    If not, nothing happens.
+    Append an artifact descriptor when state exposes an artifacts collection.
     """
     if not hasattr(state, "artifacts"):
         return
@@ -693,7 +685,11 @@ def filter_blank_intensity_ratio(
             required=False,
             default=3,
             label="Minimum QC per batch",
-            help="Minimum number of non-missing QC samples required in a batch.",
+            help=(
+                "Minimum number of non-missing QC measurements per feature and batch "
+                "required to calculate a batch RSD. Used only when Calculate by batch "
+                "is enabled. Batches with fewer measurements are excluded from the median."
+            ),
         ),
     ],
     requires=["data", "variable_metadata", "QC_samples"],
@@ -1299,8 +1295,10 @@ def filter_dilution_series_linearity(
             default=0.8,
             label="Corrected batch threshold",
             help=(
-                "If below 1, interpreted as fraction of all batches. "
-                "If 1 or above, interpreted as minimum number of corrected batches."
+                "Values below 1 specify a fraction of all batches, converted to a "
+                "minimum batch count by rounding down. Values of 1 or more specify "
+                "the minimum count directly. For example, 0.8 with 4 batches requires "
+                "correction in at least 3 batches."
             ),
         ),
     ],
@@ -2164,7 +2162,7 @@ def filter_sparse_spike_features(
 
     # ------------------------------------------------------------
     # Group-wise presence
-    # Protects real group-specific features.
+    # Measure within-group prevalence to avoid flagging consistently present group-specific features.
     # ------------------------------------------------------------
 
     group_presence = pd.DataFrame(index=X.index)
@@ -2329,8 +2327,7 @@ def filter_sparse_spike_features(
         how="left",
     )
 
-    # Store full diagnostics for backend use.
-    # This does not require the field to be explicitly declared unless WorkflowState uses slots.
+    # Store the complete diagnostics table in workflow state.
     state.sparse_spike_diagnostics = diagnostics
 
     # ------------------------------------------------------------

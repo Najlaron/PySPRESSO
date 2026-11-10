@@ -132,8 +132,8 @@ from pyspresso_app.core.html_reporter import (
                 "Optional manual dilution concentrations. Recommended when file-name "
                 "parsing is ambiguous. Use dot decimals with comma separation "
                 "(6.25, 12.5, 25) or semicolons with decimal commas "
-                "(6,25; 12,5; 25). If empty, PySPRESSO keeps the previous "
-                "automatic extraction behaviour."
+                "(6,25; 12,5; 25). If empty, concentrations are extracted "
+                "automatically from sample names."
             ),
             example="6.25, 12.5, 25, 50, 100",
         ),
@@ -364,11 +364,8 @@ def initializer_compound_discoverer(
     }
 
 
-# helping functions copied from previous version of the module
 
-# foldery= ['outputs\\f0f92e73-9ea9-44b0-92fd-19f9121a941a', 'outputs\\f0f92e73-9ea9-44b0-92fd-19f9121a941a\\figures', 'outputs\\f0f92e73-9ea9-44b0-92fd-19f9121a941a\\statistics', 'outputs\\f0f92e73-9ea9-44b0-92fd-19f9121a941a\\dropped_features']
-# foldery= ['outputs\\vv', 'outputs\\vv\\figures', 'outputs\\vv\\statistics', 'outputs\\vv\\dropped_features']
-
+# Initialization helpers
 
 def _initializer_folders(state: WorkflowState):
     """
@@ -414,6 +411,14 @@ def _initializer_folders(state: WorkflowState):
         os.path.join(
             main_folder,
             "data_checkpoints",
+        ),
+        os.path.join(
+            main_folder,
+            "data_checkpoints",
+        ),
+        os.path.join(
+            main_folder,
+            "models",
         ),
     ]
 
@@ -1279,8 +1284,7 @@ def _initialize_sample_type_lists(
 
     QC, blank, and standard samples are identified from metadata['Sample Type'].
     Dilution-series samples are identified from metadata['Sample File'] names.
-    Dilution concentrations can be provided manually. If they are not provided,
-    PySPRESSO preserves the previous automatic extraction from file names.
+    Dilution concentrations can be supplied manually. Otherwise, they are extracted from sample names using conc_distinguisher.
     """
     metadata = state.metadata
 
@@ -1342,10 +1346,9 @@ def _initialize_sample_type_lists(
             state.dil_concentrations = manual_dil_concentrations
             concentration_source = "manual"
         else:
-            # Preserve previous behaviour: try to extract concentration/order after
-            # conc_distinguisher. Example: "sample_dilQC_0.25" with
-            # conc_distinguisher="dilQC_". Manual input is recommended because
-            # file names are often ambiguous.
+            # Extract the concentration/order value following conc_distinguisher.
+            # Example: "sample_dilQC_0.25" with conc_distinguisher="dilQC_".
+            # Use manual concentrations when sample names are ambiguous.
             auto_dil_concentrations = []
 
             for name in state.dilution_series_samples:
@@ -2555,37 +2558,152 @@ def _validate_sciexos_state(state):
     description="Convert a SciexOS long-format export; no batch-info upload required.",
     category_tags=[OperationTag.IO, OperationTag.INITIALIZATION],
     parameter_schema=[
-        ParameterDef(name=name, type=kind, default=default, label=label, help=help_text)
-        for name, kind, default, label, help_text in [
-            ("measurement_column", "str", "Area", "Intensity column",
-             "Source column name or zero-based index."),
-            ("sample_id_columns", "list_or_str", ["Original Filename", "Sample Index"],
-             "Sample identity", "Columns whose combined values identify an injection."),
-            ("feature_id_columns", "list_or_str",
-             ["Component Name", "Precursor Mass", "Fragment Mass", "Polarity"],
-             "Feature identity", "Columns whose combined values identify a feature."),
-            ("sample_columns", "str", "{'name': 'Sample Name', 'type': 'Sample Type', 'batch': None}",
-             "Sample columns", "Dictionary of name/type/batch source names or indexes; None disables a role."),
-            ("feature_columns", "str", "{'name': 'Component Name', 'mz': 'Precursor Mass', 'rt': 'Expected RT'}",
-             "Feature columns", "Dictionary of name/mz/rt source names or indexes; None disables a role. RT is in minutes."),
-            ("sample_metadata_columns", "str",
-             "['Acquisition Date & Time', 'Injection Volume', 'Dilution Factor']",
-             "Sample metadata", "Names/indexes, all, None, or {'columns': [...], 'ranges': [[start, stop]], 'aggregation': 'strict'}."),
-            ("feature_metadata_columns", "str",
-             "['Component Index', 'Component Type', 'IS', 'IS Name', 'Mass Info', 'Polarity']",
-             "Feature metadata", "Names/indexes, all, None, or columns/ranges/aggregation dictionary. Default aggregation: unique."),
-            ("order_by", "str", "Acquisition Date & Time", "Sample ordering",
-             "Column/index, list, None, or {'columns': ..., 'type': 'datetime', 'format': '', 'ascending': True}. Plain columns infer their type."),
-            ("sample_types", "str", r"{'QC': r'^QC\d+$', 'Blank': r'^Blank', 'Standard': None}",
-             "Sample type rules", "QC/Blank/Standard rules: name regex, sample list, None, or {'column': ..., 'values': [...]}. Exported types are preserved unless a rule overrides them."),
-            ("dqc_samples", "str", r"^QC\d+_\d+(?:[.,]\d+)?$", "dQC samples",
-             "Name regex, explicit sample names/IDs, None, or {'column': ..., 'values': [...]}; a column rule can also use regex."),
-            ("dqc_levels", "str", "Injection Volume", "dQC levels",
-             r"Column/index, manual list in final sample order, sample-to-level dictionary, or {'regex': r'_(\d+(?:\.\d+)?)$'}. Optional group/column in regex rules."),
-            ("read_options", "str", "{}", "File reading options",
-             "Optional {'sheet': 0, 'separator': None, 'encoding': 'utf-8-sig'}. Defaults read the first sheet or detect the text delimiter."),
-            ("missing_value_policy", "str", "zero", "Missing intensities", "zero or nan."),
-        ]
+        ParameterDef(
+            name="measurement_column",
+            type="str",
+            default="Area",
+            label="Intensity column",
+            help="Source column name or zero-based index.",
+        ),
+        ParameterDef(
+            name="sample_id_columns",
+            type="list_or_str",
+            default=["Original Filename", "Sample Index"],
+            label="Sample identity",
+            help="Columns whose combined values identify an injection.",
+        ),
+        ParameterDef(
+            name="feature_id_columns",
+            type="list_or_str",
+            default=[
+                "Component Name",
+                "Precursor Mass",
+                "Fragment Mass",
+                "Polarity",
+            ],
+            label="Feature identity",
+            help="Columns whose combined values identify a feature.",
+        ),
+        ParameterDef(
+            name="sample_columns",
+            type="str",
+            default=(
+                "{'name': 'Sample Name', "
+                "'type': 'Sample Type', 'batch': None}"
+            ),
+            label="Sample columns",
+            help=(
+                "Dictionary of name/type/batch source names or indexes; "
+                "None disables a role."
+            ),
+        ),
+        ParameterDef(
+            name="feature_columns",
+            type="str",
+            default=(
+                "{'name': 'Component Name', "
+                "'mz': 'Precursor Mass', 'rt': 'Expected RT'}"
+            ),
+            label="Feature columns",
+            help=(
+                "Dictionary of name/mz/rt source names or indexes; "
+                "None disables a role. RT is in minutes."
+            ),
+        ),
+        ParameterDef(
+            name="sample_metadata_columns",
+            type="str",
+            default=(
+                "['Acquisition Date & Time', "
+                "'Injection Volume', 'Dilution Factor']"
+            ),
+            label="Sample metadata",
+            help=(
+                "Names/indexes, all, None, or "
+                "{'columns': [...], 'ranges': [[start, stop]], "
+                "'aggregation': 'strict'}."
+            ),
+        ),
+        ParameterDef(
+            name="feature_metadata_columns",
+            type="str",
+            default=(
+                "['Component Index', 'Component Type', "
+                "'IS', 'IS Name', 'Mass Info', 'Polarity']"
+            ),
+            label="Feature metadata",
+            help=(
+                "Names/indexes, all, None, or columns/ranges/aggregation "
+                "dictionary. Default aggregation: unique."
+            ),
+        ),
+        ParameterDef(
+            name="order_by",
+            type="str",
+            default="Acquisition Date & Time",
+            label="Sample ordering",
+            help=(
+                "Column/index, list, None, or "
+                "{'columns': ..., 'type': 'datetime', "
+                "'format': '', 'ascending': True}. "
+                "Plain columns infer their type."
+            ),
+        ),
+        ParameterDef(
+            name="sample_types",
+            type="str",
+            default=(
+                r"{'QC': r'^QC\d+$', "
+                r"'Blank': r'^Blank', 'Standard': None}"
+            ),
+            label="Sample type rules",
+            help=(
+                "QC/Blank/Standard rules: name regex, sample list, None, "
+                "or {'column': ..., 'values': [...]}. "
+                "Exported types are preserved unless a rule overrides them."
+            ),
+        ),
+        ParameterDef(
+            name="dqc_samples",
+            type="str",
+            default=r"^QC\d+_\d+(?:[.,]\d+)?$",
+            label="dQC samples",
+            help=(
+                "Name regex, explicit sample names/IDs, None, "
+                "or {'column': ..., 'values': [...]}; "
+                "a column rule can also use regex."
+            ),
+        ),
+        ParameterDef(
+            name="dqc_levels",
+            type="str",
+            default="Injection Volume",
+            label="dQC levels",
+            help=(
+                "Column/index, manual list in final sample order, "
+                "sample-to-level dictionary, or "
+                r"{'regex': r'_(\d+(?:\.\d+)?)$'}. "
+                "Optional group/column in regex rules."
+            ),
+        ),
+        ParameterDef(
+            name="read_options",
+            type="str",
+            default="{}",
+            label="File reading options",
+            help=(
+                "Optional {'sheet': 0, 'separator': None, "
+                "'encoding': 'utf-8-sig'}. "
+                "Defaults read the first sheet or detect the text delimiter."
+            ),
+        ),
+        ParameterDef(
+            name="missing_value_policy",
+            type="str",
+            default="zero",
+            label="Missing intensities",
+            help="zero or nan.",
+        ),
     ],
     requires=["files"],
     produces=[
@@ -2610,7 +2728,7 @@ def initializer_sciexos(
     read_options=None,
     missing_value_policy="zero",
 ):
-    """Initialize using thirteen user settings and the existing conversion helpers."""
+    """Convert a SciexOS long-format export into aligned workflow tables."""
     if not getattr(state, "files", None) or not state.files.get("data"):
         raise ValueError("No data file found in state.files['data'].")
     read = _sciexos_options(
@@ -2841,9 +2959,12 @@ def _native_align(table, column, expected, label):
             default="{}",
             label="Previous processing state",
             help=(
-                "{} means untransformed/unscaled data. "
-                "For processed tables, specify the five preprocessing "
-                "flags from the checkpoint auxiliary_state."
+                "Python dictionary describing previous preprocessing. Supported keys: "
+                "was_log_transformed, log_base, was_centered, was_scaled, and was_normalized. "
+                "Use True/False for log transformation and centering; use False or a method "
+                "name for scaling and normalization. Example for unscaled log2 data: "
+                "{'was_log_transformed': True, 'log_base': 2}. "
+                "Omitted keys use the unprocessed defaults."
             ),
         ),
     ],
@@ -2860,6 +2981,11 @@ def _native_align(table, column, expected, label):
         "dilution_series_samples",
         "dil_concentrations",
         "main_folder",
+        "was_log_transformed",
+        "log_base",
+        "was_centered",
+        "was_scaled",
+        "was_normalized",
     ],
 )
 def initializer_pyspresso(
