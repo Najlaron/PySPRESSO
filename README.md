@@ -21,13 +21,16 @@ Combine data import, filtering, correction, transformations, statistical analyse
 - **Reporting:** Generate HTML reports and workflow citation tables.
 - **Custom operations:** Extend workflows with Python functions using the operation registration system.
 
-PySPRESSO processes feature tables exported by upstream software. It does not perform peak picking directly from raw mass-spectrometry files.
+> [!NOTE]
+> PySPRESSO works with feature tables exported by upstream software.
+> It does not perform peak picking directly from raw mass-spectrometry files.
 
 ## Tutorials and custom operations ☕
 
-PySPRESSO supports custom Python operations that appear in the graphical
-interface. These operations can provide configurable parameters, plots,
-HTML report entries, and citations.
+> [!TIP]
+> PySPRESSO supports custom Python operations that appear in the graphical
+> interface. These operations can provide configurable parameters, plots,
+> HTML report entries, and citations.
 
 - [Create custom operations](docs/custom-operations.md) — follow the
   example in `my_ops.py` and learn how to add your own operations.
