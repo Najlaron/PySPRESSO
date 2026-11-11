@@ -84,7 +84,6 @@ Install these tools before building:
 - [Python](https://www.python.org/downloads/), including pip
 - [Node.js](https://nodejs.org/en/download), including npm
 
-An internet connection is required to download dependencies.
 
 ### 1. Download the source
 
