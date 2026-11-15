@@ -155,7 +155,7 @@ IMPLEMENTATION RULES
 8. Use the existing output and reporting conventions.
    Save outputs under state.main_folder and models in its models subfolder.
    Use filenames that avoid unintentionally overwriting previous results.
-   Return figure_path or saved_paths for frontend plots.
+   Return figure_path or figure_paths for frontend plots.
    Use add_text, add_table, and add_figure for the HTML report.
    Do not use plt.show().
 
