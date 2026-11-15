@@ -150,8 +150,8 @@ separate steps. Follow the example:
 
 - Use the reporting functions to add text, tables, and figures to the report.
 - Return a saved image path under `figure_path`, or multiple image paths
-  under `saved_paths`, to display plots in the interface.
-- The dictionary keys `figure_path` and `saved_paths` must use these exact
+  under `figure_paths`, to display plots in the interface.
+- The dictionary keys `figure_path` and `figure_paths` must use these exact
   names; your local Python variables can have other names.
 
 If another operation needs a fitted model later, save it together with
@@ -196,7 +196,7 @@ available. Confirm that parameter names match the function arguments.
 
 ### The plot is saved but not visible in the interface
 
-Check that the returned dictionary includes `figure_path` or `saved_paths`
+Check that the returned dictionary includes `figure_path` or `figure_paths`
 and that those paths point to saved image files.
 
 ### The operation works until the workflow is reloaded
