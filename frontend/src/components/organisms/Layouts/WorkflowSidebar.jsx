@@ -100,7 +100,7 @@ function WorkflowSidebar({
 
                     {hasActiveFilter && filteredOperations.length === 0 && workflow && (
                         <div className="mb-4 p-ds-md rounded bg-foam shadow-sm">
-                            <p className="text-espresso font-medium">No methods were found</p>
+                            <p className="text-espresso font-medium">No operations were found</p>
                         </div>
                     )}
                 </div>
@@ -108,7 +108,7 @@ function WorkflowSidebar({
                 {/* přidané metody ve workflow */}
                 <div className="mt-ds-xl">
                     <div className="flex flex-col gap-ds-md">
-                        <h3 className="text-xl text-espresso font-semibold">METHODS IN WORKFLOW</h3>
+                        <h3 className="text-xl text-espresso font-semibold">OPERATIONS IN WORKFLOW</h3>
                         <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={handleDragEnd} modifiers={[restrictToVerticalAxis]}>
                             <SortableContext items={workflow?.definition?.steps?.map((step) => step.step_id) ?? []} strategy={verticalListSortingStrategy}>
                                 {workflow?.definition.steps?.map((step, idx) => {
@@ -147,7 +147,7 @@ function WorkflowSidebar({
                         flex gap-ds-md items-center justify-center w-full
                         hover:bg-noir/90 transition duration-300 ${isRunningAll || isSingleStepRunning ? "cursor-wait bg-noir/90" : " cursor-pointer"}`}>
                             <MdPlayArrow size="1.5rem" />
-                            <span>{isRunningAll ? "Running..." : "Run all methods"}</span>
+                            <span>{isRunningAll ? "Running..." : "Run all operations"}</span>
                         </button>
                     </div>
                 )}

@@ -2221,7 +2221,7 @@ def statistics_ttest(
     if state.metadata is None:
         raise ValueError("No metadata loaded in state.metadata.")
 
-    data = state.data.copy()
+    data = state.data.copy().reset_index(drop=True)
     metadata = state.metadata.copy()
     output_file_prefix = _get_output_file_prefix(state)
     was_centered = state.was_centered

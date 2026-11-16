@@ -12,7 +12,7 @@ from pyspresso_app.core.html_reporter import (
 # CREATING CUSTOM PySPRESSO OPERATIONS
 # ================================================================================
 #
-# Write your operations in this file or another .py file in the operations folder. 
+# Write your operations in this file or another .py file in the operations folder.
 # Restart PySPRESSO after changing the code.
 # (It loads all python files in the operations folder at the start.)
 #
@@ -251,7 +251,7 @@ from pyspresso_app.core.html_reporter import (
 # rather than inventing new framework functions.
 #
 #
-# 
+#
 # =============================================================================
 # EXAMPLE OPERATION: SAMPLE MEDIAN OVERVIEW
 # =============================================================================
@@ -391,7 +391,7 @@ from pyspresso_app.core.html_reporter import (
 #         "message": "Sample median overview created.",
 #         # Use the exact key "figure_path" so the plot appears in the interface.
 #         # For multiple plots, use "figure_paths": [path1, path2, ...].
-#         "figure_path": figure_path, 
+#         "figure_path": figure_path,
 #         "sample_count": int(measurements.shape[1]),
 #         "feature_count": int(measurements.shape[0]),
 #     }
