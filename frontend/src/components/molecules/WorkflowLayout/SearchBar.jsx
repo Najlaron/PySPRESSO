@@ -45,7 +45,7 @@ function SearchBar({
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search for method"
+                    placeholder="Search for operation"
                     className="text-espresso text-lg font-medium border-none outline-none bg-transparent w-full"
                     disabled={isInputDisabled}
                 />

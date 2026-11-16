@@ -157,7 +157,7 @@ function WorkflowStepCard({
                                     disabled={isAnyStepRunning || isDeleting}
                                 >
                                     <RiDeleteBinLine size="1.25rem" color="341100" />
-                                    <span className="text-base text-noir">Delete method</span>
+                                    <span className="text-base text-noir">Delete operation</span>
                                 </button>
                             </div>
                         )}
@@ -216,7 +216,7 @@ function WorkflowStepCard({
                                 ))}
                             </div>
                         ) : (
-                            <p className="text-sm text-noir/60 italic">Method has no parameters</p>
+                            <p className="text-sm text-noir/60 italic">Operation has no parameters</p>
                         )}
                     </div>
                 )}

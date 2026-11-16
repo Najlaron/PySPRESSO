@@ -203,11 +203,11 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                     <label htmlFor="workflowName" className="font-medium text-noir text-2xl flex flex-col justify-center">
                         <div className="flex items-center gap-ds-sm">
                             <Tooltip
-                                text={"Name of the workflow (used for display)"}
+                                text={"Name of the project (used for display)"}
                             >
                                 <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
                             </Tooltip>
-                            Workflow name *
+                            Project name *
                         </div>
                     </label>
                     <input
@@ -379,17 +379,17 @@ function WorkflowCreationForm({ filesState, filesDispatch, loadError, setLoadErr
                     <StepBadge
                         stepNumber={4}
                     />
-                    <h2 className="text-3xl font-bold text-noir">Methods import</h2>
+                    <h2 className="text-3xl font-bold text-noir">Import operations</h2>
                 </div>
                 <div className="mb-ds-md">
                     <label className="block mb-[8px] font-medium text-noir text-2xl">
                         <div className="flex items-center gap-ds-sm">
                             <Tooltip
-                                text={"Upload exported methods from another workflow (JSON)"}
+                                text={"Upload exported operations from another workflow (JSON)"}
                             >
                                 <FaRegQuestionCircle size="1.5rem" color="341100" className="shrink-0" />
                             </Tooltip>
-                            Upload exported methods
+                            Upload exported operations
                         </div>
                     </label>
                     <input
