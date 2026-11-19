@@ -25,6 +25,22 @@ Combine data import, filtering, correction, transformations, statistical analyse
 > PySPRESSO works with feature tables exported by upstream software.
 > It does not perform peak picking directly from raw mass-spectrometry files.
 
+## Choose how to run PySPRESSO ☕
+
+| Your goal | Recommended option |
+|---|---|
+| Use the graphical interface without installing Python or Node.js | **[Download the Windows app](https://github.com/Najlaron/PySPRESSO/releases/latest)** |
+| Add or edit Python operations, including with AI assistance, and keep working data in the project folders | **[Run from source](#run-from-source)** |
+| Create a standalone Windows application containing your changes for yourself or others | **[Build the Windows executable](#build-executable)** |
+
+All three options provide the graphical interface and run locally on
+your computer.
+
+> [!TIP]
+> If you are unsure, start with the Windows app and follow the
+> [coffee-data tutorial](docs/example-workflow.md). Choose running from
+> source when you want to add your own operations.
+
 ## Download and run on Windows ☕
 
 The packaged Windows application is available from the **[latest release](https://github.com/Najlaron/PySPRESSO/releases/latest)**.
