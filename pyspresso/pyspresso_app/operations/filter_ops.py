@@ -895,13 +895,19 @@ def filter_relative_standard_deviation(
                         bbox_inches="tight",
                     )
 
-                if first_saved is None:
-                    first_saved = out_path
+                    if first_saved is None:
+                        first_saved = out_path
 
-                if suffix == ".png":
-                    saved_png = out_path
+                    if suffix.lower() == ".png":
+                        saved_png = out_path
 
-                images.append(saved_png if saved_png is not None else first_saved)
+                image_path = (
+                    saved_png if saved_png is not None else first_saved
+                )
+
+                if image_path is not None:
+                    images.append(image_path)
+
                 plt.close()
 
     # UPDATE STATE ------------------------------------------------------
@@ -923,6 +929,17 @@ def filter_relative_standard_deviation(
         f"The list of removed features:\n{removed_ids}",
     )
 
+    for image_path in images:
+        add_figure(
+            state,
+            image_path,
+            title="Feature removed by RSD filtering",
+            caption=(
+                "QC intensities for an example feature removed "
+                f"using the RSD threshold of {rsd_threshold}%."
+            ),
+        )
+
     return {
         "features_after": int(state.data.shape[0]),
         "removed_count": removed_count,
@@ -930,7 +947,7 @@ def filter_relative_standard_deviation(
         "by_batch": by_batch,
         "ignore_zero_qc": ignore_zero_qc,
         "removed_features_file": txt_path,
-        "images": images,
+        "figure_paths": images,
         "skipped": False,
     }
 
@@ -984,9 +1001,9 @@ def filter_relative_standard_deviation(
             name="to_plot",
             type="bool_or_int",
             required=False,
-            default=False,
+            default=True,
             label="Plot examples",
-            help="False disables plotting, True plots 4 examples, integer plots that many.",
+            help="False disables plotting, True plots 4 examples, integer plots that many. Default = True",
         ),
     ],
     requires=["data", "variable_metadata", "dilution_series_samples"],
@@ -1210,13 +1227,19 @@ def filter_dilution_series_linearity(
                         bbox_inches="tight",
                     )
 
-                if first_saved is None:
-                    first_saved = out_path
+                    if first_saved is None:
+                        first_saved = out_path
 
-                if suffix == ".png":
-                    saved_png = out_path
+                    if suffix.lower() == ".png":
+                        saved_png = out_path
 
-                images.append(saved_png if saved_png is not None else first_saved)
+                image_path = (
+                    saved_png if saved_png is not None else first_saved
+                )
+
+                if image_path is not None:
+                    images.append(image_path)
+
                 plt.close()
 
     # FILTERING ---------------------------------------------------------
@@ -1269,13 +1292,25 @@ def filter_dilution_series_linearity(
         f"The list of removed features:\n{removed_ids}",
     )
 
+    for image_path in images:
+        add_figure(
+            state,
+            image_path,
+            title="Dilution-series linearity",
+            caption=(
+                "Example of a feature removed because its selected "
+                f"R² value was below {threshold} "
+                f"(series selection: {which_to_take})."
+            ),
+        )
+
     return {
         "features_after": int(state.data.shape[0]),
         "removed_count": removed_count,
         "threshold": threshold,
         "which_to_take": which_to_take,
         "removed_features_file": txt_path,
-        "images": images,
+        "figure_paths": images,
     }
 
 
@@ -1500,6 +1535,12 @@ def drop_samples(
         f"Number of removed samples: {removed_count}\nSpecified samples were removed from the data: {dropped_column_names}",
         title="Removing specified samples",
     )
+
+    return {
+        "removed_count": removed_count,
+        "dropped_sample_indexes": column_indexes_to_drop,
+        "dropped_sample_names": dropped_column_names,
+    }
 
 
 @register_operation(

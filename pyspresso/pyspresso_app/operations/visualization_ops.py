@@ -909,6 +909,13 @@ def visualize_samples_by_batch(
             saved_paths.append(out_path)
 
     # REPORTING ---- part 2 ---------------------------------------------
+        add_figure(
+            state,
+            fig,
+            title=f"Samples by batch — {cpd_id}",
+            )
+        plt.close(fig)
+
     add_text(
         state,
         (
@@ -918,14 +925,8 @@ def visualize_samples_by_batch(
             f"to batch and sample type. QC samples were highlighted and connected."
         ),
         title="Samples by batch",
-    )
-    add_figure(
-        state,
-        fig,
-        title=f"Samples by batch — {cpd_id}",
-    )
-        
-    plt.close(fig)
+        )
+
     return {
         "saved_paths": saved_paths,
         "features_plotted": feature_indices,

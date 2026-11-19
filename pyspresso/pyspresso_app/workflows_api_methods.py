@@ -5,6 +5,7 @@ import json
 import math
 import copy
 from datetime import datetime, timezone
+from io import BytesIO
 
 from flask import request, jsonify, send_from_directory, send_file, abort
 from werkzeug.utils import secure_filename
@@ -851,7 +852,15 @@ def get_workflow_report(workflow_id: str):
             404,
         )
 
-    return send_file(report_path, mimetype="text/html")
+    # Read and close the disk file before sending the response.
+    report_content = report_path.read_bytes()
+
+    response = send_file(
+        BytesIO(report_content),
+        mimetype="text/html",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route(
