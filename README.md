@@ -9,7 +9,7 @@ PySPRESSO is a local, browser-based application for creating and running customi
 
 Combine data import, filtering, correction, transformations, statistical analyses, and visualizations through a graphical interface. Extend the available operations with your own Python functions.
 
-**[Download the Windows app](https://github.com/Najlaron/PySPRESSO/releases/latest)** · **[Build from source](#build-from-source-windows)** · **[Report an issue](https://github.com/Najlaron/PySPRESSO/issues)**
+**[Download the Windows app](https://github.com/Najlaron/PySPRESSO/releases/latest)** · **[Try the demo](docs/example-workflow.md)** · **[Build from source](#build-from-source-windows)** · **[Report an issue](https://github.com/Najlaron/PySPRESSO/issues)**
 
 ## Features ☕
 
@@ -24,18 +24,6 @@ Combine data import, filtering, correction, transformations, statistical analyse
 > [!NOTE]
 > PySPRESSO works with feature tables exported by upstream software.
 > It does not perform peak picking directly from raw mass-spectrometry files.
-
-## Tutorials and custom operations ☕
-
-> [!TIP]
-> PySPRESSO supports custom Python operations that appear in the graphical
-> interface. These operations can provide configurable parameters, plots,
-> HTML report entries, and citations.
-
-- [Create custom operations](docs/custom-operations.md) — follow the
-  example in `my_ops.py` and learn how to add your own operations.
-- [Create operations with AI assistance](docs/AI-assisted-operations.md) —
-  use the recommended reference files and a ready-to-copy prompt.
 
 ## Download and run on Windows ☕
 
@@ -60,15 +48,41 @@ The packaged application includes its runtime dependencies; you do not need to i
 
 ### Use the application 
 
-Use the browser interface to create a workflow, import your data, add and configure operations, and inspect the results.
+Use the browser interface to create a workflow, import your data,
+configure operations and inspect the results. The application runs
+locally on your computer; the browser provides its interface.
 
-The application runs locally on your computer. The browser provides its interface.
+For a guided first analysis, follow the
+[coffee-data tutorial](docs/example-workflow.md).
 
 ### Stop the application 
 
 Close the console window opened by `PySPRESSO.exe`.
 
 Closing only the browser tab does not stop the backend.
+
+## Tutorials and demo data ☕
+
+### Try the example workflow
+
+Follow the [coffee-data tutorial](docs/example-workflow.md) to create
+a project, import a prepared workflow, run the analysis and inspect
+the plots and HTML report.
+
+The tutorial uses a simplified coffee dataset and includes screenshots
+of the main steps. The [demo folder](demo/) contains the input data,
+sample metadata and workflow template.
+
+### Create your own operations
+
+PySPRESSO supports custom Python operations that appear in the graphical
+interface, with configurable parameters, plots, HTML report entries
+and citations.
+
+- [Create custom operations](docs/custom-operations.md) — follow the
+  example in `my_ops.py` and learn how to add your own operations.
+- [Create operations with AI assistance](docs/AI-assisted-operations.md) —
+  use the recommended reference files and a ready-to-copy prompt.
 
 ## Where your data is stored ☕
 
@@ -150,7 +164,7 @@ pyspresso\dist\PySPRESSO\
 
 Rebuilding replaces the application build in this output folder. Keep any files you want to preserve outside it.
 
-### 4. Run or distribute the build ☕
+### 4. Run or distribute the build 
 
 Open the output folder and double-click **`PySPRESSO.exe`**.
 
