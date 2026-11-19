@@ -33,7 +33,7 @@ from pyspresso_app.core.html_reporter import (
             name="metadata_group_columns_to_keep",
             type="list_or_str",
             required=True,
-            default=["Type", "Type 2"],
+            default="Coffee Type",
             label="Metadata group columns",
             help="Metadata columns to keep from batch info, or 'all'.",
             example="e.g.: Diagnosis, Tumour Type",
@@ -69,9 +69,9 @@ from pyspresso_app.core.html_reporter import (
             name="datetime_format",
             type="str",
             required=False,
-            default="%d.%m.%Y %H:%M",
+            default="%d/%m/%Y %H:%M:%S",
             label="Datetime format",
-            help="Format used to parse Creation Date in batch info.",
+            help="Format used to parse Creation Date in batch info. %d = number representing day, %m = number representing month, ... Y= year, H = hour, M = minute, S = second",
             example="e.g.: %d/%m/%Y %H:%M:%S",
         ),
         ParameterDef(
@@ -903,8 +903,8 @@ def _extracter_metadata(
 
     if missing_columns:
         raise ValueError(
-            "These metadata columns were not found in batch_info: "
-            + str(missing_columns)
+            f"Requested metadata columns not found: {missing_columns!r}. "
+            f"Available batch-info columns: {batch_info.columns.tolist()!r}"
         )
 
     sample_columns = data.drop(columns=["cpdID"]).columns.tolist()

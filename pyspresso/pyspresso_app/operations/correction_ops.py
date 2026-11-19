@@ -1132,18 +1132,26 @@ def correct_qc_interpolation(
                 f"QC_correction_{feature_idx}_corrected",
             )
 
+            saved_png = None
+            first_saved = None
+
             for suffix in suffixes:
-                # plt.savefig(plt_name + suffix, dpi=300, bbox_inches="tight")
                 out_path = _unique_path(plt_name + suffix)
-                plt.savefig(out_path, dpi=300, bbox_inches="tight")
+                plt.savefig(
+                    out_path,
+                    dpi=300,
+                    bbox_inches="tight",
+                )
 
                 if first_saved is None:
                     first_saved = out_path
 
-                if suffix == ".png":
+                if suffix.lower() == ".png":
                     saved_png = out_path
 
-            plot_names_corrected.append(plt_name + ".png")
+            plot_names_corrected.append(
+                saved_png if saved_png is not None else first_saved
+            )
             plt.close()
 
         pct = round((feature_idx + 1) / n_features * 100, 3)
@@ -1219,7 +1227,7 @@ def correct_qc_interpolation(
         variable_metadata,
     )
 
-    # REPORTING
+    # REPORTING ---------------------------------------------------------
     add_text(
         state,
         (
@@ -1250,6 +1258,13 @@ def correct_qc_interpolation(
                     caption="Example feature #"+ str(i+1) +" after correction.",
                 )
 
+    for image_path in s_exploration_images:
+        add_figure(
+            state,
+            image_path,
+            title="Spline smoothing-parameter exploration",
+        )
+
     return {
         "features_corrected": int(n_features),
         "batches": list(unique_batches),
@@ -1262,6 +1277,7 @@ def correct_qc_interpolation(
         "log_base": state.log_base,
         "dropped_non_sample_columns": dropped_extra_columns,
         "batch_alignment_note": batch_alignment_note,
+        "s_exploration_images": s_exploration_images,
     }
 # ---------------------------------------------------------------------
 # LOESS / LOWESS correction

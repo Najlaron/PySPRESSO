@@ -6,6 +6,7 @@ import csv
 import mimetypes
 import re
 import uuid
+import time
 from datetime import datetime, timezone
 from html import escape
 from io import BytesIO, StringIO
@@ -672,20 +673,29 @@ def _atomic_write_text(
     path: Path,
     text: str,
 ) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
 
-    path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
+    # Each write gets its own temporary file.
+    temporary = path.with_name(
+        f"{path.name}.{uuid.uuid4().hex}.tmp"
     )
+    temporary.write_text(text, encoding="utf-8")
 
-    temporary = path.with_name(path.name + ".tmp")
+    # Retry temporary Windows access/sharing violations
+    # for up to two seconds.
+    for attempt in range(11):
+        try:
+            temporary.replace(path)
+            return
 
-    temporary.write_text(
-        text,
-        encoding="utf-8",
-    )
+        except PermissionError as exc:
+            if (
+                getattr(exc, "winerror", None) not in {5, 32, 33}
+                or attempt == 10
+            ):
+                raise
 
-    temporary.replace(path)
+            time.sleep(0.2)
 
 
 def _store_paths_on_state(
