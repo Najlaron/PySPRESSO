@@ -54,7 +54,7 @@ Upload the three downloaded files into the corresponding fields:
 
 Once all three files are selected, click **Submit**.
 
-![Project creation form with the demo data, batch information and workflow template selected](../demo/images/new_workflow.png)
+![Project creation form with the demo data, batch information and workflow template selected](../demo/images/project_creation.png)
 
 ## 3. Review and run the workflow ☕
 
