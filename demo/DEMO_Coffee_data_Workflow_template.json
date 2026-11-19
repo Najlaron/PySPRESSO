@@ -1,0 +1,147 @@
+{
+  "operations": [
+    {
+      "operation_id": "initializer_compound_discoverer",
+      "params": {
+        "blank_samples_distinguisher": "Blank",
+        "conc_distinguisher": "dQC",
+        "cpdID_columns": [
+          "m/z",
+          "RT [min]"
+        ],
+        "cpdID_from_column": false,
+        "data_prefix": "Area:",
+        "datetime_format": "%d.%m.%Y %H:%M",
+        "dil_distinguisher": "dQC",
+        "dilution_concentrations": " 6.25, 12.5, 25, 50, 100",
+        "metadata_group_columns_to_keep": "Coffee Type",
+        "qc_samples_distinguisher": "Quality Control",
+        "standard_samples_distinguisher": "Standard"
+      }
+    },
+    {
+      "operation_id": "visualize_boxplot",
+      "params": {
+        "names": false,
+        "plt_name_suffix": ""
+      }
+    },
+    {
+      "operation_id": "save_data_checkpoint",
+      "params": {
+        "checkpoint_name": "before_processing"
+      }
+    },
+    {
+      "operation_id": "filter_missing_values",
+      "params": {
+        "qc_threshold": 0.8,
+        "sample_threshold": 0.5
+      }
+    },
+    {
+      "operation_id": "filter_blank_intensity_ratio",
+      "params": {
+        "ratio": 10,
+        "setting": "first"
+      }
+    },
+    {
+      "operation_id": "drop_blank_samples",
+      "params": {}
+    },
+    {
+      "operation_id": "filter_dilution_series_linearity",
+      "params": {
+        "concentrations": true,
+        "number_of_series": 1,
+        "threshold": 0.8,
+        "to_plot": true,
+        "which_to_take": "first"
+      }
+    },
+    {
+      "operation_id": "drop_dilution_series_samples",
+      "params": {}
+    },
+    {
+      "operation_id": "visualize_boxplot",
+      "params": {
+        "names": false,
+        "plt_name_suffix": ""
+      }
+    },
+    {
+      "operation_id": "correct_qc_interpolation",
+      "params": {
+        "already_log2": false,
+        "cmap": "viridis",
+        "delog": true,
+        "p_values": "default",
+        "preserve_zeros": true,
+        "show": "default",
+        "use_zeros": false
+      }
+    },
+    {
+      "operation_id": "filter_relative_standard_deviation",
+      "params": {
+        "by_batch": false,
+        "ignore_zero_qc": false,
+        "min_qc_n": 3,
+        "rsd_threshold": 20,
+        "to_plot": false
+      }
+    },
+    {
+      "operation_id": "save_data_checkpoint",
+      "params": {
+        "checkpoint_name": "after_processing"
+      }
+    },
+    {
+      "operation_id": "visualizer_violin_plots",
+      "params": {
+        "bw": 0.2,
+        "cmap": "nipy_spectral",
+        "column_names": "Coffee Type",
+        "gallery_name": "",
+        "indexes": "default",
+        "jitter": true,
+        "label_rotation": 0
+      }
+    },
+    {
+      "operation_id": "transformer_log",
+      "params": {
+        "base": 2,
+        "invert": false
+      }
+    },
+    {
+      "operation_id": "scaler_pareto",
+      "params": {}
+    },
+    {
+      "operation_id": "statistics_PCA",
+      "params": {
+        "n_components_for_candidates": 2
+      }
+    },
+    {
+      "operation_id": "visualizer_PCA_grouped",
+      "params": {
+        "annotate_samples": true,
+        "cmap": "nipy_spectral",
+        "color_column": "Coffee Type",
+        "crossout_outliers": false,
+        "graph_title": "PCA graph",
+        "ignore_nans_in_groups": true,
+        "marker_column": null,
+        "nm_to_annotate": 10,
+        "plt_name_suffix": "",
+        "zoom_in_group": null
+      }
+    }
+  ]
+}

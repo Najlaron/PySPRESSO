@@ -1,0 +1,32 @@
+﻿Study File ID;File Name;Creation Date;RT Range [min];Instrument Name;Software Revision;Ref. File ID;Alignment Score;Sample Type;Polarity;Replicates;Coffee Type;Max. Mass [Da]
+F7;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\BLANK01_POS.raw;24.03.2022 16:46;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.637;Blank;POS;Support Samples;Blank;1050
+F28;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\dQC625_0_POS.raw;24.03.2022 17:02;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.796;Standard;POS;Support Samples;dQC;1050
+F26;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\dQC125_0_POS.raw;24.03.2022 17:17;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.863;Standard;POS;Support Samples;dQC;1050
+F20;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\dQC25_0_POS.raw;24.03.2022 17:33;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.916;Standard;POS;Support Samples;dQC;1050
+F22;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\dQC50_0_POS.raw;24.03.2022 17:48;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.959;Standard;POS;Support Samples;dQC;1050
+F24;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\dQC100_0_POS.raw;24.03.2022 18:04;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.975;Standard;POS;Support Samples;dQC;1050
+F97;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\QC1_POS.raw;24.03.2022 19:41;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.964;Quality Control;POS;Support Samples;QC;1050
+F98;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\QC2_POS.raw;24.03.2022 19:56;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.98;Quality Control;POS;Support Samples;QC;1050
+F48;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\R_POS.raw;24.03.2022 20:12;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.961;Sample;POS;2;R;1050
+F2;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\R_POS.raw;24.03.2022 20:27;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.925;Sample;POS;2;R;1050
+F11;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\N_POS.raw;24.03.2022 20:43;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.77;Sample;POS;2;N;1050
+F72;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\R_POS.raw;24.03.2022 20:58;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.959;Sample;POS;1;R;1050
+F66;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\N_POS.raw;24.03.2022 21:14;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.867;Sample;POS;1;N;1050
+F53;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\R_POS.raw;24.03.2022 21:29;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.951;Sample;POS;3;R;1050
+F99;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\QC3_POS.raw;24.03.2022 21:45;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.986;Quality Control;POS;Support Samples;QC;1050
+F46;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\R_POS.raw;24.03.2022 22:00;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.966;Sample;POS;1;R;1050
+F64;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\R_POS.raw;24.03.2022 22:15;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.945;Sample;POS;2;R;1050
+F75;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\N_POS.raw;24.03.2022 22:31;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.845;Sample;POS;1;N;1050
+F31;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\R_POS.raw;24.03.2022 22:46;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.962;Sample;POS;2;R;1050
+F12;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\R_POS.raw;24.03.2022 23:02;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.938;Sample;POS;2;R;1050
+F36;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\N_POS.raw;24.03.2022 23:17;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.846;Sample;POS;1;N;1050
+F100;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\QC4_POS.raw;24.03.2022 23:33;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.989;Quality Control;POS;Support Samples;QC;1050
+F85;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\R_POS.raw;24.03.2022 23:48;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.97;Sample;POS;2;R;1050
+F41;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\R_POS.raw;25.03.2022 0:04;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.963;Sample;POS;3;R;1050
+F9;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\N_POS.raw;25.03.2022 0:19;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.772;Sample;POS;1;N;1050
+F82;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\R_POS.raw;25.03.2022 0:35;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.948;Sample;POS;2;R;1050
+F33;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\R_POS.raw;25.03.2022 0:50;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.977;Sample;POS;1;R;1050
+F45;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\N_POS.raw;25.03.2022 1:06;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.769;Sample;POS;1;N;1050
+F101;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\QC5_POS.raw;25.03.2022 1:21;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.993;Quality Control;POS;Support Samples;QC;1050
+F102;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\QC6_POS.raw;25.03.2022 3:09;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.993;Quality Control;POS;Support Samples;QC;1050
+F8;D:\Projects_Orbitrap_Elite\Richard\20220324_Coffee_Extracts_Full_Set\HILIC_POS\full_raw\BLANK02_POS.raw;25.03.2022 19:54;0.00 - 14.00;Orbitrap Elite;2.7.0 SP2;F104;0.584;Blank;POS;Support Samples;Blank;1050
