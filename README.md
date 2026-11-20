@@ -14,15 +14,15 @@ Combine data import, filtering, correction, transformations, statistical analyse
 ## Features ☕
 
 - **Workflow creation:** Assemble analysis workflows and configure operations through a graphical interface.
-- **Data import:** Import feature tables from Compound Discoverer, SCIEX OS, or PySPRESSO outputs.
-- **Filtering and transformations:** Filter features based on missingness and quality criteria, and transform or scale measurements.
+- **Data import:** Import compouond tables from Compound Discoverer, SCIEX OS, or PySPRESSO outputs.
+- **Filtering and transformations:** Filter compounds based on missingness and quality criteria, and transform or scale measurements.
 - **QC-based correction:** Apply spline or LOESS/LOWESS correction to address technical variation.
 - **Statistical analysis:** Explore data using methods including PCA and PLS-DA.
 - **Reporting:** Generate HTML reports and workflow citation tables.
 - **Custom operations:** Extend workflows with Python functions using the operation registration system.
 
 > [!NOTE]
-> PySPRESSO works with feature tables exported by upstream software.
+> PySPRESSO works with compound tables exported by upstream software.
 > It does not perform peak picking directly from raw mass-spectrometry files.
 
 ## Choose how to run PySPRESSO ☕
