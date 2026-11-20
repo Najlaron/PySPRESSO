@@ -116,20 +116,20 @@ the collected references when preparing a publication.
 
 ## 5. Keep datasets aligned ☕
 
-PySPRESSO stores features in rows and samples in columns.
-The first data column, `cpdID`, contains feature identifiers rather than
+PySPRESSO stores compounds in rows and samples in columns.
+The first data column, `cpdID`, contains compound identifiers rather than
 measurements.
 
-If your operation removes or reorders features or samples, update the
+If your operation removes or reorders compounds or samples, update the
 associated tables and references consistently:
 
-- Match feature metadata using `cpdID`.
+- Match variable metadata using `cpdID`.
 - Match sample metadata using `Sample File`.
 - Keep batch information aligned with the sample columns.
 - Update affected QC, blank, standard, and dilution-series references.
 
 > [!IMPORTANT]
-> The feature-metadata matching helper described in `my_ops.py` does not
+> The variable-metadata matching helper described in `my_ops.py` does not
 > update sample metadata, batch information, or special sample lists.
 > Keep these aligned whenever your operation removes or reorders samples.
 
@@ -155,7 +155,7 @@ separate steps. Follow the example:
   names; your local Python variables can have other names.
 
 If another operation needs a fitted model later, save it together with
-the feature order and other information required to reuse it. Do not
+the compound order and other information required to reuse it. Do not
 assume an in-memory object will survive reloading the workflow.
 
 ## 7. Test your operation ☕
@@ -167,7 +167,7 @@ Confirm that:
 - The calculation gives the expected result.
 - Parameters affect the operation as intended.
 - Invalid input produces a useful error message.
-- Sample and feature identifiers remain correctly aligned.
+- Sample and compound identifiers remain correctly aligned.
 - Plots and report entries describe the actual results.
 - Saved models or results can be reused after reloading the workflow,
   if applicable.
