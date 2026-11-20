@@ -25,7 +25,7 @@ If possible, also attach the operation file most relevant to your request:
 
 | What you want to create | Useful reference |
 |---|---|
-| Filtering samples or features | `operations/filter_ops.py` |
+| Filtering samples or compounds | `operations/filter_ops.py` |
 | Correction | `operations/correction_ops.py` |
 | Transformation or scaling | `operations/transform_ops.py` |
 | Statistical analysis | `operations/statistics_ops.py` |
