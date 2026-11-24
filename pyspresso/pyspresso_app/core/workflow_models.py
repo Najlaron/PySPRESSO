@@ -618,7 +618,7 @@ class WorkflowDefinition:
 class Workflow:
     workflow_id: str
     name: str = "PySPRESSO_Workflow"
-    pyspresso_version: str = "0.0.5"
+    pyspresso_version: str = "0.9.0"
 
     definition: WorkflowDefinition = field(init=False)
     state: WorkflowState = field(init=False)
