@@ -990,11 +990,12 @@ def filter_relative_standard_deviation(
             name="concentrations",
             type="list_or_bool",
             required=False,
-            default=False,
+            default=True,
             label="Concentrations",
             help=(
                 "False uses sample order. True uses dilution concentrations saved during "
-                "initialization. You may also provide a list directly."
+                "initialization. You may also provide a list directly. Default is True. "
+                "Please check, that concentrations were properly initialized or input them now."
             ),
         ),
         ParameterDef(

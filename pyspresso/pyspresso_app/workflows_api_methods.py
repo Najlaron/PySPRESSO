@@ -694,7 +694,7 @@ def reorder_workflow_steps(workflow_id: str):
     )
 
 
-# vrátí všechny workflow z databáze
+# returns all workflows from the database
 @app.route("/workflows", methods=["GET"])
 def get_workflows():
     if request.args.get("summary", "").strip().lower() in {"1", "true", "yes"}:
